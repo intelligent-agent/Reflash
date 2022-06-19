@@ -7,7 +7,6 @@ import time
 class Reflash:
     def __init__(self, settings):
         self.refactor_version_file = settings.get("version_file")
-        self.klipper_dir = settings.get("klipper_dir")
         self.images_folder = settings.get("images_folder")
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self.bytes_downloaded = 0
@@ -109,9 +108,10 @@ class Reflash:
         return size
 
     def install_refactor(self, filename):
-        infile = self.images_folder + "/" + filename
+        infile = self.images_folder + "/" + filename+".img.xz"
         if not os.path.isfile(infile):
             self.install_error = "Chosen file is not present"
+            self.install_state = "ERROR"
             return
         cmd = ["sudo", "/usr/local/bin/flash-recore", infile]
         self.bytes_total = self.get_uncompressed_size(infile)

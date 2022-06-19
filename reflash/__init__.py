@@ -7,9 +7,7 @@ from .reflash import Reflash
 def get_settings():
     return {
         "version_file": "/etc/refactor.version",
-        "klipper_dir": "/home/elias/workspace/klipper",#"/home/debian/klipper",
-        "install_script": "/root/install_refactor.sh",
-        "images_folder": "/home/elias/workspace/Reflash/images/"
+        "images_folder": "/opt/images/"
     }
 
 app = flask.Flask(__name__)
@@ -32,7 +30,7 @@ def run_command():
         reflash.download_version(refactor_image)
         return { "success": True}
     if command == "install_refactor":
-        filename = data["filename"]
+        filename = flask.request.json.get("filename")
         reflash.install_version(filename)
         return {"success": True}
     if command == "cancel_download":
