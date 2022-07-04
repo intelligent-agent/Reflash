@@ -4,12 +4,21 @@ This is a simple python server that is set up to
 get and flash Refactor images
 
 ## Setup
+### Additional packages for running
+apt install \
+python3-flask \
+python3-requests
+pv \
+xz \
+avahi-daemon \
+python3-curses
 
+### Additional packages for installation
 apt install \
 setuptools \
 unzip \
-python3-flask \
-python3-requests
+
+
 
 Download source:
 wget https://github.com/intelligent-agent/Reflash/archive/refs/heads/main.zip
