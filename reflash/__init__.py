@@ -38,7 +38,7 @@ def run_command():
         status = {"success": stat}
         return status
     if command == "reboot_board":
-        stat = reflash.reboot()
+        stat = Reflash.reboot()
         status = {"success": stat}
         return status
     if command == "get_download_progress":
