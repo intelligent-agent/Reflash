@@ -37,6 +37,10 @@ def run_command():
         stat = reflash.cancel_download()
         status = {"success": stat}
         return status
+    if command == "reboot_board":
+        stat = reflash.reboot()
+        status = {"success": stat}
+        return status
     if command == "get_download_progress":
         progress = reflash.get_download_progress()
         return progress
