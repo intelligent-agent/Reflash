@@ -20,10 +20,10 @@ jobs:
         node-version: 18
     - run: npm ci
     - run: npm run build
-    - name: Package app
-      run: tar -cf reflash.tar.gz client/dist reflash/*.py
+    - name: Make archive
+      run: make gzip
       working-directory: ./
     - uses: actions/upload-artifact@v2.2.4
       with:
-        name: reflash.tar.gz
-        path: reflash.tar.gz
+        name: reflash.zip
+        path: reflash.zip
