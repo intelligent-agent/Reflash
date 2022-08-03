@@ -9,6 +9,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: ./client
     steps:
     - uses: actions/checkout@v3
     - name: Use Node.js '18'
@@ -18,3 +21,10 @@ jobs:
         cache: 'npm'
     - run: npm ci
     - run: npm run build
+    - name: Package app
+      run: tar -cf reflash.tar.gz client/dist reflash/*.py
+      working-directory: ./
+    - uses: actions/upload-artifact@v2.2.4
+      with:
+        name: reflash.tar.gz
+        path: reflash.tar.gz
