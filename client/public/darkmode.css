@@ -1,0 +1,44 @@
+.w-app .primary {
+    color: #9bbff9;
+}
+
+.w-select--no-padding .w-select__selection {
+  color: #fff;
+}
+
+.w-app .primary--bg {
+  color: #111;
+  background-color: #9bbff9;
+}
+
+.w-app .secondary {
+  color: #fff;
+}
+
+.w-card {
+  border: 1px solid #444;
+}
+
+.w-select__selection-wrap {
+  border-color: #444;
+}
+
+.w-select__selection {
+  color: #ddd;
+}
+
+.w-select__menu {
+  background-color: #333;
+}
+
+.w-drawer {
+  background-color: #222;
+}
+
+body {
+  background-color: #222;
+}
+
+#app{
+  color: #9bbff9;
+}

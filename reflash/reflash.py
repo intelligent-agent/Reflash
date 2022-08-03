@@ -8,6 +8,7 @@ class Reflash:
     def __init__(self, settings):
         self.refactor_version_file = settings.get("version_file")
         self.images_folder = settings.get("images_folder")
+        self.settings_folder = settings.get("settings_folder")
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self.bytes_downloaded = 0
         self.bytes_to_download = 1
@@ -18,34 +19,21 @@ class Reflash:
         self.install_progress = 0
         self.is_install_finished = False
         self.install_error = ""
+        self.install_cancelled = False
 
     def get_refactor_version(self):
         with open(self.refactor_version_file, "r") as f:
             version = f.read().replace("\n", "")
             return version
 
-    def get_releases(self):
-        import requests
-        self.releases = requests.get(
-            "https://api.github.com/repos/intelligent-agent/Refactor/releases")
-        assets = []
-        for release in self.releases.json():
-            for asset in release["assets"]:
-                if "recore" in asset["name"]:
-                    img_type = "Mainsail" if "mainsail" in asset["name"] else "OctoPrint"
-                    version = release["name"]
-                    assets.append({
-                        "name": "Refactor-"+img_type +"-"+version,
-                        "size": asset["size"],
-                        "url": asset["browser_download_url"]
-                    })
-        return assets
-
     def get_local_releases(self):
         import glob
-        images = [
-            os.path.basename(f).replace(".img.xz", "")
-            for f in glob.glob(self.images_folder + "/*.img.xz")
+        files = glob.glob(self.images_folder + "/*.img.xz")
+        images = [ {
+                "name": os.path.basename(f).replace(".img.xz", ""),
+                "size": os.stat(f).st_size,
+                "id": 0
+            } for f in files
         ]
         return images
 
@@ -56,8 +44,14 @@ class Reflash:
         self.download_cancelled = False
         self.is_download_finished = False
         self.bytes_to_download = refactor_image["size"]
-        filename = refactor_image["name"]+".img.xz"
+        filename = refactor_image["name"]
         self.executor.submit(self.download_refactor, url, filename)
+
+    def save_file_chunk(self, chunk, filename, is_new_file):
+        open_rights = "wb+" if is_new_file else "ab+"
+        with open(self.images_folder+"/"+filename, open_rights) as f:
+            f.write(chunk)
+        return True
 
     def download_refactor(self, url, filename):
         import requests
@@ -89,11 +83,19 @@ class Reflash:
         }
 
     def install_version(self, filename):
+        infile = self.images_folder + "/" + filename+".img.xz"
+        if not os.path.isfile(infile):
+            self.install_error = "Chosen file is not present"
+            self.install_state = "ERROR"
+            return False
         self.install_progress = 0
         self.is_install_finished = False
         self.bytes_transferred = 0
         self.install_state = "INSTALLING"
-        ex = self.executor.submit(self.install_refactor, filename)
+        self.install_cancelled = False
+        self.bytes_total = self.get_uncompressed_size(infile)
+        ex = self.executor.submit(self.install_refactor, infile)
+        return True
 
     def get_uncompressed_size(self, infile):
         line = subprocess.run(f"xz -l {infile} | grep MiB",
@@ -108,15 +110,9 @@ class Reflash:
         return size
 
     def install_refactor(self, filename):
-        infile = self.images_folder + "/" + filename+".img.xz"
-        if not os.path.isfile(infile):
-            self.install_error = "Chosen file is not present"
-            self.install_state = "ERROR"
-            return
-        cmd = ["sudo", "/usr/local/bin/flash-recore", infile]
-        self.bytes_total = self.get_uncompressed_size(infile)
+        cmd = ["sudo", "/usr/local/bin/flash-recore", filename]
         self.bytes_transferred = 0
-        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
         while True:
             time.sleep(0.3)
             if self.process.poll() == 0:
@@ -130,6 +126,8 @@ class Reflash:
                         self.bytes_transferred = int(lines[-1].strip())
                     except:
                         pass
+            if self.install_cancelled:
+                break
             self.install_progress = self.bytes_transferred / self.bytes_total
 
     def get_install_progress(self):
@@ -137,16 +135,40 @@ class Reflash:
             "progress": self.install_progress,
             "is_finished": self.is_install_finished,
             "error": self.install_error,
-            "state": self.install_state
+            "state": self.install_state,
+            "cancelled": self.install_cancelled
         }
+
+    def cancel_installation(self):
+        self.install_cancelled = True
+        self.install_state = "CANCELLED"
+        return True
 
     def run_system_command(command):
         return subprocess.run(command.split(),
                               capture_output=True,
                               text=True).stdout.strip()
 
+    def save_settings(self, settings):
+        import json
+        json_file = json.dumps(settings, indent=4)
+        with open(self.settings_folder+"/settings.json", "w+") as f:
+            f.write(json_file)
+        return True
+
+    def read_settings(self):
+        import json
+        path = self.settings_folder+"/settings.json"
+        if not os.path.isfile(path):
+            return "{}"
+        with open(path, "r") as f:
+            return json.load(f)
+
+    def enable_ssh():
+        return Reflash.run_system_command("sudo /usr/local/bin/enable-emmc-ssh")
+
     def reboot():
-        return Reflash.run_system_command("sudo /usr/sbin/reboot")
+        return Reflash.run_system_command("sudo /usr/local/bin/reboot-board")
 
     def get_boot_media():
         return Reflash.run_system_command("/usr/local/bin/get-boot-media")

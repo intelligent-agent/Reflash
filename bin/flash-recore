@@ -2,29 +2,6 @@
 
 INFILE=$1
 
-OUTFILE="/dev/mmcblk0"
-mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount
+OUTFILE="/dev/zero"
 (xz -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE}) 2>/tmp/recore-flash-progress
-sync
-
-# Re-read partition table
-partprobe /dev/mmcblk0
-
-# Create new uuids so they are different than the USB drive
-tune2fs -U random /dev/mmcblk0p1
-tune2fs -U random /dev/mmcblk0p2
-UUID1=`blkid -s UUID -o value /dev/mmcblk0p1`
-UUID2=`blkid -s UUID -o value /dev/mmcblk0p2`
-
-# mount and exchange UUID
-mkdir -p /mnt/emmc
-mount /dev/mmcblk0p2 /mnt/emmc
-sed -i "s:UUID=.* \/ :UUID=${UUID2} / :" /mnt/emmc/etc/fstab
-sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" /mnt/emmc/etc/fstab
-umount /dev/mmcblk0p2
-
-mount /dev/mmcblk0p1 /mnt/emmc
-sed -i "s:^rootdev=.*:rootdev=UUID=${UUID2}:" /mnt/emmc/armbianEnv.txt
-umount /dev/mmcblk0p1
-
 sync
