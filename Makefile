@@ -19,8 +19,9 @@ upload:
 	scp systemd/*.service root@recore.local:/etc/systemd/system/
 
 gzip:
-	rm -rf zip
 	mkdir -p zip/reflash
 	cp -r client/dist zip/reflash
 	cp reflash/*.py zip/reflash
 	cd zip; tar -zcvf reflash.zip reflash
+	mv zip/reflash.zip .
+	rm -rf zip
