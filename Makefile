@@ -24,4 +24,6 @@ gzip:
 	cp reflash/*.py zip/reflash
 	cd zip; tar -zcvf reflash.zip reflash
 	mv zip/reflash.zip .
-	rm -rf zip
+
+upload-zip:
+	scp reflash.zip root@recore.local:/var/www/html/
