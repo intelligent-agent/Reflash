@@ -24,7 +24,6 @@ jobs:
       run: make gzip
       working-directory: ./
     - uses: actions/upload-artifact@v3
-      working-directory: ./zip
       with:
         name: reflash
-        path: reflash
+        path: zip/reflash
