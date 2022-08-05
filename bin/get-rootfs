@@ -1,9 +1,0 @@
-#!/bin/bash
-
-ROOTFS=`cat /proc/mounts | grep "/ "`
-
-if [[ "$ROOTFS" == *"sda"* ]]; then
-  echo "usb"
-elif [[ "$ROOTFS" == *"mmc"* ]]; then
-  echo "emmc"
-fi

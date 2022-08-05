@@ -1,3 +1,0 @@
-#!/bin/bash
-
-echo "dummy reboot" | systemd-cat -t reflash -p warning
