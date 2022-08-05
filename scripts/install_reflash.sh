@@ -25,4 +25,4 @@ EOF
 sudo ln -s /etc/nginx/sites-available/reflash /etc/nginx/sites-enabled/
 sudo rm /etc/nginx/sites-enabled/default
 
-apt install python3-flask python3-gunicorn
+apt install python3-flask python3-gunicorn gunicorn

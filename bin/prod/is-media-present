@@ -1,0 +1,28 @@
+#!/bin/bash
+
+MEDIA=$1
+
+mount -a
+
+case $MEDIA in
+  usb)
+    if test -f "/mnt/usb/armbianEnv.txt"; then
+      echo "yes"
+    else
+      echo "no"
+    fi
+    ;;
+
+  emmc)
+    if test -f "/mnt/emmc/armbianEnv.txt"; then
+      echo "yes"
+    else
+      echo "no"
+    fi
+    ;;
+
+  *)
+  echo "usage $0 <emmc/usb>"
+  ;;
+
+esac

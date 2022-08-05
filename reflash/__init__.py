@@ -37,18 +37,6 @@ def run_command():
         refactor_image = flask.request.json.get("refactor_image")
         reflash.download_version(refactor_image)
         return { "success": True}
-    if command == "end_file_upload":
-        reflash.finish_file()
-        return { "success": True}
-    if command == "upload_chunk":
-        chunk = flask.request.json.get("chunk")
-        filename = flask.request.json.get("filename")
-        is_new_file = flask.request.json.get("is_new_file")
-        b64data = chunk.split(",")[1]
-        from base64 import b64decode
-        decoded_chunk = b64decode(b64data)
-        stat = reflash.save_file_chunk(decoded_chunk, filename, is_new_file)
-        return { "success": stat}
     if command == "install_refactor":
         filename = flask.request.json.get("filename")
         stat = reflash.install_version(filename)
@@ -59,6 +47,15 @@ def run_command():
     if command == "cancel_installation":
         stat = reflash.cancel_installation()
         return {"success": stat}
+    if command == "upload_chunk":
+        chunk = flask.request.json.get("chunk")
+        filename = flask.request.json.get("filename")
+        is_new_file = flask.request.json.get("is_new_file")
+        b64data = chunk.split(",")[1]
+        from base64 import b64decode
+        decoded_chunk = b64decode(b64data)
+        stat = reflash.save_file_chunk(decoded_chunk, filename, is_new_file)
+        return { "success": stat}
     if command == "reboot_board":
         stat = Reflash.reboot()
         return {"success": stat}
@@ -79,6 +76,16 @@ def run_command():
             "install_progress": reflash.get_install_progress(),
             "settings": reflash.read_settings()
         }
+
+@app.route('/api/options')
+def get_options():
+    return reflash.read_settings()
+
+@app.route('/api/save_options',methods = ['POST'])
+def save_options():
+    settings = flask.request.json
+    reflash.save_settings(settings)
+    return { "success": True}
 
 @app.route('/favicon.ico')
 def favicon():

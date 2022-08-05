@@ -10,20 +10,20 @@
       <w-flex class="pa5 secondary" column>
         <h3>Options</h3>
         <w-switch
-          @change="$emit('set-option','darkmode', darkmode)"
-          v-model="darkmode"
+          @change="onChange('darkmode', options.darkmode)"
+          v-model="options.darkmode"
           class="ma2"
           label="Darkmode">
         </w-switch>
         <w-switch
-          @change="$emit('set-option', 'rebootWhenDone', rebootWhenDone)"
-          v-model="rebootWhenDone"
+          @change="onChange('rebootWhenDone', options.rebootWhenDone)"
+          v-model="options.rebootWhenDone"
           class="ma2"
           label="Reboot when flashing is finished">
         </w-switch>
         <w-switch
-        @change="$emit('set-option','enableSsh', enableSsh)"
-        v-model="enableSsh"
+        @change="onChange('enableSsh', options.enableSsh)"
+        v-model="options.enableSsh"
         class="ma2"
         label="Enable SSH access on new image">
         </w-switch>
@@ -31,8 +31,8 @@
         <w-divider class="my6 mx-3"></w-divider>
         <h3>Reboot to eMMC</h3>
         <w-switch
-          @change="$emit('set-option','bootFromEmmc', bootFromEmmc)"
-          v-model="bootFromEmmc"
+          @change="onChange('bootFromEmmc', options.bootFromEmmc)"
+          v-model="options.bootFromEmmc"
           class="ma2"
           label="Set boot media to eMMC">
         </w-switch>
@@ -46,15 +46,27 @@
 </template>
 
 <script>
+import { mapGetters, mapActions } from 'vuex';
+
 export default {
   name: 'TheOptions',
-  props: ['settings'],
+  methods: {
+    ...mapActions(['getOptions', 'setOption']),
+    onChange(name, value){
+      let data = {};
+      data[name] = value;
+      this.setOption(data);
+      this.$emit('set-option',name, value);
+    }
+  },
   data: () => ({
-    darkmode: false,
-    rebootWhenDone: false,
-    enableSsh: false,
-    bootFromEmmc: false,
     openDrawer: false
-  })
+  }),
+  computed: mapGetters(['options']),
+  created() {
+    this.getOptions().then(() => {
+      this.$emit('set-option','darkmode', this.options.darkmode);
+    });
+  }
 }
 </script>

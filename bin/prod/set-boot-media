@@ -1,0 +1,20 @@
+#!/bin/bash
+
+NEW_MEDIA=$1
+
+if [ "x${NEW_MEDIA}" == "xusb" ]; then
+  NEW_DEV="/dev/sda2"
+elif [ "x${NEW_MEDIA}" == "xemmc" ]; then
+  NEW_DEV="/dev/mmcblk0p2"
+else
+  echo "usage $0 usb/emmc"
+  exit 1
+fi
+
+KEY="^rootdev=.*$"
+REPLACE="rootdev=${NEW_DEV}"
+
+mount -o remount -rw /dev/mmcblk0p1 /mnt/emmc
+sed -i "s:${KEY}:${REPLACE}:g" /mnt/emmc/armbianEnv.txt
+sync
+mount -o remount -r /dev/mmcblk0p1 /mnt/emmc

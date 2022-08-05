@@ -135,6 +135,7 @@
 <script>
 import TheOptions from './components/TheOptions'
 import WaveUI from 'wave-ui'
+import { mapGetters } from 'vuex';
 
 export default {
   name: 'App',
@@ -161,7 +162,6 @@ export default {
     uploadError: false,
     openInfo: false,
     showOverlay: false,
-    options: {},
     availableMethods: [
       { id: 0, label: 'GitHub', value: 0, image: 'GitHub'},
       { id: 1, label: 'File upload', value: 1, image: 'File'}
@@ -307,10 +307,10 @@ export default {
           clearInterval(self.installProgressTimer);
           self.isInstalling = false;
           self.installButtonText = "Install";
-          if(self.options['enableSsh']){
+          if(self.options.enableSsh){
             self.enableSsh();
           }
-          if(self.options['rebootWhenDone']){
+          if(self.options.rebootWhenDone){
             self.rebootBoard();
           }
           else{
@@ -345,7 +345,7 @@ export default {
       this.runCommand("enable_ssh",{}, function() {});
     },
     isServerUp(){
-      fetch(`api/favicon.ico`)
+      fetch(`/favicon.ico`)
         .then(response => {
           if(response.status == 200){
             location.reload();
@@ -355,10 +355,13 @@ export default {
     },
     setOption(opt, value){
       if(opt == "darkmode"){
+        if(!this.dark){
+          this.dark = document.createElement('link')
+          this.dark.rel = 'stylesheet'
+          this.dark.href = '/darkmode.css'
+        }
         this.setTheme(value);
       }
-      this.options[opt] = value;
-      this.runCommand("save_settings",{settings: this.options}, function() {});
     },
     populateImages(releases){
       for(let release of releases){
@@ -410,14 +413,8 @@ export default {
         self.isInstalling = true;
       }
     });
-
   },
-  mounted () {
-    this.dark = document.createElement('link')
-    this.dark.rel = 'stylesheet'
-    this.dark.href = '/darkmode.css'
-    this.setTheme(false);
-  }
+  computed: mapGetters(['options']),
 }
 </script>
 
