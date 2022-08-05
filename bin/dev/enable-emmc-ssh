@@ -1,0 +1,3 @@
+#!/bin/bash
+
+echo "dummy enable ssh on emmc" | systemd-cat -t reflash -p warning

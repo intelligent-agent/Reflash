@@ -70,9 +70,11 @@ class Reflash:
         self.is_download_finished = True
         self.download_state = "FINISHED"
 
-    def cancel_download(self):
+    def cancel_download(self, refactor_image):
         self.download_cancelled = True
         self.download_state = "CANCELLED"
+        filename = refactor_image["name"]
+        os.remove(self.images_folder + "/" + filename)
 
     def get_download_progress(self):
         return {
@@ -160,9 +162,13 @@ class Reflash:
         import json
         path = self.settings_folder+"/settings.json"
         if not os.path.isfile(path):
-            return "{}"
+            return {}
         with open(path, "r") as f:
-            return json.load(f)
+            try:
+                return json.load(f)
+            except:
+                return {}
+
 
     def enable_ssh():
         return Reflash.run_system_command("sudo /usr/local/bin/enable-emmc-ssh")

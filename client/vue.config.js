@@ -7,7 +7,12 @@ module.exports = {
         loglevel: 'debug',
         ws: true,
         changeOrigin: true,
-        pathRewrite: { '^/api' : '/api' }
+      },
+      '^/favicon.ico':{
+        target: 'http://127.0.0.1:8081'
+      },
+      '^/darkmode.css': {
+        target: 'http://127.0.0.1:8081'
       }
     }
   },
