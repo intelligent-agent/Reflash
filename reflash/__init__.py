@@ -87,6 +87,26 @@ def save_options():
     reflash.save_settings(settings)
     return { "success": True}
 
+@app.route('/api/options')
+def get_options():
+    return reflash.read_settings()
+
+@app.route('/api/save_options',methods = ['POST'])
+def save_options():
+    settings = flask.request.json
+    reflash.save_settings(settings)
+    return { "success": True}
+
+@app.route('/api/options')
+def get_options():
+    return reflash.read_settings()
+
+@app.route('/api/save_options',methods = ['POST'])
+def save_options():
+    settings = flask.request.json
+    reflash.save_settings(settings)
+    return { "success": True}
+
 @app.route('/favicon.ico')
 def favicon():
     return flask.send_from_directory(os.path.join(app.root_path, 'dist'),
