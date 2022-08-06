@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
    name='reflash',
-   version='0.1',
+   version='0.0.3',
    description='Server that can flash Refactor images',
    author='Elias Bakken',
    license="AGPLv3",
