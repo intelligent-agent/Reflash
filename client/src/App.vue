@@ -136,6 +136,7 @@
 import TheOptions from './components/TheOptions'
 import WaveUI from 'wave-ui'
 import { mapGetters } from 'vuex';
+import axios from 'axios';
 
 export default {
   name: 'App',
@@ -342,7 +343,7 @@ export default {
       this.runCommand("reboot_board", {}, function() {});
     },
     enableSsh(){
-      this.runCommand("enable_ssh",{}, function() {});
+      axios.put(`/api/enable_ssh`);
     },
     isServerUp(){
       fetch(`/favicon.ico`)
@@ -354,13 +355,16 @@ export default {
         });
     },
     setOption(opt, value){
-      if(opt == "darkmode"){
+      if(opt == 'darkmode'){
         if(!this.dark){
           this.dark = document.createElement('link')
           this.dark.rel = 'stylesheet'
           this.dark.href = '/darkmode.css'
         }
         this.setTheme(value);
+      }
+      if(opt == 'bootFromEmmc'){
+        axios.put(`/api/set_boot_media`, {'media': value ? 'emmc' : 'usb'});
       }
     },
     populateImages(releases){

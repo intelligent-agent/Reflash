@@ -169,24 +169,11 @@ class Reflash:
             except:
                 return {}
 
-
     def enable_ssh():
         return Reflash.run_system_command("sudo /usr/local/bin/enable-emmc-ssh")
 
     def reboot():
         return Reflash.run_system_command("sudo /usr/local/bin/reboot-board")
 
-    def get_boot_media():
-        return Reflash.run_system_command("/usr/local/bin/get-boot-media")
-
-    def change_boot_media():
-        if Reflash.get_boot_media() == "emmc":
-            os.system("sudo /usr/local/bin/set-boot-media usb")
-        else:
-            os.system("sudo /usr/local/bin/set-boot-media emmc")
-
-    def is_usb_present():
-        return Reflash.run_system_command("/usr/local/bin/is-media-present usb") == "yes"
-
-    def is_emmc_present():
-        return Reflash.run_system_command("/usr/local/bin/is-media-present emmc") == "yes"
+    def set_boot_media(self, media):
+        return os.system(f"sudo /usr/local/bin/set-boot-media {media}")

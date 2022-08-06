@@ -1,7 +1,0 @@
-#!/bin/bash
-
-INFILE=$1
-
-OUTFILE="/dev/zero"
-(xz -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE}) 2>/tmp/recore-flash-progress
-sync
