@@ -49,19 +49,28 @@ def run_command():
         decoded_chunk = b64decode(b64data)
         stat = reflash.save_file_chunk(decoded_chunk, filename, is_new_file)
         return { "success": stat}
-    if command == "reboot_board":
-        stat = Reflash.reboot()
-        return {"success": stat}
-    if command == "get_download_progress":
-        return reflash.get_download_progress()
-    if command == "get_install_progress":
-        return reflash.get_install_progress()
-    if command == "get_data":
-        return {
-            "locals": reflash.get_local_releases(),
-            "download_progress": reflash.get_download_progress(),
-            "install_progress": reflash.get_install_progress()
-        }
+
+@app.route('/api/get_data')
+def get_data():
+    return {
+        "locals": reflash.get_local_releases(),
+        "download_progress": reflash.get_download_progress(),
+        "install_progress": reflash.get_install_progress()
+    }
+
+@app.route('/api/get_download_progress')
+def get_download_progress():
+    return reflash.get_download_progress()
+
+
+@app.route('/api/get_install_progress')
+def get_install_progress():
+    return reflash.get_install_progress()
+
+@app.route('/api/reboot_board', methods = ['PUT'])
+def reboot_board():
+    stat = Reflash.reboot()
+    return {"success": stat}
 
 @app.route('/api/enable_ssh', methods = ['PUT'])
 def enable_ssh():

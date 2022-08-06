@@ -3,3 +3,4 @@
 mkdir -p /mnt/emmc2
 mount /dev/mmcblk0p2 /mnt/emmc2
 /lib/systemd/systemd-sysv-install enable ssh --root=/mnt/emmc2
+umount /mnt/emmc2
