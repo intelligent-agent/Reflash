@@ -16,6 +16,7 @@ tune2fs -U random /dev/mmcblk0p2
 UUID1=`blkid -s UUID -o value /dev/mmcblk0p1`
 UUID2=`blkid -s UUID -o value /dev/mmcblk0p2`
 
+mkdir -p /mnt/emmc
 # mount and exchange UUID
 mount /dev/mmcblk0p2 /mnt/emmc
 sed -i "s:UUID=.* \/ :UUID=${UUID2} / :" /mnt/emmc/etc/fstab

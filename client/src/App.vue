@@ -47,27 +47,11 @@
 
         <div class="xs1 pa1"><b>Choose image to {{selectedMethod.id == 0 ? "Download" : "Upload"}}</b></div>
         <div class="xs1 pa1">
-          <w-progress
-            v-if="isTransferring"
-            :model-value="transferProgress"
-            size="1em"
-            outline
-            round
-            color="light-blue"
-            stripes>
-          </w-progress>
+          <ProgressBar ref="transferprogressbar" name="transfer"/>
         </div>
         <div class="xs1 pa1"><b>Choose image to install</b></div>
         <div class="xs1 pa1">
-          <w-progress
-            v-if="isInstalling"
-            :model-value="installProgress"
-            size="1em"
-            outline
-            round
-            color="light-blue"
-            stripes>
-          </w-progress>
+          <ProgressBar ref="installprogressbar" name="install"/>
         </div>
         <div class="xs1 pa1"></div>
 
@@ -92,11 +76,7 @@
           </w-input>
         </div>
         <div class="xs1 align-self-center justify-space-between">
-          <w-flex justify-space-between>
-            <span class="pa3">{{isTransferring ? transferProgress.toFixed(0)+"%" : ""}}</span>
-            <w-button @click="onTransferButtonClick()" v-if="this.computeTransferButtonVisible()">{{this.computeTransferButtonText()}}</w-button>
-            <span class="pa3">{{ ""}}</span>
-          </w-flex>
+          <w-button @click="onTransferButtonClick()" v-if="this.computeTransferButtonVisible()">{{this.computeTransferButtonText()}}</w-button>
         </div>
         <div class="xs1">
           <w-select
@@ -134,14 +114,16 @@
 
 <script>
 import TheOptions from './components/TheOptions'
+import ProgressBar from './components/ProgressBar'
 import WaveUI from 'wave-ui'
-import { mapGetters } from 'vuex';
+import { mapGetters, mapActions } from 'vuex';
 import axios from 'axios';
 
 export default {
   name: 'App',
   components: {
-    TheOptions
+    TheOptions,
+    ProgressBar
   },
   setup () {
     const waveui = new WaveUI(this, {})
@@ -172,6 +154,11 @@ export default {
     files: []
   }),
   methods: {
+    ...mapActions([
+      'setProgress',
+      'setVisible',
+      'setTimeStarted',
+      'setTimeFinished']),
     computeImage(name){
       return require('./assets/'+name+'-'+this.imageColor+'.png')
     },
@@ -225,6 +212,7 @@ export default {
       var reader = new FileReader();
       var offset = 0;
       var filesize = this.file.size;
+      this.setTimeStarted({name: 'transfer', time: Date.now()});
 
       reader.onload = function(){
           var result = reader.result;
@@ -234,24 +222,27 @@ export default {
              "filename": self.fileName,
              "is_new_file": offset == 0
            }, function(status) {
-            if(status.success){
+            if(status.success && self.isTransferring){
+              self.$refs.transferprogressbar.update();
               offset += CHUNK_SIZE;
               if(offset <= filesize){
                 var slice = self.file.slice(offset, offset + CHUNK_SIZE);
                 reader.readAsDataURL(slice);
                 self.transferProgress = Math.round((offset/filesize)*100);
+                self.setProgress({name: 'transfer', progress: self.transferProgress });
               }
               else{
                 offset = filesize;
                 self.transferProgress = 100;
                 self.isTransferring = false;
-                self.selectedUploadImage = [];
+                self.setVisible({name: 'transfer', visible: false});
+                self.getData();
               }
             }
             else{
               self.uploadError = true;
               self.isTransferring = false;
-              self.selectedUploadImage = [];
+              self.setVisible({name: 'transfer', visible: false});
             }
           });
       };
@@ -265,6 +256,7 @@ export default {
     },
     onTransferButtonClick(){
       this.isTransferring = !this.isTransferring;
+      this.setVisible({name: 'transfer', visible: this.isTransferring});
       if(this.selectedMethod.id == 0){
         this.downloadSelected();
       }
@@ -274,58 +266,43 @@ export default {
     },
     downloadSelected(){
       let self = this;
-
       if(this.isTransferring){
-        this.transferProgress = 0;
+        self.setTimeStarted({name: 'transfer', time: Date.now()});
         this.runCommand("download_refactor", {
             "refactor_image": this.selectedGithubImage
         }, function() {
-            self.transferProgressTimer = setInterval(self.checktransferProgress, 1000);
+            self.downloadProgressTimer = setInterval(self.getDownloadProgress, 1000);
         });
       }
       else{
         this.runCommand("cancel_download", {}, function() {
-            clearInterval(self.transferProgressTimer);
-            this.isTransferring = false;
+            clearInterval(self.downloadProgressTimer);
+            self.isTransferring = false;
+            self.setVisible({name: 'transfer', visible: false});
         });
       }
     },
-    checktransferProgress() {
-      let self = this;
-      this.runCommand("get_download_progress", {}, function(data) {
-        self.transferProgress = (data.progress*100);
-        if(data.is_finished){
-          clearInterval(self.transferProgressTimer);
-          self.isTransferring = false;
-        }
-      })
-    },
-    checkInstallProgress() {
-      let self = this;
-      this.runCommand("get_install_progress", {}, function(data) {
-        self.installProgress = (data.progress*100);
-        if(data.is_finished){
-          clearInterval(self.installProgressTimer);
-          self.isInstalling = false;
-          self.installButtonText = "Install";
-          if(self.options.enableSsh){
-            self.enableSsh();
-          }
-          if(self.options.rebootWhenDone){
-            self.rebootBoard();
-          }
-          else{
-            self.installFinished = true;
-          }
-        }
-      })
+    async getDownloadProgress() {
+      const response = await axios.get(`/api/get_download_progress`);
+      let data = response.data
+      this.setProgress({name: 'transfer', progress: data.progress*100});
+      this.$refs.transferprogressbar.update();
+      if(data.is_finished){
+        clearInterval(this.downloadProgressTimer);
+        this.isTransferring = false;
+        this.setVisible({name: 'transfer', visible: this.isTransferring});
+        this.getData();
+      }
     },
     installSelected(){
       let self = this;
       this.isInstalling = !this.isInstalling;
+      this.setVisible({name: 'install', visible: this.isInstalling});
       this.installButtonText = this.isInstalling ? "Cancel" : "Install";
       if(this.isInstalling){
-        this.installProgress = 0;
+        self.setTimeStarted({name: 'install', time: Date.now()});
+        self.setProgress({name: 'install', progress: 0});
+        self.$refs.installprogressbar.update();
         this.runCommand("install_refactor", {
             "filename": this.selectedLocalImage
         }, function() {
@@ -338,9 +315,31 @@ export default {
         });
       }
     },
+    async checkInstallProgress() {
+      const response = await axios.get(`/api/get_install_progress`);
+      let data = response.data
+      this.setProgress({name: 'install', progress: data.progress*100});
+      this.$refs.installprogressbar.update();
+      if(data.is_finished){
+        clearInterval(this.installProgressTimer);
+
+        this.isInstalling = false;
+        this.setVisible({name: 'install', visible: false});
+        this.installButtonText = "Install";
+        if(this.options.enableSsh){
+          this.enableSsh();
+        }
+        if(this.options.rebootWhenDone){
+          this.rebootBoard();
+        }
+        else{
+          this.installFinished = true;
+        }
+      }
+    },
     rebootBoard(){
       this.showOverlay = true;
-      this.runCommand("reboot_board", {}, function() {});
+      axios.put(`/api/reboot_board`);
     },
     enableSsh(){
       axios.put(`/api/enable_ssh`);
@@ -381,7 +380,20 @@ export default {
         }
       }
     },
-
+    async getData(){
+      const response = await axios.get(`/api/get_data`);
+      let data = response.data
+      this.localImages = data.locals;
+      if(data.download_progress.state === "DOWNLOADING"){
+        this.downloadProgressTimer = setInterval(this.getDownloadProgress, 1000);
+        this.setVisible({name: 'transfer', visible: true});
+        this.isTransferring = true;
+      }
+      if(data.install_progress.state == "INSTALLING"){
+        this.installProgressTimer = setInterval(this.checkInstallProgress, 1000);
+        this.isInstalling = true;
+      }
+    },
     async runCommand(command, params, on_success){
       await fetch(`api/run_command`, {
         method: 'POST',
@@ -401,24 +413,9 @@ export default {
     fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
       .then(response => response.json())
       .then(data => (this.populateImages(data)));
-    let self = this;
-    self.runCommand("get_data", {}, function(data) {
-      self.localImages = data.locals;
-      for(let setting in data.settings){
-        self.setOption(setting, data.settings[setting]);
-      }
-
-      if(data.download_progress.state == "DOWNLOADING"){
-        self.transferProgressTimer = setInterval(self.checktransferProgress, 1000);
-        self.isTransferring = true;
-      }
-      if(data.install_progress.state == "INSTALLING"){
-        self.installProgressTimer = setInterval(self.checkInstallProgress, 1000);
-        self.isInstalling = true;
-      }
-    });
+    this.getData();
   },
-  computed: mapGetters(['options']),
+  computed: mapGetters(['options', 'progress']),
 }
 </script>
 
