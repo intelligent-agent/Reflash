@@ -1,0 +1,14 @@
+#!/bin/bash
+
+NEW_MEDIA=$1
+
+if [ "x${NEW_MEDIA}" == "xusb" ]; then
+  NEW_DEV="usb"
+elif [ "x${NEW_MEDIA}" == "xemmc" ]; then
+  NEW_DEV="emmc"
+else
+  echo "usage $0 usb/emmc"
+  exit 1
+fi
+
+echo "${NEW_MEDIA} > /opt/reflash/media"

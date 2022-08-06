@@ -22,17 +22,10 @@ reflash = Reflash(settings)
 @app.route("/api/run_command",methods = ['POST'])
 def run_command():
     command = flask.request.json.get("command")
-    if command == "save_settings":
-        settings = flask.request.json.get("settings")
-        reflash.save_settings(settings)
+    if command == "set_boot_media":
+        media = flask.request.json.get("media")
+        Reflash.set_boot_media(media)
         return { "success": True}
-    if command == "change_boot_media":
-        Reflash.change_boot_media()
-        status = {
-            "success": True,
-            "boot_media": reflash.get_boot_media()
-        }
-        return status
     if command == "download_refactor":
         refactor_image = flask.request.json.get("refactor_image")
         reflash.download_version(refactor_image)
@@ -69,12 +62,8 @@ def run_command():
     if command == "get_data":
         return {
             "locals": reflash.get_local_releases(),
-            "boot_media": Reflash.get_boot_media(),
-            "usb_present": Reflash.is_usb_present(),
-            "emmc_present": Reflash.is_emmc_present(),
             "download_progress": reflash.get_download_progress(),
-            "install_progress": reflash.get_install_progress(),
-            "settings": reflash.read_settings()
+            "install_progress": reflash.get_install_progress()
         }
 
 @app.route('/api/options')
