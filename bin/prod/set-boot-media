@@ -14,6 +14,14 @@ fi
 KEY="^rootdev=.*$"
 REPLACE="rootdev=${NEW_DEV}"
 
+mkdir -p /mnt/emmc
+if ! mountpoint -q /mnt/emmc
+then
+  mount /dev/mmcblk0p1 /mnt/emmc
+else
+  mount -o remount -rw /dev/mmcblk0p1 /mnt/emmc
+fi
+
 mount -o remount -rw /dev/mmcblk0p1 /mnt/emmc
 sed -i "s:${KEY}:${REPLACE}:g" /mnt/emmc/armbianEnv.txt
 sync
