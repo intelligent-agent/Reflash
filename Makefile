@@ -18,17 +18,19 @@ upload:
 	scp reflash/*.py root@recore.local:/var/www/html/reflash
 	scp systemd/*.service root@recore.local:/etc/systemd/system/
 
-tar: gzip
+tar: package
 	cd zip; tar -zcvf reflash.tar.gz reflash/
 	mv zip/reflash.tar.gz .
 	rm -rf zip
 
-gzip:
+package:
 	mkdir -p zip/reflash/bin
-	cp -r client/dist zip/reflash
-	cp reflash/*.py zip/reflash
+	mkdir -p zip/reflash/reflash
+	cp -r client/dist zip/reflash/reflash
+	cp reflash/*.py zip/reflash/reflash
 	cp bin/prod/* zip/reflash/bin
 	cp -r systemd zip/reflash
+	cp -r scripts zip/reflash
 
 upload-tar:
-	scp reflash.tar.gz root@recore.local:/var/www/html/
+	scp reflash.tar.gz root@recore.local:/usr/src/
