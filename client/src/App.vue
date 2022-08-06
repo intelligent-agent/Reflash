@@ -222,7 +222,7 @@ export default {
              "filename": self.fileName,
              "is_new_file": offset == 0
            }, function(status) {
-            if(status.success){
+            if(status.success && self.isTransferring){
               self.$refs.transferprogressbar.update();
               offset += CHUNK_SIZE;
               if(offset <= filesize){
