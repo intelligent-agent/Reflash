@@ -236,6 +236,7 @@ export default {
                 self.transferProgress = 100;
                 self.isTransferring = false;
                 self.setVisible({name: 'transfer', visible: false});
+                self.getData();
               }
             }
             else{
@@ -290,9 +291,7 @@ export default {
         clearInterval(this.downloadProgressTimer);
         this.isTransferring = false;
         this.setVisible({name: 'transfer', visible: this.isTransferring});
-        const response = await axios.get(`/api/get_data`);
-        let data = response.data
-        this.localImages = data.locals;
+        this.getData();
       }
     },
     installSelected(){
