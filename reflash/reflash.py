@@ -175,5 +175,5 @@ class Reflash:
     def reboot():
         return Reflash.run_system_command("sudo /usr/local/bin/reboot-board")
 
-    def set_boot_media(type):
-        os.system(f"sudo /usr/local/bin/set-boot-media {type}")
+    def set_boot_media(self, media):
+        return os.system(f"sudo /usr/local/bin/set-boot-media {media}")

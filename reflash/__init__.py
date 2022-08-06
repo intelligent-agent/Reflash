@@ -52,9 +52,6 @@ def run_command():
     if command == "reboot_board":
         stat = Reflash.reboot()
         return {"success": stat}
-    if command == "enable_ssh":
-        stat = Reflash.enable_ssh()
-        return {"success": stat}
     if command == "get_download_progress":
         return reflash.get_download_progress()
     if command == "get_install_progress":
@@ -65,6 +62,17 @@ def run_command():
             "download_progress": reflash.get_download_progress(),
             "install_progress": reflash.get_install_progress()
         }
+
+@app.route('/api/enable_ssh', methods = ['PUT'])
+def enable_ssh():
+    stat = Reflash.enable_ssh()
+    return {"success": stat}
+
+@app.route('/api/set_boot_media', methods = ['PUT'])
+def set_boot_media():
+    media = flask.request.json.get("media")
+    ret = reflash.set_boot_media(media)
+    return { "success": ret}
 
 @app.route('/api/options')
 def get_options():

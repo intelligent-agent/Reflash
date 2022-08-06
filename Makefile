@@ -1,5 +1,5 @@
 install_bins:
-	cp bin/* /usr/local/bin
+	cp bin/dev/* /usr/local/bin
 	chmod +x /usr/local/bin/*
 
 dev:
@@ -18,14 +18,17 @@ upload:
 	scp reflash/*.py root@recore.local:/var/www/html/reflash
 	scp systemd/*.service root@recore.local:/etc/systemd/system/
 
+tar: gzip
+	cd zip; tar -zcvf reflash.tar.gz reflash/
+	mv zip/reflash.tar.gz .
+	rm -rf zip
+
 gzip:
 	mkdir -p zip/reflash/bin
 	cp -r client/dist zip/reflash
 	cp reflash/*.py zip/reflash
 	cp bin/prod/* zip/reflash/bin
 	cp -r systemd zip/reflash
-	cd zip; tar -zcvf reflash.zip reflash
-	mv zip/reflash.zip .
 
-upload-zip:
-	scp reflash.zip root@recore.local:/var/www/html/
+upload-tar:
+	scp reflash.tar.gz root@recore.local:/var/www/html/

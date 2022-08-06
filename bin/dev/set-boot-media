@@ -11,4 +11,4 @@ else
   exit 1
 fi
 
-echo "${NEW_MEDIA} > /opt/reflash/media"
+echo "${NEW_MEDIA}" > /opt/reflash/media
