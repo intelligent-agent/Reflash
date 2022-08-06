@@ -275,7 +275,7 @@ export default {
       }
       else{
         this.runCommand("cancel_download", {}, function() {
-            clearInterval(self.transferProgressTimer);
+            clearInterval(self.downloadProgressTimer);
             self.isTransferring = false;
             self.setVisible({name: 'transfer', visible: false});
         });
@@ -287,10 +287,12 @@ export default {
       this.setProgress({name: 'transfer', progress: data.progress*100});
       this.$refs.transferprogressbar.update();
       if(data.is_finished){
-        clearInterval(this.transferProgressTimer);
+        clearInterval(this.downloadProgressTimer);
         this.isTransferring = false;
         this.setVisible({name: 'transfer', visible: this.isTransferring});
-        this.getData();
+        const response = await axios.get(`/api/get_data`);
+        let data = response.data
+        this.localImages = data.locals;
       }
     },
     installSelected(){
@@ -384,7 +386,7 @@ export default {
       let data = response.data
       this.localImages = data.locals;
       if(data.download_progress.state === "DOWNLOADING"){
-        this.transferProgressTimer = setInterval(this.getDownloadProgress, 1000);
+        this.downloadProgressTimer = setInterval(this.getDownloadProgress, 1000);
         this.setVisible({name: 'transfer', visible: true});
         this.isTransferring = true;
       }
