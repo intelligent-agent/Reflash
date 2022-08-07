@@ -6,7 +6,7 @@ import time
 
 class Reflash:
     def __init__(self, settings):
-        self.refactor_version_file = settings.get("version_file")
+        self.reflash_version_file = settings.get("version_file")
         self.images_folder = settings.get("images_folder")
         self.settings_folder = settings.get("settings_folder")
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
@@ -20,9 +20,14 @@ class Reflash:
         self.is_install_finished = False
         self.install_error = ""
         self.install_cancelled = False
+        self.backup_progress = 0
+        self.is_backup_finished = False
+        self.backup_state = "NOT_STARTED"
+        self.backup_cancelled = False
+        self.backup_error = ""
 
-    def get_refactor_version(self):
-        with open(self.refactor_version_file, "r") as f:
+    def get_reflash_version(self):
+        with open(self.reflash_version_file, "r") as f:
             version = f.read().replace("\n", "")
             return version
 
@@ -144,6 +149,27 @@ class Reflash:
     def cancel_installation(self):
         self.install_cancelled = True
         self.install_state = "CANCELLED"
+        return True
+
+    def backup_refactor(self, filename):
+        self.backup_progress = 0
+        self.is_backup_finished = False
+        self.backup_state = "INSTALLING"
+        self.backup_cancelled = False
+        return True
+
+    def get_backup_progress(self):
+        return {
+            "progress": self.backup_progress,
+            "is_finished": self.is_backup_finished,
+            "error": self.backup_error,
+            "state": self.backup_state,
+            "cancelled": self.backup_cancelled
+        }
+
+    def cancel_backup(self):
+        self.backup_cancelled = True
+        self.backup_state = "CANCELLED"
         return True
 
     def run_system_command(command):

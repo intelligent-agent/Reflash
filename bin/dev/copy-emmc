@@ -1,0 +1,8 @@
+#!/bin/bash
+
+OUTFILE=$1
+
+INFILE="/dev/mmcblk0"
+mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount
+(dd if=${INFILE} | pv -f -n -b | xz > ${OUTFILE}) 2>/tmp/recore-flash-progress
+sync

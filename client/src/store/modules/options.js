@@ -20,11 +20,15 @@ const state = {
       timePassed: 0,
       timeRemaining: 0
     }
+  },
+  flash: {
+    selectedMethod: { id: 0, label: 'Flash', value: 0}
   }
 };
 const getters = {
   options: (state) => state.options,
-  progress: (state) => state.progress
+  progress: (state) => state.progress,
+  flash: (state) => state.flash
 };
 const actions = {
   async getOptions({ commit }){
@@ -47,6 +51,9 @@ const actions = {
   setTimeFinished({ commit }, payload){
     commit('setTimeFinished', payload);
   },
+  setFlashMethod({commit}, payload){
+    commit('setFlashMethod', payload);
+  }
 };
 const mutations = {
   getOptions: (state, options) => (state.options = options),
@@ -55,6 +62,7 @@ const mutations = {
   setVisible: (state, {name, visible}) => (state.progress[name].visible = visible),
   setTimeStarted: (state, { name, time }) => (state.progress[name].timeStarted = time),
   setTimeFinished: (state, {name, time}) => (state.progress[name].timeFinished = time),
+  setFlashMethod: (state, payload) => (state.flash.selectedMethod = payload)
 };
 export default {
   state,
