@@ -10,7 +10,7 @@
     </w-progress>
     <w-flex justify-space-between class="wrapper">
       <div class="align-self-start">{{minutes}}m:{{seconds}}s</div>
-      <div class="align-self-end" v-if="secondsR > 0">{{minutesR}}m:{{secondsR}}s</div>
+      <div class="align-self-end">{{minutesR}}m:{{secondsR}}s</div>
     </w-flex>
   </div>
 </template>
