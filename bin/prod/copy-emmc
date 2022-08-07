@@ -9,9 +9,11 @@ set_progress () {
 OUTFILE=$1
 INFILE="/dev/mmcblk0"
 OUTIMG=${OUTFILE}.img
+
 echo "Crating image"
 set_progress 0
-dd if=/dev/zero of=${OUTIMG} bs=1M count=5000
+truncate -s 5G ${OUTIMG}
+
 
 DEVICE=`losetup -P -f --show $OUTIMG`
 PARTITION=${DEVICE}p2
@@ -29,7 +31,7 @@ sfdisk ${DEVICE} < image.layout
 sudo mkfs -t ext4 ${DEVICE}p1
 sudo mkfs -t ext4 ${DEVICE}p2
 
-dd if=${INFILE} of=${OUTIMG} bs=512 count=8192
+dd if=${INFILE} of=${OUTIMG} bs=1024 count=1 seek=8 conv=notrunc
 
 INP1=/mnt/reflash/inp1
 INP2=/mnt/reflash/inp2
@@ -39,8 +41,10 @@ mkdir -p ${INP1}
 mkdir -p ${INP2}
 mkdir -p ${OUTP1}
 mkdir -p ${OUTP2}
-mount ${INFILE}1 ${INP1}
-mount ${INFILE}2 ${INP2}
+umount -d /mnt/reflash/* || /bin/true
+
+mount ${INFILE}p1 ${INP1}
+mount ${INFILE}p2 ${INP2}
 mount ${DEVICE}p1 ${OUTP1}
 mount ${DEVICE}p2 ${OUTP2}
 echo "Copying files"

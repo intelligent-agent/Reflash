@@ -152,7 +152,7 @@ class Reflash:
         return True
 
     def backup_refactor(self, filename):
-        outfile = self.images_folder + "/" + filename+".img.xz"
+        outfile = self.images_folder + "/" + filename
         self.backup_progress = 0
         self.is_backup_finished = False
         self.backup_state = "INSTALLING"
