@@ -341,22 +341,6 @@ export default {
         }
       }
     },
-    async cancelBackup(){
-      await axios.put(`/api/cancel_backup`, {
-          "filename": this.backupFile
-      });
-    },
-    async backupSelected(){
-      this.setTimeStarted({name: 'install', time: Date.now()});
-      this.setProgress({name: 'install', progress: 0});
-      this.$refs.installprogressbar.update();
-      let self = this;
-      await axios.put(`/api/backup_refactor`, {
-          "filename": this.backupFile
-      }).then(() => {
-        self.backupProgressTimer = setInterval(self.checkBackupProgress, 1000);
-      });
-    },
     async installSelected(){
       this.setTimeStarted({name: 'install', time: Date.now()});
       this.setProgress({name: 'install', progress: 0});
@@ -402,6 +386,22 @@ export default {
         }
       }
     },
+    async cancelBackup(){
+      await axios.put(`/api/cancel_backup`, {
+          "filename": this.backupFile
+      });
+    },
+    async backupSelected(){
+      this.setTimeStarted({name: 'install', time: Date.now()});
+      this.setProgress({name: 'install', progress: 0});
+      this.$refs.installprogressbar.update();
+      let self = this;
+      await axios.put(`/api/backup_refactor`, {
+          "filename": this.backupFile
+      }).then(() => {
+        self.backupProgressTimer = setInterval(self.checkBackupProgress, 1000);
+      });
+    },
     async checkBackupProgress(){
       const response = await axios.get(`/api/get_backup_progress`);
       let data = response.data
@@ -416,6 +416,8 @@ export default {
         clearInterval(this.backupProgressTimer);
         this.isInstalling = false;
         this.setVisible({name: 'install', visible: false});
+        this.backupFile = "";
+        this.getData();
       }
       else if(data.state == "CANCELLED"){
         clearInterval(this.backupProgressTimer);
