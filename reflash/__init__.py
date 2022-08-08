@@ -31,7 +31,8 @@ def run_command():
         reflash.download_version(refactor_image)
         return { "success": True}
     if command == "cancel_download":
-        stat = reflash.cancel_download()
+        refactor_image = flask.request.json.get("refactor_image")
+        stat = reflash.cancel_download(refactor_image)
         return {"success": stat}
     if command == "upload_chunk":
         chunk = flask.request.json.get("chunk")

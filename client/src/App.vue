@@ -302,7 +302,9 @@ export default {
         });
       }
       else{
-        this.runCommand("cancel_download", {}, function() {
+        this.runCommand("cancel_download", {
+          "refactor_image": this.selectedGithubImage
+        }, function() {
             clearInterval(self.downloadProgressTimer);
             self.isTransferring = false;
             self.setVisible({name: 'transfer', visible: false});
