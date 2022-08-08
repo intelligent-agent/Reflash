@@ -3,20 +3,20 @@ set -e
 set -x
 
 set_progress () {
-  echo $1 > /tmp/recore-flash-progress
+  echo $1 >> /tmp/recore-flash-progress
 }
+
+echo "0" > /tmp/recore-flash-progress
 
 OUTFILE=$1
 INFILE="/dev/mmcblk0"
 OUTIMG=${OUTFILE}.img
 
 echo "Crating image"
-set_progress 0
+set_progress 1
 truncate -s 5G ${OUTIMG}
 
-
 DEVICE=`losetup -P -f --show $OUTIMG`
-PARTITION=${DEVICE}p2
 
 cat <<EOF > image.layout
 # partition table of ${DEVICE}
@@ -27,11 +27,12 @@ ${DEVICE}p2 : start=532480, size=9303520, type=83
 EOF
 
 sfdisk ${DEVICE} < image.layout
-
+set_progress 2
 sudo mkfs -t ext4 ${DEVICE}p1
 sudo mkfs -t ext4 ${DEVICE}p2
 
-dd if=/opt/reflash/u-boot/u-boot-sunxi-with-spl.bin of=${OUTIMG} bs=1024 seek=8
+set_progress 3
+dd if=/opt/reflash/u-boot/u-boot-sunxi-with-spl.bin of=${DEVICE} bs=1024 seek=8
 
 INP1=/mnt/reflash/inp1
 INP2=/mnt/reflash/inp2
