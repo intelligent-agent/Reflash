@@ -31,6 +31,11 @@ class Reflash:
             version = f.read().replace("\n", "")
             return version
 
+    def is_file_ok(self, filename):
+        path = self.images_folder + "/"+filename +".img.xz"
+        ret = os.system(f"xz -t {path}")
+        return (ret == 0)
+
     def get_local_releases(self):
         import glob
         files = glob.glob(self.images_folder + "/*.img.xz")

@@ -44,6 +44,12 @@ def run_command():
         stat = reflash.save_file_chunk(decoded_chunk, filename, is_new_file)
         return { "success": stat}
 
+@app.route('/api/check_file_integrity', methods = ['POST'])
+def check_file_integrity():
+    filename = flask.request.json.get("filename")
+    stat = reflash.is_file_ok(filename)
+    return {"is_file_ok": stat}
+
 
 @app.route('/api/cancel_backup', methods = ['PUT'])
 def cancel_backup():

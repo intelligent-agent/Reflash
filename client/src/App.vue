@@ -78,15 +78,17 @@
         <div class="xs1 align-self-center justify-space-between">
           <w-button @click="onTransferButtonClick()" v-if="this.computeTransferButtonVisible()">{{this.computeTransferButtonText()}}</w-button>
         </div>
-        <div class="xs1 align-self-center">
+        <w-flex class="xs1 align-self-center flex justify-start">
           <w-select
             v-model="selectedLocalImage"
             :items="localImages"
             item-label-key="name"
             placeholder="Please select one"
+            :item-click="onSelectedFileChanged()"
             outline>
           </w-select>
-        </div>
+          <w-icon md class="ma1" v-if="fileIntegrityIconVisible">fa {{fileIntegrityIcon}}</w-icon>
+        </w-flex>
         <div class="xs1 align-self-center">
           <w-button @click="onInstallButtonClick()" v-if="installButtonVisibility()">{{this.computeInstallButtonText()}}</w-button>
         </div>
@@ -156,7 +158,10 @@ export default {
     selectedMethod: 0,
     imageColor: "white",
     files: [],
-    backupFile: ""
+    backupFile: "",
+    fileIntegrity: "hidden",
+    fileIntegrityIcon: "fa-cog",
+    fileIntegrityIconVisible: false
   }),
   methods: {
     ...mapActions([
@@ -227,6 +232,21 @@ export default {
         if(this.dark.parentElement === document.head){
           document.head.removeChild(this.dark);
         }
+      }
+    },
+    async onSelectedFileChanged(){
+      if(this.selectedLocalImage){
+        this.fileIntegrityIcon = "fa-spinner";
+        this.fileIntegrityIconVisible = true;
+        await axios.post(`/api/check_file_integrity`, {
+          filename: this.selectedLocalImage
+        }).then(response => {
+          this.fileIntegrityIcon = response.data.is_file_ok ? "fa-check" : "fa-exclamation";
+        });
+      }
+      else{
+        this.fileIntegrityIcon = "";
+        this.fileIntegrityIconVisible = false;
       }
     },
     onFileInput(files){
