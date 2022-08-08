@@ -36,13 +36,13 @@
         </div>
         <div class="xs1 pa1 align-self-center"><b>{{selectedMethod.id == 0 ? "Download" : "Upload"}}</b></div>
         <div class="xs1 pa1 align-self-center"><b >USB drive</b></div>
-        <div class="xs1 pa1 align-self-center"><b>Flash</b></div>
+        <div class="xs1 pa1 align-self-center"><FlashSelector /></div>
         <div class="xs1 pa1 align-self-center"><b>eMMC</b></div>
 
         <div class="xs1 pa1 align-self-center"><img :src="computeImage(selectedMethod.image)" /></div>
         <div class="xs1 pa1 align-self-center"><img :src="computeImage('arrow-left')" /></div>
         <div class="xs1 pa1 align-self-center"><img :src="computeImage('USB')" /></div>
-        <div class="xs1 pa1 align-self-center"><img :src="computeImage('arrow-left')" /></div>
+        <div class="xs1 pa1 align-self-center"><img :src="computeImage('arrow-'+flashDirection())" /></div>
         <div class="xs1 pa1 align-self-center"><img :src="computeImage('eMMC')" /></div>
 
         <div class="xs1 pa1"><b>Choose image to {{selectedMethod.id == 0 ? "Download" : "Upload"}}</b></div>
@@ -53,7 +53,7 @@
         <div class="xs1 pa1">
           <ProgressBar ref="installprogressbar" name="install"/>
         </div>
-        <div class="xs1 pa1"></div>
+        <div class="xs1 pa1"><b v-if="flash.selectedMethod.id == 1">Backup Filename</b></div>
 
         <div class="xs1 pa1">
           <w-select
@@ -78,7 +78,7 @@
         <div class="xs1 align-self-center justify-space-between">
           <w-button @click="onTransferButtonClick()" v-if="this.computeTransferButtonVisible()">{{this.computeTransferButtonText()}}</w-button>
         </div>
-        <div class="xs1">
+        <div class="xs1 align-self-center">
           <w-select
             v-model="selectedLocalImage"
             :items="localImages"
@@ -88,9 +88,11 @@
           </w-select>
         </div>
         <div class="xs1 align-self-center">
-          <w-button @click="installSelected()" v-if="selectedLocalImage">{{installButtonText}}</w-button>
+          <w-button @click="onInstallButtonClick()" v-if="installButtonVisibility()">{{this.computeInstallButtonText()}}</w-button>
         </div>
-        <div class="xs1"></div>
+        <div class="xs1">
+          <w-input v-model="backupFile" v-if="flash.selectedMethod.id == 1" outline>Label</w-input>
+        </div>
 
         <div class="xs5">
           <w-transition-expand y>
@@ -115,6 +117,7 @@
 <script>
 import TheOptions from './components/TheOptions'
 import ProgressBar from './components/ProgressBar'
+import FlashSelector from './components/FlashSelector'
 import WaveUI from 'wave-ui'
 import { mapGetters, mapActions } from 'vuex';
 import axios from 'axios';
@@ -123,7 +126,8 @@ export default {
   name: 'App',
   components: {
     TheOptions,
-    ProgressBar
+    ProgressBar,
+    FlashSelector
   },
   setup () {
     const waveui = new WaveUI(this, {})
@@ -151,7 +155,8 @@ export default {
     ],
     selectedMethod: 0,
     imageColor: "white",
-    files: []
+    files: [],
+    backupFile: ""
   }),
   methods: {
     ...mapActions([
@@ -170,6 +175,28 @@ export default {
         return this.isTransferring ? "Cancel" : "Upload";
       }
       return "";
+    },
+    flashDirection(){
+      return this.flash.selectedMethod.id == 0 ? 'left' : 'right';
+    },
+    computeInstallButtonText(){
+      if(this.isInstalling){
+        return "Cancel"
+      }
+      if(this.flash.selectedMethod.id == 0){
+        return "Install";
+      }
+      else{
+        return "Backup";
+      }
+    },
+    installButtonVisibility(){
+      if(this.flash.selectedMethod.id == 0){
+        return this.selectedLocalImage;
+      }
+      else{
+        return this.backupFile != "";
+      }
     },
     computeTransferButtonVisible(){
       if(this.selectedMethod.id == 0){
@@ -275,7 +302,9 @@ export default {
         });
       }
       else{
-        this.runCommand("cancel_download", {}, function() {
+        this.runCommand("cancel_download", {
+          "refactor_image": this.selectedGithubImage
+        }, function() {
             clearInterval(self.downloadProgressTimer);
             self.isTransferring = false;
             self.setVisible({name: 'transfer', visible: false});
@@ -294,38 +323,60 @@ export default {
         this.getData();
       }
     },
-    installSelected(){
-      let self = this;
+    onInstallButtonClick(){
       this.isInstalling = !this.isInstalling;
       this.setVisible({name: 'install', visible: this.isInstalling});
-      this.installButtonText = this.isInstalling ? "Cancel" : "Install";
-      if(this.isInstalling){
-        self.setTimeStarted({name: 'install', time: Date.now()});
-        self.setProgress({name: 'install', progress: 0});
-        self.$refs.installprogressbar.update();
-        this.runCommand("install_refactor", {
-            "filename": this.selectedLocalImage
-        }, function() {
-          self.installProgressTimer = setInterval(self.checkInstallProgress, 1000);
-        });
+      if(this.flash.selectedMethod.id == 0){
+        if(this.isInstalling){
+          this.installSelected();
+        }
+        else{
+          this.cancelInstall();
+        }
       }
       else{
-        this.runCommand("cancel_installation", {}, function() {
-            clearInterval(self.installProgressTimer);
-        });
+        if(this.isInstalling){
+          this.backupSelected();
+        }
+        else{
+          this.cancelBackup();
+        }
       }
+    },
+    async installSelected(){
+      this.setTimeStarted({name: 'install', time: Date.now()});
+      this.setProgress({name: 'install', progress: 0});
+      this.$refs.installprogressbar.update();
+      let self = this;
+      await axios.put(`/api/install_refactor`, {
+          "filename": this.selectedLocalImage
+      }).then(() => {
+        self.installProgressTimer = setInterval(self.checkInstallProgress, 1000);
+      });
+    },
+    async cancelInstall(){
+      let self = this;
+      await axios.put(`/api/cancel_installation`, {
+          "filename": this.selectedLocalImage
+      }).then(() => {
+        clearInterval(self.installProgressTimer);
+      });
     },
     async checkInstallProgress() {
       const response = await axios.get(`/api/get_install_progress`);
       let data = response.data
       this.setProgress({name: 'install', progress: data.progress*100});
       this.$refs.installprogressbar.update();
-      if(data.is_finished){
+      if(data.error){
+        console.log(data.error);
         clearInterval(this.installProgressTimer);
-
         this.isInstalling = false;
         this.setVisible({name: 'install', visible: false});
-        this.installButtonText = "Install";
+      }
+      else if(data.is_finished){
+        clearInterval(this.installProgressTimer);
+        this.isInstalling = false;
+        this.setVisible({name: 'install', visible: false});
         if(this.options.enableSsh){
           this.enableSsh();
         }
@@ -335,6 +386,45 @@ export default {
         else{
           this.installFinished = true;
         }
+      }
+    },
+    async cancelBackup(){
+      await axios.put(`/api/cancel_backup`, {
+          "filename": this.backupFile
+      });
+    },
+    async backupSelected(){
+      this.setTimeStarted({name: 'install', time: Date.now()});
+      this.setProgress({name: 'install', progress: 0});
+      this.$refs.installprogressbar.update();
+      let self = this;
+      await axios.put(`/api/backup_refactor`, {
+          "filename": this.backupFile
+      }).then(() => {
+        self.backupProgressTimer = setInterval(self.checkBackupProgress, 1000);
+      });
+    },
+    async checkBackupProgress(){
+      const response = await axios.get(`/api/get_backup_progress`);
+      let data = response.data
+      this.setProgress({name: 'install', progress: data.progress*100});
+      this.$refs.installprogressbar.update();
+      if(data.error){
+        clearInterval(this.backupProgressTimer);
+        this.isInstalling = false;
+        this.setVisible({name: 'install', visible: false});
+      }
+      else if(data.is_finished){
+        clearInterval(this.backupProgressTimer);
+        this.isInstalling = false;
+        this.setVisible({name: 'install', visible: false});
+        this.backupFile = "";
+        this.getData();
+      }
+      else if(data.state == "CANCELLED"){
+        clearInterval(this.backupProgressTimer);
+        this.isInstalling = false;
+        this.setVisible({name: 'install', visible: false});
       }
     },
     rebootBoard(){
@@ -415,7 +505,7 @@ export default {
       .then(data => (this.populateImages(data)));
     this.getData();
   },
-  computed: mapGetters(['options', 'progress']),
+  computed: mapGetters(['options', 'progress', 'flash']),
 }
 </script>
 
@@ -462,5 +552,8 @@ export default {
 
 .w-select__selection {
   color: #444;
+}
+.w-input--floating-label .w-input__input-wrap{
+  margin: 0;
 }
 </style>

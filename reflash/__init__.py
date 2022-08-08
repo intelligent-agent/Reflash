@@ -5,7 +5,7 @@ import flask
 from .reflash import Reflash
 
 settings = {
-        "version_file": "/etc/refactor.version",
+        "version_file": "/etc/reflash.version",
         "images_folder": "/opt/reflash/images",
         "settings_folder": "/opt/reflash/settings"
     }
@@ -30,15 +30,9 @@ def run_command():
         refactor_image = flask.request.json.get("refactor_image")
         reflash.download_version(refactor_image)
         return { "success": True}
-    if command == "install_refactor":
-        filename = flask.request.json.get("filename")
-        stat = reflash.install_version(filename)
-        return {"success": stat}
     if command == "cancel_download":
-        stat = reflash.cancel_download()
-        return {"success": stat}
-    if command == "cancel_installation":
-        stat = reflash.cancel_installation()
+        refactor_image = flask.request.json.get("refactor_image")
+        stat = reflash.cancel_download(refactor_image)
         return {"success": stat}
     if command == "upload_chunk":
         chunk = flask.request.json.get("chunk")
@@ -50,12 +44,41 @@ def run_command():
         stat = reflash.save_file_chunk(decoded_chunk, filename, is_new_file)
         return { "success": stat}
 
+
+@app.route('/api/cancel_backup', methods = ['PUT'])
+def cancel_backup():
+    stat = reflash.cancel_backup()
+    return {"success": stat}
+
+@app.route('/api/get_backup_progress')
+def get_backup_progress():
+    return reflash.get_backup_progress()
+
+@app.route('/api/backup_refactor', methods = ['PUT'])
+def backup_refactor():
+    filename = flask.request.json.get("filename")
+    stat = reflash.backup_refactor(filename)
+    return {"success": stat}
+
+
+@app.route('/api/cancel_installation', methods = ['PUT'])
+def cancel_installation():
+    stat = reflash.cancel_installation()
+    return {"success": stat}
+
+@app.route('/api/install_refactor', methods = ['PUT'])
+def install_refactor():
+    filename = flask.request.json.get("filename")
+    stat = reflash.install_version(filename)
+    return {"success": stat}
+
 @app.route('/api/get_data')
 def get_data():
     return {
         "locals": reflash.get_local_releases(),
         "download_progress": reflash.get_download_progress(),
-        "install_progress": reflash.get_install_progress()
+        "install_progress": reflash.get_install_progress(),
+        "reflash_version": reflash.get_reflash_version()
     }
 
 @app.route('/api/get_download_progress')

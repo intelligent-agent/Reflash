@@ -6,7 +6,7 @@ import time
 
 class Reflash:
     def __init__(self, settings):
-        self.refactor_version_file = settings.get("version_file")
+        self.reflash_version_file = settings.get("version_file")
         self.images_folder = settings.get("images_folder")
         self.settings_folder = settings.get("settings_folder")
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
@@ -20,9 +20,14 @@ class Reflash:
         self.is_install_finished = False
         self.install_error = ""
         self.install_cancelled = False
+        self.backup_progress = 0
+        self.is_backup_finished = False
+        self.backup_state = "NOT_STARTED"
+        self.backup_cancelled = False
+        self.backup_error = ""
 
-    def get_refactor_version(self):
-        with open(self.refactor_version_file, "r") as f:
+    def get_reflash_version(self):
+        with open(self.reflash_version_file, "r") as f:
             version = f.read().replace("\n", "")
             return version
 
@@ -145,6 +150,54 @@ class Reflash:
         self.install_cancelled = True
         self.install_state = "CANCELLED"
         return True
+
+    def backup_refactor(self, filename):
+        outfile = self.images_folder + "/" + filename
+        self.backup_progress = 0
+        self.is_backup_finished = False
+        self.backup_state = "INSTALLING"
+        self.backup_cancelled = False
+        self.backup_total = self.get_backup_size()
+        ex = self.executor.submit(self.ex_backup_refactor, outfile)
+        return True
+
+    def get_backup_progress(self):
+        return {
+            "progress": self.backup_progress,
+            "is_finished": self.is_backup_finished,
+            "error": self.backup_error,
+            "state": self.backup_state,
+            "cancelled": self.backup_cancelled
+        }
+
+    def cancel_backup(self):
+        self.backup_cancelled = True
+        self.backup_state = "CANCELLED"
+        return True
+
+    def get_backup_size(self):
+        return 100
+
+    def ex_backup_refactor(self, filename):
+        cmd = ["sudo", "/usr/local/bin/copy-emmc", filename]
+        self.backup_transferred = 0
+        self.backup_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
+        while True:
+            time.sleep(0.3)
+            if self.backup_process.poll() == 0:
+                self.is_backup_finished = True
+                self.backup_state = "FINISHED"
+                break
+            with open("/tmp/recore-flash-progress") as f:
+                lines = f.readlines()
+                if len(lines):
+                    try:
+                        self.backup_transferred = int(lines[-1].strip())
+                    except:
+                        pass
+            if self.backup_cancelled:
+                break
+            self.backup_progress = self.backup_transferred / self.backup_total
 
     def run_system_command(command):
         return subprocess.run(command.split(),

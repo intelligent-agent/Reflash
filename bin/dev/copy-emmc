@@ -1,0 +1,59 @@
+#!/bin/bash
+set -e
+set -x
+
+echo "0" > /tmp/recore-flash-progress
+
+set_progress () {
+  echo "$1" >> /tmp/recore-flash-progress
+}
+
+OUTFILE=$1
+INFILE="/dev/sdc"
+OUTIMG=${OUTFILE}.img
+echo "Crating image"
+dd if=/dev/zero of=${OUTIMG} bs=1M count=5000
+
+DEVICE=`losetup -P -f --show $OUTIMG`
+PARTITION=${DEVICE}p2
+
+cat <<EOF > image.layout
+# partition table of ${DEVICE}
+unit: sectors
+
+${DEVICE}p1 : start=8192, size=524288, type=83
+${DEVICE}p2 : start=532480, size=9303520, type=83
+EOF
+
+sfdisk ${DEVICE} < image.layout
+
+sudo mkfs -t ext4 ${DEVICE}p1
+sudo mkfs -t ext4 ${DEVICE}p2
+
+INP1=/mnt/reflash/inp1
+INP2=/mnt/reflash/inp2
+OUTP1=/mnt/reflash/outp1
+OUTP2=/mnt/reflash/outp2
+mkdir -p ${INP1}
+mkdir -p ${INP2}
+mkdir -p ${OUTP1}
+mkdir -p ${OUTP2}
+mount ${INFILE}1 ${INP1}
+mount ${INFILE}2 ${INP2}
+mount ${DEVICE}p1 ${OUTP1}
+mount ${DEVICE}p2 ${OUTP2}
+echo "Copying files"
+set_progress 3
+rsync -axHAWXS --numeric-ids --info=progress2 ${INP1}/* ${OUTP1}
+set_progress 10
+#rsync -axHAWXS --numeric-ids --info=progress2 ${INP2}/* ${OUTP2}
+sync
+set_progress 50
+umount /mnt/reflash/*
+losetup -d ${DEVICE}
+echo "Compressing"
+xz -v -0 -T0 -f ${OUTIMG}
+set_progress 100
+#INFILE="/dev/random"
+#(dd if=${INFILE} bs=1M count=30 | pv -f -n -b | xz > ${OUTFILE}) 2>/tmp/recore-flash-progress
+#sync
