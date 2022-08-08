@@ -18,6 +18,7 @@ do
   echo $f
   chmod +x "/usr/local/bin/$f"
 done
+cp -r u-boot /opt/reflash
 
 chown -R www-data:www-data /var/www/html/reflash
 

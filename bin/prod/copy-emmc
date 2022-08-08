@@ -31,7 +31,7 @@ sfdisk ${DEVICE} < image.layout
 sudo mkfs -t ext4 ${DEVICE}p1
 sudo mkfs -t ext4 ${DEVICE}p2
 
-dd if=${INFILE} of=${OUTIMG} bs=1024 count=1 seek=8 skip=8 conv=notrunc
+dd if=/opt/reflash/u-boot/u-boot-sunxi-with-spl.bin of=${OUTIMG} bs=1024 seek=8
 
 INP1=/mnt/reflash/inp1
 INP2=/mnt/reflash/inp2
