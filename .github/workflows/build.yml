@@ -22,7 +22,7 @@ jobs:
       run: |
         cp Reflash/armbian/reflash.sh build/
         cp Reflash/armbian/customize-image.sh build/userpatches
-        cp Reflash/armbian/config-docker.sh build/userpatches
+        cp Reflash/armbian/config-docker.conf build/userpatches
 
     - name: Run build
       working-directory: ./build
