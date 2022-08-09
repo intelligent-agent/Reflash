@@ -20,7 +20,7 @@ jobs:
     - name: 'Copy files and run build'
       working-directory: ./build
       run: |
-      cp Reflash/armbian/reflash.sh build/
-      cp Reflash/armbian/customize-image.sh build/userpatches
-      sed -i 's/-it //g' build/userpathces/config-docker.conf
-      sh ./reflash.sh
+        cp Reflash/armbian/reflash.sh build/
+        cp Reflash/armbian/customize-image.sh build/userpatches
+        sed -i 's/-it //g' build/userpathces/config-docker.conf
+        sh ./reflash.sh
