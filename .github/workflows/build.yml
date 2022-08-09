@@ -2,6 +2,10 @@ name: Build Armbian
 on:
   push:
   workflow_dispatch:
+
+env:
+  TERM: /bin/bash
+
 jobs:
   build:
     runs-on: self-hosted
