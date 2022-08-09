@@ -13,5 +13,6 @@ jobs:
     - uses: actions/checkout@v3
       with:
         repository: 'intelligent-agent/build'
-    - run: cp userpatches/config-docker-gh.conf  userpatches/config-docker.conf
-    - run: ./compile.sh docker config-docker-gh.conf BOARD=recore BRANCH=current RELEASE=bullseye BUILD_MINIMAL=yes BUILD_DESKTOP=no KERNEL_ONLY=no KERNEL_CONFIGURE=no WIREGUARD=no BOOTSIZE=256 BOOTFS_TYPE="ext4" CLEAN_LEVEL="" COMPRESS_OUTPUTIMAGE=sha,gpg,xz
+    #- run: cp userpatches/config-docker-gh.conf  userpatches/config-docker.conf
+    - run: sh ./reflash.sh
+    #- run: ./compile.sh docker config-docker-gh.conf BOARD=recore BRANCH=current RELEASE=bullseye BUILD_MINIMAL=yes BUILD_DESKTOP=no KERNEL_ONLY=no KERNEL_CONFIGURE=no WIREGUARD=no BOOTSIZE=256 BOOTFS_TYPE="ext4" CLEAN_LEVEL="" COMPRESS_OUTPUTIMAGE=sha,gpg,xz
