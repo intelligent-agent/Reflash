@@ -45,7 +45,7 @@ class Reflash:
         }
 
     def file_checker_runner(self, path):
-        ret = os.system(f"xz -t {path}")
+        ret = os.system(f"xz -l {path}")
         self.progress_checker_result = (ret == 0)
         self.progress_checker_finished = True
 
