@@ -41,7 +41,7 @@ jobs:
       run: echo "VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
 
     - name: Delete all old images
-      run: rm *.img.xz
+      run: rm -f *.img.xz
 
     - name: Move and rename file
       run: cp build/output/images/Armbian_22.08.0-trunk_Recore_bullseye_current_5.15.59_minimal.img.xz ./Reflash-${VERSION}.img.xz
