@@ -31,7 +31,7 @@ jobs:
 
     - name: Run build
       working-directory: ./build
-      run: sh ./reflash.sh
+      run: echo sh ./reflash.sh
 
     - name: Make filename
       run: echo "VERSION=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
@@ -48,6 +48,6 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/')
       with:
         allowUpdates: true
-        artifacts: Reflash-${VERSION}.img.xz
+        artifacts: "Reflash-${VERSION}.img.xz"
         token: ${{ secrets.GITHUB_TOKEN }}
         prerelease: true
