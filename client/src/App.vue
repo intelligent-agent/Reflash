@@ -22,6 +22,7 @@
                   <li>Once downloaded, you can flash the image to the internal storage (eMMC)</li>
                   <li>Finally reboot the board. The board will boot from the internal storage.</li>
                 </ol>
+                <span>Reflash version {{version}}</span>
               </p>
           </w-transition-expand>
         </div>
@@ -78,15 +79,17 @@
         <div class="xs1 align-self-center justify-space-between">
           <w-button @click="onTransferButtonClick()" v-if="this.computeTransferButtonVisible()">{{this.computeTransferButtonText()}}</w-button>
         </div>
-        <div class="xs1 align-self-center">
+        <w-flex class="xs1 align-self-center flex justify-start">
           <w-select
             v-model="selectedLocalImage"
             :items="localImages"
             item-label-key="name"
             placeholder="Please select one"
+            :item-click="onSelectedFileChanged()"
             outline>
           </w-select>
-        </div>
+          <IntegrityChecker ref="integritychecker"/>
+        </w-flex>
         <div class="xs1 align-self-center">
           <w-button @click="onInstallButtonClick()" v-if="installButtonVisibility()">{{this.computeInstallButtonText()}}</w-button>
         </div>
@@ -118,6 +121,7 @@
 import TheOptions from './components/TheOptions'
 import ProgressBar from './components/ProgressBar'
 import FlashSelector from './components/FlashSelector'
+import IntegrityChecker from './components/IntegrityChecker'
 import WaveUI from 'wave-ui'
 import { mapGetters, mapActions } from 'vuex';
 import axios from 'axios';
@@ -127,7 +131,8 @@ export default {
   components: {
     TheOptions,
     ProgressBar,
-    FlashSelector
+    FlashSelector,
+    IntegrityChecker
   },
   setup () {
     const waveui = new WaveUI(this, {})
@@ -156,7 +161,8 @@ export default {
     selectedMethod: 0,
     imageColor: "white",
     files: [],
-    backupFile: ""
+    backupFile: "",
+    version: ""
   }),
   methods: {
     ...mapActions([
@@ -227,6 +233,11 @@ export default {
         if(this.dark.parentElement === document.head){
           document.head.removeChild(this.dark);
         }
+      }
+    },
+    onSelectedFileChanged(){
+      if(this.$refs.integritychecker){
+        this.$refs.integritychecker.fileSelected(this.selectedLocalImage);
       }
     },
     onFileInput(files){
@@ -483,6 +494,7 @@ export default {
         this.installProgressTimer = setInterval(this.checkInstallProgress, 1000);
         this.isInstalling = true;
       }
+      this.version = response.data.reflash_version;
     },
     async runCommand(command, params, on_success){
       await fetch(`api/run_command`, {

@@ -44,6 +44,15 @@ def run_command():
         stat = reflash.save_file_chunk(decoded_chunk, filename, is_new_file)
         return { "success": stat}
 
+@app.route('/api/start_file_integrity_check', methods = ['PUT'])
+def start_check_file_integrity():
+    filename = flask.request.json.get("filename")
+    stat = reflash.start_check_file_integrity(filename)
+    return {"success": stat}
+
+@app.route('/api/update_file_integrity_check')
+def update_check_file_integrity():
+    return reflash.update_check_file_integrity()
 
 @app.route('/api/cancel_backup', methods = ['PUT'])
 def cancel_backup():
@@ -84,7 +93,6 @@ def get_data():
 @app.route('/api/get_download_progress')
 def get_download_progress():
     return reflash.get_download_progress()
-
 
 @app.route('/api/get_install_progress')
 def get_install_progress():

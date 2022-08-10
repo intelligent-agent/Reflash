@@ -31,6 +31,24 @@ class Reflash:
             version = f.read().replace("\n", "")
             return version
 
+    def start_check_file_integrity(self, filename):
+        path = self.images_folder + "/"+filename +".img.xz"
+        self.progress_checker_finished = False
+        self.progress_checker_result = ""
+        self.executor.submit(self.file_checker_runner, path)
+        return True
+
+    def update_check_file_integrity(self):
+        return {
+            "is_finished": self.progress_checker_finished,
+            "is_file_ok": self.progress_checker_result
+        }
+
+    def file_checker_runner(self, path):
+        ret = os.system(f"xz -t {path}")
+        self.progress_checker_result = (ret == 0)
+        self.progress_checker_finished = True
+
     def get_local_releases(self):
         import glob
         files = glob.glob(self.images_folder + "/*.img.xz")
