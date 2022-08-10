@@ -18,6 +18,7 @@ jobs:
       with:
         repository: 'intelligent-agent/build'
         path: 'build'
+        clean: 'false'
     - uses: actions/checkout@v3
       with:
         path: 'Reflash'
