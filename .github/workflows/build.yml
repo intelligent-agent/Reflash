@@ -1,29 +1,51 @@
-# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-nodejs-with-github-actions
+name: Build Armbian
+on:
+  push:
+    branches:
+      - main
+      - enhancement/automate-build
+  workflow_dispatch:
 
-name: Node.js CI
-
-on: push
+env:
+  TERM: xterm-256color
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: ./client
+    runs-on: self-hosted
     steps:
     - uses: actions/checkout@v3
-    - name: Use Node.js '18'
-      uses: actions/setup-node@v3
       with:
-        node-version: 18
-    - run: npm ci
-    - run: npm run build
-    - name: Make archive
-      run: make package
-      working-directory: ./
-    - uses: actions/upload-artifact@v3
+        repository: 'intelligent-agent/build'
+        path: 'build'
+    - uses: actions/checkout@v3
       with:
-        name: reflash
-        path: zip
+        path: 'Reflash'
+
+    - name: 'Copy files'
+      run: |
+        cp Reflash/armbian/reflash.sh build/
+        cp Reflash/armbian/customize-image.sh build/userpatches
+        cp Reflash/armbian/config-docker.conf build/userpatches
+
+    - name: Run build
+      working-directory: ./build
+      run: sh ./reflash.sh
+
+    - name: Make filename
+      run: echo "VERSION=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
+
+    - name: Use tag if tagged
+      if: startsWith(github.ref, 'refs/tags/')
+      run: echo "VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+
+    - name: Move and rename file
+      run: cp build/output/images/Armbian_22.08.0-trunk_Recore_bullseye_current_5.15.59_minimal.img.xz ./Reflash-${VERSION}.img.xz
+
+    - name: Release if tagged
+      uses: ncipollo/release-action@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        allowUpdates: true
+        artifacts: Reflash-${VERSION}.img.xz
+        token: ${{ secrets.GITHUB_TOKEN }}
+        prerelease: true
