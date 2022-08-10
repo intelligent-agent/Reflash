@@ -26,6 +26,7 @@ jobs:
     - name: 'Copy files'
       run: |
         cp Reflash/armbian/reflash.sh build/
+        cp Reflash/armbian/lib.config build/userpatches
         cp Reflash/armbian/customize-image.sh build/userpatches
         cp Reflash/armbian/config-docker.conf build/userpatches
 

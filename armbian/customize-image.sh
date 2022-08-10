@@ -20,7 +20,6 @@ BOARD=$3
 BUILD_DESKTOP=$4
 
 VERSION="v0.0.6-RC0"
-apt install -y nginx gunicorn unzip
 
 cd /usr/src
 wget "https://github.com/intelligent-agent/Reflash/releases/download/${VERSION}/reflash.zip"
