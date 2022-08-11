@@ -1,7 +1,7 @@
 #/bin/bash
 set -e
 
-apt install -y nginx gunicorn python3-flask
+#apt install -y nginx gunicorn python3-flask
 
 mkdir -p /opt/reflash/settings
 mkdir -p /opt/reflash/images
