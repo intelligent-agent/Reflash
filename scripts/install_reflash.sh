@@ -9,6 +9,7 @@ chown -R www-data:www-data /opt/reflash
 
 mkdir -p /var/www/html
 cp -r reflash /var/www/html/
+cp reflash.version /etc
 cp systemd/reflash.service /etc/systemd/system
 FILES="./bin/*"
 for f in $FILES
