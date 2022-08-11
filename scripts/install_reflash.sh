@@ -1,7 +1,7 @@
 #/bin/bash
 set -e
 
-apt install -y nginx gunicorn python3-flask
+#apt install -y nginx gunicorn python3-flask
 
 mkdir -p /opt/reflash/settings
 mkdir -p /opt/reflash/images
@@ -9,6 +9,7 @@ chown -R www-data:www-data /opt/reflash
 
 mkdir -p /var/www/html
 cp -r reflash /var/www/html/
+cp reflash.version /etc
 cp systemd/reflash.service /etc/systemd/system
 FILES="./bin/*"
 for f in $FILES

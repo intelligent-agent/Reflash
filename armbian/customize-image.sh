@@ -19,11 +19,10 @@ LINUXFAMILY=$2
 BOARD=$3
 BUILD_DESKTOP=$4
 
-VERSION="v0.0.6-RC0"
 
 cd /usr/src
-wget "https://github.com/intelligent-agent/Reflash/releases/download/${VERSION}/reflash.zip"
-unzip reflash.zip
+cp /tmp/overlay/reflash.tar.gz .
+tar -xf reflash.tar.gz
 cd reflash
 chmod +x ./scripts/install_reflash.sh
 ./scripts/install_reflash.sh
@@ -35,5 +34,4 @@ wget https://github.com/intelligent-agent/Recore/raw/master/Device_tree/sun50i-a
 mv sun50i-a64-recore-a*.dtb /boot/dtb/allwinner/
 cd /boot/dtb/allwinner/; ln -s sun50i-a64-recore-a6.dtb sun50i-a64-recore.dtb
 sh -c 'echo root:kamikaze | chpasswd'
-echo "${VERSION}" > /etc/reflash.version
 echo "Custom script completed"
