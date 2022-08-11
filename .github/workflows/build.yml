@@ -40,6 +40,7 @@ jobs:
         cp reflash.tar.gz ../
       working-directory: ./Reflash
   build:
+    needs: package
     runs-on: self-hosted
     steps:
     - uses: actions/checkout@v3
