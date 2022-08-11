@@ -54,7 +54,7 @@ jobs:
     - name: 'Copy files'
       run: |
         mkdir -p build/userpatches/overlay
-        cp Reflash/reflash.tar.gz build/userpatches/overlay
+        cp reflash.tar.gz build/userpatches/overlay
         cp Reflash/armbian/reflash.sh build/
         cp Reflash/armbian/lib.config build/userpatches
         cp Reflash/armbian/customize-image.sh build/userpatches
