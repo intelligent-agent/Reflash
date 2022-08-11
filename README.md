@@ -3,6 +3,8 @@
 This is a simple python server that is set up to
 get and flash Refactor images
 
+Latest version is 0.0.6
+
 ## Setup
 ### Additional packages for running
 apt install \
