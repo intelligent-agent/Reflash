@@ -9,7 +9,7 @@ class Reflash:
         self.reflash_version_file = settings.get("version_file")
         self.images_folder = settings.get("images_folder")
         self.settings_folder = settings.get("settings_folder")
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self.bytes_downloaded = 0
         self.bytes_to_download = 1
         self.download_cancelled = False
