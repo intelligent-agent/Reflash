@@ -3,14 +3,42 @@ on:
   push:
     branches:
       - main
-    tags:
-      - '*'
-  workflow_dispatch:
-
+      - chore/run-package-before-build
 env:
   TERM: xterm-256color
 
 jobs:
+  package:
+    runs-on: self-hosted
+    steps:
+    - name: Make filename
+      run: echo "VERSION=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
+
+    - name: Use tag if tagged
+      if: startsWith(github.ref, 'refs/tags/')
+      run: echo "VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+
+    - uses: actions/checkout@v3
+      with:
+        path: 'Reflash'
+    - name: Use Node.js '18'
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+
+    - name: install and build
+      working-directory: ./Reflash/client
+      run: |
+        npm ci
+        npm run build
+
+    - name: Make archive with version file
+      run: |
+        make package
+        echo ${VERSION} > zip/reflash/reflash.version
+        make tar
+        cp reflash.tar.gz ../
+      working-directory: ./Reflash
   build:
     runs-on: self-hosted
     steps:
@@ -25,6 +53,8 @@ jobs:
 
     - name: 'Copy files'
       run: |
+        mkdir -p build/userpatches/overlay
+        cp Reflash/reflash.tar.gz build/userpatches/overlay
         cp Reflash/armbian/reflash.sh build/
         cp Reflash/armbian/lib.config build/userpatches
         cp Reflash/armbian/customize-image.sh build/userpatches

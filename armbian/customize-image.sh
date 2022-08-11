@@ -19,11 +19,13 @@ LINUXFAMILY=$2
 BOARD=$3
 BUILD_DESKTOP=$4
 
-VERSION="v0.0.6-RC0"
+#VERSION="v0.0.6-RC0"
 
 cd /usr/src
-wget "https://github.com/intelligent-agent/Reflash/releases/download/${VERSION}/reflash.zip"
-unzip reflash.zip
+cp /tmp/overlay/reflash.tar.gz .
+#wget "https://github.com/intelligent-agent/Reflash/releases/download/${VERSION}/reflash.zip"
+#unzip reflash.zip
+tar -xf reflash.tar.gz
 cd reflash
 chmod +x ./scripts/install_reflash.sh
 ./scripts/install_reflash.sh
