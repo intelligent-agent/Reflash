@@ -2,7 +2,7 @@ install_bins:
 	cp bin/dev/* /usr/local/bin
 	chmod +x /usr/local/bin/*
 
-dev:
+dev-server:
 	FLASK_ENV="development" \
 	FLASK_APP="reflash" \
 	flask run --host=0.0.0.0 --port=8081

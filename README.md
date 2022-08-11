@@ -14,19 +14,16 @@ avahi-daemon \
 python3-curses
 
 ### Additional packages for installation
-apt install \
-setuptools \
-unzip \
+apt install setuptools unzip
 
 
+Download source
 
-Download source:
-wget https://github.com/intelligent-agent/Reflash/archive/refs/heads/main.zip
+```
+mkdir -p /opt/reflash/images
+mkdir -p /opt/reflash/settings
+chown -R www-data:www-data /opt/reflash
 
-unzip main.zip
-cd Reflash-main
-export FLASK_APP="reflash"
-flask run --host=0.0.0.0 --port=80
-
-mkdir /opt/images
-chown www-data:www-data /opt/images
+make dev-server &
+make dev-client
+```

@@ -1,3 +1,0 @@
-include README.md
-recursive-include reflash/templates *
-recursive-include reflash/static *
