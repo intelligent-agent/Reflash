@@ -71,8 +71,9 @@ class State(object):
         for line in res:
             self.assign_var(line["name"], line["value"], line["type"])
 
-    def save(self):
-        for line in self.fields:
+    def save(self, field=None):
+        fields = self.fields if field == None else [field]
+        for line in fields:
             value = getattr(self, line)
             ins = f"UPDATE state set value = '{value}' where name = '{line}'"
             self.cur.execute(ins)
@@ -131,6 +132,7 @@ class Reflash:
         self.state.download_cancelled = False
         self.state.is_download_finished = False
         self.state.bytes_to_download = refactor_image["size"]
+        self.state.save()
         filename = refactor_image["name"]
         self.executor.submit(self.download_refactor, url, filename)
 
@@ -148,11 +150,11 @@ class Reflash:
         local_filename = self.images_folder + "/" + filename
         r = requests.get(url, stream=True)
         with open(local_filename, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=1024):
+            for chunk in r.iter_content(chunk_size=1024*1024):
                 if chunk:
                     f.write(chunk)
                     self.state.bytes_downloaded += len(chunk)
-                    self.state.save()
+                    self.state.save('bytes_downloaded')
                     if self.state.download_cancelled:
                         return
         self.state.is_download_finished = True
