@@ -17,6 +17,7 @@ class State(object):
         self.is_download_finished = False
         self.install_state = "NOT_STARTED"
         self.install_progress = 0
+        self.bytes_total = 0
         self.is_install_finished = False
         self.install_error = ""
         self.install_cancelled = False
@@ -37,6 +38,7 @@ class State(object):
             'install_state',
             'install_progress',
             'is_install_finished',
+            'bytes_total',
             'install_error',
             'install_cancelled',
             'backup_progress',
