@@ -2,7 +2,14 @@
 
 import os
 import flask
+import sqlite3
 from .reflash import Reflash
+
+def get_db(db_file):
+    db = getattr(flask.g, '_database', None)
+    if db is None:
+        db = flask.g._database = sqlite3.connect(db_file, check_same_thread=False)
+    return db
 
 settings = {
         "version_file": "/etc/reflash.version",
@@ -17,7 +24,11 @@ if app.config['ENV'] == "development":
     from flask_cors import CORS
     CORS(app)
 
-reflash = Reflash(settings)
+
+with app.app_context():
+    db_file = settings["settings_folder"]+"/reflash.db"
+    settings["db"] = get_db(db_file)
+    reflash = Reflash(settings)
 
 @app.route("/api/run_command",methods = ['POST'])
 def run_command():
@@ -137,3 +148,10 @@ def darkmode():
 @app.route('/')
 def main():
     return flask.render_template('index.html')
+
+
+@app.teardown_appcontext
+def close_connection(exception):
+    db = getattr(flask.g, '_database', None)
+    if db is not None:
+        db.close()
