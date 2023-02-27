@@ -16,7 +16,7 @@ class State(object):
         self.download_state = "NOT_STARTED"
         self.is_download_finished = False
         self.install_state = "NOT_STARTED"
-        self.install_progress = 0
+        self.install_progress = 0.0
         self.bytes_total = 0
         self.is_install_finished = False
         self.install_error = ""
@@ -79,6 +79,7 @@ class State(object):
             value = getattr(self, line)
             ins = f"UPDATE state set value = '{value}' where name = '{line}'"
             self.cur.execute(ins)
+        self.db.commit()
 
 class Reflash:
     def __init__(self, settings):
