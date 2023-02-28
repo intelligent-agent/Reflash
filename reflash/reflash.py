@@ -17,7 +17,7 @@ class State(object):
         self.is_download_finished = False
         self.install_state = "NOT_STARTED"
         self.install_progress = 0.0
-        self.bytes_total = 0
+        self.bytes_total = 0.0
         self.bytes_transferred = 0
         self.is_install_finished = False
         self.install_error = ""
@@ -213,8 +213,6 @@ class Reflash:
 
     def install_refactor(self, filename):
         cmd = ["sudo", "/usr/local/bin/flash-recore", filename]
-        self.state.bytes_transferred = 0
-        self.state.save()
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
         while True:
             time.sleep(0.3)
@@ -223,14 +221,12 @@ class Reflash:
                 self.state.install_state = "FINISHED"
                 self.state.save()
                 break
-            with open("/tmp/recore-flash-progress") as f:
-                lines = f.readlines()
-                if len(lines):
-                    try:
-                        self.state.bytes_transferred = int(lines[-1].strip())
-                        self.state.save()
-                    except:
-                        pass
+            tr = Reflash.run_system_command("tail -1  /tmp/recore-flash-progress")
+            try:
+                self.state.bytes_transferred = int(tr.strip())
+                self.state.save()
+            except:
+                pass
             if self.state.install_cancelled:
                 break
             self.state.install_progress = self.state.bytes_transferred / self.state.bytes_total
@@ -246,6 +242,7 @@ class Reflash:
         }
 
     def cancel_installation(self):
+        Reflash.run_system_command("sudo pkill -f xz -9")
         self.state.install_cancelled = True
         self.state.install_state = "CANCELLED"
         self.state.save()
