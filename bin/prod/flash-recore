@@ -34,9 +34,11 @@ mount ${OUTFILE}p2 /mnt/emmc
 sed -i "s:UUID=.* \/ :UUID=${UUID2} / :" /mnt/emmc/etc/fstab
 sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" /mnt/emmc/etc/fstab
 # Copy config file
+cd /mnt/emmc/home/debian/
 if test -f klipper/config/generic-recore-$REVISION.cfg; then
-  cp /mnt/emmc/home/debian/klipper/config/generic-recore-$REVISION.cfg /mnt/emmc/home/debian/printer_data/config/printer.cfg
+  cp klipper/config/generic-recore-$REVISION.cfg printer_data/config/printer.cfg
 fi
+cd
 umount ${OUTFILE}p2
 
 mount ${OUTFILE}p1 /mnt/emmc
