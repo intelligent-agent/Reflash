@@ -27,7 +27,6 @@
         class="ma2"
         label="Enable SSH access on new image">
         </w-switch>
-
         <w-divider class="my6 mx-3"></w-divider>
         <h3>Reboot to eMMC</h3>
         <w-switch
@@ -36,9 +35,16 @@
           class="ma2"
           label="Set boot media to eMMC">
         </w-switch>
+        <w-divider class="my6 mx-3"></w-divider>
         <w-button
+          class="ma2"
           @click="$emit('reboot-board')">
-            Reboot now
+            Reboot
+        </w-button>
+        <w-button
+          class="ma2"
+          @click="$emit('shutdown-board')">
+            Shut down
         </w-button>
        </w-flex>
     </w-drawer>

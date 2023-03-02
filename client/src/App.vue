@@ -10,7 +10,8 @@
           </w-button>
           <TheOptions
             @set-option="setOption"
-            @reboot-board="rebootBoard"/>
+            @reboot-board="rebootBoard"
+            @shutdown-board="shutdownBoard"/>
         </div>
         <div class="xs5 pa4">
           <w-transition-expand y>
@@ -441,6 +442,9 @@ export default {
     rebootBoard(){
       this.showOverlay = true;
       axios.put(`/api/reboot_board`);
+    },
+    shutdownBoard(){
+      axios.put(`/api/shutdown_board`);
     },
     enableSsh(){
       axios.put(`/api/enable_ssh`);

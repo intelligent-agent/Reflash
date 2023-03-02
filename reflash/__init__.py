@@ -114,6 +114,11 @@ def reboot_board():
     stat = Reflash.reboot()
     return {"success": stat}
 
+@app.route('/api/shutdown_board', methods = ['PUT'])
+def shutdown_board():
+    stat = reflash.shutdown()
+    return {"success": stat}
+
 @app.route('/api/enable_ssh', methods = ['PUT'])
 def enable_ssh():
     stat = Reflash.enable_ssh()
