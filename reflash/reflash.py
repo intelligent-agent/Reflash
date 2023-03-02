@@ -22,7 +22,7 @@ class State(object):
         self.is_install_finished = False
         self.install_error = ""
         self.install_cancelled = False
-        self.backup_progress = 0
+        self.backup_progress = 0.0
         self.is_backup_finished = False
         self.backup_state = "NOT_STARTED"
         self.backup_cancelled = False
