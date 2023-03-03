@@ -27,6 +27,7 @@ class State(object):
         self.backup_state = "NOT_STARTED"
         self.backup_cancelled = False
         self.backup_error = ""
+        self.backup_log = ""
         self.progress_checker_finished = False
         self.progress_checker_result = ""
 
@@ -47,7 +48,8 @@ class State(object):
             'is_backup_finished',
             'backup_state',
             'backup_cancelled',
-            'backup_error'
+            'backup_error',
+            'backup_log'
             ]
 
     def db_exists(self):
@@ -265,7 +267,8 @@ class Reflash:
             "is_finished": self.state.is_backup_finished,
             "error": self.state.backup_error,
             "state": self.state.backup_state,
-            "cancelled": self.state.backup_cancelled
+            "cancelled": self.state.backup_cancelled,
+            "log": self.state.backup_log,
         }
 
     def cancel_backup(self):
@@ -288,14 +291,14 @@ class Reflash:
                 self.state.backup_state = "FINISHED"
                 self.state.save()
                 break
-            with open("/tmp/recore-flash-progress") as f:
-                lines = f.readlines()
-                if len(lines):
-                    try:
-                        self.state.backup_transferred = int(lines[-1].strip())
-                        self.state.save()
-                    except:
-                        pass
+            tr = Reflash.run_system_command("tail -1  /tmp/recore-flash-progress")
+            ti = Reflash.run_system_command("cat /tmp/recore-flash-log")
+            try:
+                self.state.backup_transferred = int(tr.strip())
+                self.state.backup_log = ti
+                self.state.save()
+            except:
+                pass
             if self.state.backup_cancelled:
                 break
             self.state.backup_progress = self.state.backup_transferred / self.state.backup_total

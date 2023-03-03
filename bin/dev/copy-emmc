@@ -2,16 +2,23 @@
 set -e
 set -x
 
-echo "0" > /tmp/recore-flash-progress
-
 set_progress () {
   echo "$1" >> /tmp/recore-flash-progress
 }
 
+set_info() {
+  echo "$1" >> /tmp/recore-flash-log
+  logger "$1"
+}
+
+echo "0" > /tmp/recore-flash-progress
+echo "Recore eMMC backup" >  /tmp/recore-flash-log
+echo "------------------" >> /tmp/recore-flash-log
+
 OUTFILE=$1
-INFILE="/dev/sdc"
+INFILE="/dev/sde"
 OUTIMG=${OUTFILE}.img
-echo "Crating image"
+set_info "Creating empty image"
 dd if=/dev/zero of=${OUTIMG} bs=1M count=5000
 
 DEVICE=`losetup -P -f --show $OUTIMG`
@@ -42,18 +49,21 @@ mount ${INFILE}1 ${INP1}
 mount ${INFILE}2 ${INP2}
 mount ${DEVICE}p1 ${OUTP1}
 mount ${DEVICE}p2 ${OUTP2}
-echo "Copying files"
+set_info "Copying files to partition 1"
 set_progress 3
 rsync -axHAWXS --numeric-ids --info=progress2 ${INP1}/* ${OUTP1}
+set_info "Copying files to partition 2"
+
 set_progress 10
 #rsync -axHAWXS --numeric-ids --info=progress2 ${INP2}/* ${OUTP2}
 sync
 set_progress 50
+set_info "Compressing image"
 umount /mnt/reflash/*
 losetup -d ${DEVICE}
-echo "Compressing"
 xz -v -0 -T0 -f ${OUTIMG}
 set_progress 100
+set_info "Backup complete"
 #INFILE="/dev/random"
 #(dd if=${INFILE} bs=1M count=30 | pv -f -n -b | xz > ${OUTFILE}) 2>/tmp/recore-flash-progress
 #sync

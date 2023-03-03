@@ -1,8 +1,6 @@
 #/bin/bash
 set -e
 
-#apt install -y nginx gunicorn python3-flask
-
 mkdir -p /opt/reflash/settings
 mkdir -p /opt/reflash/images
 chown -R www-data:www-data /opt/reflash

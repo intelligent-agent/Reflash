@@ -1,6 +1,11 @@
 install_bins:
 	cp bin/dev/* /usr/local/bin
-	chmod +x /usr/local/bin/*
+	chmod +x /usr/local/bin/copy-emmc
+	chmod +x /usr/local/bin/enable-emmc-ssh
+	chmod +x /usr/local/bin/flash-recore
+	chmod +x /usr/local/bin/reboot-board
+	chmod +x /usr/local/bin/shutdown-board
+	chmod +x /usr/local/bin/set-boot-media
 
 dev-server:
 	FLASK_ENV="development" \
