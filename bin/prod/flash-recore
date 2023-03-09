@@ -39,6 +39,7 @@ cd /mnt/emmc/home/debian/
 if ! test -f printer_data/config/printer.cfg; then
   if test -f klipper/config/generic-recore-$REVISION.cfg; then
     cp klipper/config/generic-recore-$REVISION.cfg printer_data/config/printer.cfg
+    chown debian:debian printer_data/config/printer.cfg
   fi
   # Enable mainsail on mainsail distro
   if test -f printer_data/config/mainsail.cfg; then
