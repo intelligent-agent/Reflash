@@ -19,9 +19,26 @@ OUTFILE=$1
 INFILE="/dev/mmcblk0"
 OUTIMG=${OUTFILE}.img
 
+# creating the input mountpoints early.
+INP1=/mnt/reflash/inp1
+INP2=/mnt/reflash/inp2
+mkdir -p ${INP1}
+mkdir -p ${INP2}
+mount ${INFILE}p1 ${INP1}
+mount ${INFILE}p2 ${INP2}
+
+# collecting the input filesystem's used size
+INP_SIZE1=$(df | grep ${INP1} | awk -F' ' '{print $2}' )
+INP_SIZE1=$(expr $INP_SIZE1 \* 1024)
+INP_SIZE2=$(du -s $INP2 | awk -F' ' '{print $1}')
+
+# calculate the total size needed with p1 size and p2's used size added together
+OUT_SIZE=$($INP_SIZE1 + $INP_SIZE2)
+
 set_info "Creating empty image"
 set_progress 1
-truncate -s 8G ${OUTIMG}
+
+truncate -s ${OUT_SIZE} ${OUTIMG}
 
 DEVICE=`losetup -P -f --show $OUTIMG`
 
@@ -43,18 +60,12 @@ set_info "Installing u-boot"
 set_progress 3
 dd if=/opt/reflash/u-boot/u-boot-sunxi-with-spl.bin of=${DEVICE} bs=1024 seek=8
 
-INP1=/mnt/reflash/inp1
-INP2=/mnt/reflash/inp2
 OUTP1=/mnt/reflash/outp1
 OUTP2=/mnt/reflash/outp2
-mkdir -p ${INP1}
-mkdir -p ${INP2}
 mkdir -p ${OUTP1}
 mkdir -p ${OUTP2}
 umount -d /mnt/reflash/* || /bin/true
 
-mount ${INFILE}p1 ${INP1}
-mount ${INFILE}p2 ${INP2}
 mount ${DEVICE}p1 ${OUTP1}
 mount ${DEVICE}p2 ${OUTP2}
 set_info "Copying files to partition 1"
