@@ -5,5 +5,5 @@ if ! mountpoint -q /mnt/emmc2
 then
   mount /dev/mmcblk0p2 /mnt/emmc2
 fi
-/lib/systemd/systemd-sysv-install enable ssh --root=/mnt/emmc2
+/usr/bin/systemctl enable ssh --root=/mnt/emmc2
 umount /mnt/emmc2
