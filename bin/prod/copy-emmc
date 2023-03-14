@@ -21,7 +21,7 @@ OUTIMG=${OUTFILE}.img
 
 set_info "Creating empty image"
 set_progress 1
-truncate -s 5G ${OUTIMG}
+truncate -s 8G ${OUTIMG}
 
 DEVICE=`losetup -P -f --show $OUTIMG`
 
