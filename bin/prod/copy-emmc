@@ -31,9 +31,10 @@ mount ${INFILE}p2 ${INP2}
 INP_SIZE1=$(df | grep ${INP1} | awk -F' ' '{print $2}' )
 INP_SIZE1=$(expr $INP_SIZE1 \* 1024)
 INP_SIZE2=$(du -s $INP2 | awk -F' ' '{print $1}')
+INP_SIZE2=$(expr $INP_SIZE2 \* 1024)
 
 # calculate the total size needed with p1 size and p2's used size added together
-OUT_SIZE=$($INP_SIZE1 + $INP_SIZE2)
+OUT_SIZE=$(expr $INP_SIZE1 + $INP_SIZE2)
 
 set_info "Creating empty image"
 set_progress 1
