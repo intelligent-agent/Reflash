@@ -21,7 +21,7 @@ OUTIMG=${OUTFILE}.img
 
 set_info "Creating empty image"
 set_progress 1
-truncate -s 5G ${OUTIMG}
+truncate -s 7G ${OUTIMG}
 
 DEVICE=`losetup -P -f --show $OUTIMG`
 
@@ -30,7 +30,7 @@ cat <<EOF > image.layout
 unit: sectors
 
 ${DEVICE}p1 : start=8192, size=524288, type=83
-${DEVICE}p2 : start=532480, size=9303520, type=83
+${DEVICE}p2 : start=532480, size=13300000, type=83
 EOF
 
 sfdisk ${DEVICE} < image.layout
