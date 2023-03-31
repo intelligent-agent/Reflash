@@ -81,7 +81,7 @@ jobs:
       run: rm -f *.img.xz
 
     - name: Move and rename file
-      run: cp build/output/images/Armbian_23.02.0-trunk_Recore_bullseye_current_5.15.91_minimal.img.xz ./Reflash-${VERSION}.img.xz
+      run: cp build/output/images/Armbian_23.02.0-trunk_Recore_bullseye_current_5.15.93_minimal.img.xz ./Reflash-${VERSION}.img.xz
 
     - name: Release if tagged
       uses: ncipollo/release-action@v1
