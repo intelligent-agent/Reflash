@@ -1,0 +1,34 @@
+#!/bin/bash
+
+SERIAL_NR=$1
+
+echo "This scipt is for adding a serial number and"
+echo "calibration file to Recore A5. The serial number should be"
+echo "in have the following format: 0100"
+
+partprobe
+
+echo 0 > /sys/block/mmcblk0boot0/force_ro
+
+if [[ ! -b "/dev/mmcblk0boot0p1" ]]; then
+  echo "Creating boot partition"
+  dd if=/dev/zero of=/dev/mmcblk0boot0
+  partprobe
+  printf "g\nn\n\n\n\nw\n" | fdisk /dev/mmcblk0boot0
+  mkfs.ext4 -E nodiscard /dev/mmcblk0boot0p1
+fi
+
+mkdir -p /mnt/config
+if ! grep -qs '/mnt/config ' /proc/mounts; then
+    echo "Mounting /mnt/config"
+    mount /dev/mmcblk0boot0p1 /mnt/config/
+fi
+echo "$SERIAL_NR" > /mnt/config/serial_number
+
+echo "The board now has serial number $SERIAL_NR"
+echo "Downloading calibration file"
+wget "https://raw.githubusercontent.com/intelligent-agent/Recore/master/Calibrations/Recore_A5_$SERIAL_NR.json"
+mv "Recore_A5_$SERIAL_NR.json" /mnt/config
+
+umount -q /mnt/config/
+echo "Done"
