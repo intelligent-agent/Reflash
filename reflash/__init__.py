@@ -24,36 +24,21 @@ if app.config['ENV'] == "development":
     from flask_cors import CORS
     CORS(app)
 
-
 with app.app_context():
     db_file = settings["settings_folder"]+"/reflash.db"
     settings["db"] = get_db(db_file)
-    reflash = Reflash(settings)
+    reflash = Reflash(settings)        
 
-@app.route("/api/run_command",methods = ['POST'])
-def run_command():
-    command = flask.request.json.get("command")
-    if command == "set_boot_media":
-        media = flask.request.json.get("media")
-        Reflash.set_boot_media(media)
-        return { "success": True}
-    if command == "download_refactor":
-        refactor_image = flask.request.json.get("refactor_image")
-        reflash.download_version(refactor_image)
-        return { "success": True}
-    if command == "cancel_download":
-        refactor_image = flask.request.json.get("refactor_image")
-        stat = reflash.cancel_download(refactor_image)
-        return {"success": stat}
-    if command == "upload_chunk":
-        chunk = flask.request.json.get("chunk")
-        filename = flask.request.json.get("filename")
-        is_new_file = flask.request.json.get("is_new_file")
-        b64data = chunk.split(",")[1]
-        from base64 import b64decode
-        decoded_chunk = b64decode(b64data)
-        stat = reflash.save_file_chunk(decoded_chunk, filename, is_new_file)
-        return { "success": stat}
+@app.route('/api/upload_chunk',methods = ['POST'])
+def upload_chunk():
+    chunk = flask.request.json.get("chunk")
+    filename = flask.request.json.get("filename")
+    is_new_file = flask.request.json.get("is_new_file")
+    b64data = chunk.split(",")[1]
+    from base64 import b64decode
+    decoded_chunk = b64decode(b64data)
+    stat = reflash.save_file_chunk(decoded_chunk, filename, is_new_file)
+    return { "success": stat}
 
 @app.route('/api/start_file_integrity_check', methods = ['PUT'])
 def start_check_file_integrity():
@@ -80,7 +65,6 @@ def backup_refactor():
     stat = reflash.backup_refactor(filename)
     return {"success": stat}
 
-
 @app.route('/api/cancel_installation', methods = ['PUT'])
 def cancel_installation():
     stat = reflash.cancel_installation()
@@ -89,15 +73,30 @@ def cancel_installation():
 @app.route('/api/install_refactor', methods = ['PUT'])
 def install_refactor():
     filename = flask.request.json.get("filename")
-    stat = reflash.install_version(filename)
+    start_time = flask.request.json.get("start_time")
+    stat = reflash.install_version(filename, start_time)
     return {"success": stat}
 
-@app.route('/api/get_data')
-def get_data():
+@app.route('/api/get_install_progress')
+def get_install_progress():
+    return reflash.get_install_progress()
+
+@app.route('/api/download_refactor', methods = ['PUT'])
+def download_refactor():
+    filename = flask.request.json.get("filename")
+    start_time = flask.request.json.get("start_time")
+    stat = reflash.download_version(filename, start_time)
+    return {"success": stat}
+
+@app.route('/api/cancel_download', methods = ['PUT'])
+def cancel_download():
+    stat = reflash.cancel_download()
+    return {"success": stat}
+
+@app.route('/api/get_local_images')
+def get_local_images():
     return {
         "locals": reflash.get_local_releases(),
-        "download_progress": reflash.get_download_progress(),
-        "install_progress": reflash.get_install_progress(),
         "reflash_version": reflash.get_reflash_version()
     }
 
@@ -105,13 +104,9 @@ def get_data():
 def get_download_progress():
     return reflash.get_download_progress()
 
-@app.route('/api/get_install_progress')
-def get_install_progress():
-    return reflash.get_install_progress()
-
 @app.route('/api/reboot_board', methods = ['PUT'])
 def reboot_board():
-    stat = Reflash.reboot()
+    stat = reflash.reboot()
     return {"success": stat}
 
 @app.route('/api/shutdown_board', methods = ['PUT'])
@@ -121,7 +116,7 @@ def shutdown_board():
 
 @app.route('/api/enable_ssh', methods = ['PUT'])
 def enable_ssh():
-    stat = Reflash.enable_ssh()
+    stat = reflash.enable_ssh()
     return {"success": stat}
 
 @app.route('/api/set_boot_media', methods = ['PUT'])
@@ -153,7 +148,6 @@ def darkmode():
 @app.route('/')
 def main():
     return flask.render_template('index.html')
-
 
 @app.teardown_appcontext
 def close_connection(exception):

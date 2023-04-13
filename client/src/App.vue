@@ -246,7 +246,7 @@ export default {
       this.file = files[0].file;
     },
     uploadLocalFile(){
-      const CHUNK_SIZE = 1024*1024;
+      const CHUNK_SIZE = 3*1024*1024;
       let self = this;
       var reader = new FileReader();
       var offset = 0;
@@ -256,11 +256,12 @@ export default {
       reader.onload = function(){
           var result = reader.result;
           var chunk = result;
-          self.runCommand("upload_chunk", {
+          axios.post(`/api/upload_chunk`, {
              "chunk": chunk,
              "filename": self.fileName,
              "is_new_file": offset == 0
-           }, function(status) {
+           }).then(function(response) {
+            const status = response.data
             if(status.success && self.isTransferring){
               self.$refs.transferprogressbar.update();
               offset += CHUNK_SIZE;
@@ -269,13 +270,16 @@ export default {
                 reader.readAsDataURL(slice);
                 self.transferProgress = Math.round((offset/filesize)*100);
                 self.setProgress({name: 'transfer', progress: self.transferProgress });
+                self.setVisible({name: 'transfer', visible: true});
               }
               else{
                 offset = filesize;
                 self.transferProgress = 100;
                 self.isTransferring = false;
                 self.setVisible({name: 'transfer', visible: false});
-                self.getData();
+                self.getLocalImages();
+                self.selectedLocalImage = self.selectedUploadImage[0].name.slice(0, -7);
+                self.selectedUploadImage = []
               }
             }
             else{
@@ -295,7 +299,6 @@ export default {
     },
     onTransferButtonClick(){
       this.isTransferring = !this.isTransferring;
-      this.setVisible({name: 'transfer', visible: this.isTransferring});
       if(this.selectedMethod.id == 0){
         this.downloadSelected();
       }
@@ -303,41 +306,53 @@ export default {
         this.uploadLocalFile();
       }
     },
-    downloadSelected(){
+    async downloadSelected(){
       let self = this;
       if(this.isTransferring){
-        self.setTimeStarted({name: 'transfer', time: Date.now()});
-        this.runCommand("download_refactor", {
-            "refactor_image": this.selectedGithubImage
-        }, function() {
-            self.downloadProgressTimer = setInterval(self.getDownloadProgress, 1000);
+        await axios.put(`/api/download_refactor`, {
+          "filename": this.selectedGithubImage, 
+          "start_time": Date.now(),
+        }).then(() => {
+          self.checkDownloadProgress();
         });
       }
       else{
-        this.runCommand("cancel_download", {
-          "refactor_image": this.selectedGithubImage
-        }, function() {
-            clearInterval(self.downloadProgressTimer);
-            self.isTransferring = false;
-            self.setVisible({name: 'transfer', visible: false});
-        });
+        await axios.put(`/api/cancel_download`).then(() => {
+          self.checkDownloadProgress();
+        });        
       }
     },
-    async getDownloadProgress() {
+    async checkDownloadProgress() {
       const response = await axios.get(`/api/get_download_progress`);
       let data = response.data
-      this.setProgress({name: 'transfer', progress: data.progress*100});
-      this.$refs.transferprogressbar.update();
-      if(data.is_finished){
-        clearInterval(this.downloadProgressTimer);
+
+      if(data.state == "DOWNLOADING"){
+        this.isTransferring = true;
+        this.setProgress({name: 'transfer', progress: data.progress*100});
+        this.setTimeStarted({name: 'transfer', time: data.start_time});
+        this.setVisible({name: 'transfer', visible: true});
+        this.selectedGithubImage = this.getGithubImageFromName(data.filename)
+        this.$refs.transferprogressbar.update();
+        setTimeout(this.checkDownloadProgress, 1000);
+      }
+      else{
         this.isTransferring = false;
-        this.setVisible({name: 'transfer', visible: this.isTransferring});
-        this.getData();
+        this.setVisible({name: 'transfer', visible: false});
+        if(data.state == "ERROR"){
+          console.log(data.error);
+        }
+        else if(data.state == "FINISHED"){
+          this.selectedGithubImage = null;
+          await this.getLocalImages();
+          this.selectedLocalImage = data.filename.slice(0, -7);
+        }
+        else if(data.state == "CANCELED"){
+          this.getLocalImages();
+        }
       }
     },
     onInstallButtonClick(){
       this.isInstalling = !this.isInstalling;
-      this.setVisible({name: 'install', visible: this.isInstalling});
       if(this.flash.selectedMethod.id == 0){
         if(this.isInstalling){
           this.installSelected();
@@ -356,14 +371,12 @@ export default {
       }
     },
     async installSelected(){
-      this.setTimeStarted({name: 'install', time: Date.now()});
-      this.setProgress({name: 'install', progress: 0});
-      this.$refs.installprogressbar.update();
       let self = this;
       await axios.put(`/api/install_refactor`, {
-          "filename": this.selectedLocalImage
+          "filename": this.selectedLocalImage, 
+          "start_time": Date.now(),
       }).then(() => {
-        self.installProgressTimer = setInterval(self.checkInstallProgress, 1000);
+        self.checkInstallProgress();
       });
     },
     async cancelInstall(){
@@ -371,32 +384,37 @@ export default {
       await axios.put(`/api/cancel_installation`, {
           "filename": this.selectedLocalImage
       }).then(() => {
-        clearInterval(self.installProgressTimer);
+        self.checkInstallProgress();
       });
     },
     async checkInstallProgress() {
       const response = await axios.get(`/api/get_install_progress`);
       let data = response.data
-      this.setProgress({name: 'install', progress: data.progress*100});
-      this.$refs.installprogressbar.update();
-      if(data.error){
-        console.log(data.error);
-        clearInterval(this.installProgressTimer);
-        this.isInstalling = false;
-        this.setVisible({name: 'install', visible: false});
+      if(data.state == "INSTALLING"){
+        this.isInstalling = true;
+        this.setVisible({name: 'install', visible: true});
+        this.setProgress({name: 'install', progress: data.progress*100});
+        this.setTimeStarted({name: 'install', time: data.start_time});
+        this.selectedLocalImage = data.filename
+        this.$refs.installprogressbar.update();
+        setTimeout(this.checkInstallProgress, 1000);
       }
-      else if(data.is_finished){
-        clearInterval(this.installProgressTimer);
+      else{
         this.isInstalling = false;
         this.setVisible({name: 'install', visible: false});
-        if(this.options.enableSsh){
-          this.enableSsh();
+        if(data.state == "ERROR"){
+          console.log(data.error);
         }
-        if(this.options.rebootWhenDone){
-          this.rebootBoard();
-        }
-        else{
-          this.installFinished = true;
+        else if(data.state == "FINISHED"){
+          if(this.options.enableSsh){
+            this.enableSsh();
+          }
+          if(this.options.rebootWhenDone){
+            this.rebootBoard();
+          }
+          else{
+            this.installFinished = true;
+          } 
         }
       }
     },
@@ -431,7 +449,7 @@ export default {
         this.isInstalling = false;
         this.setVisible({name: 'install', visible: false});
         this.backupFile = "";
-        this.getData();
+        this.getLocalImages();
       }
       else if(data.state == "CANCELLED"){
         clearInterval(this.backupProgressTimer);
@@ -471,6 +489,13 @@ export default {
         axios.put(`/api/set_boot_media`, {'media': value ? 'emmc' : 'usb'});
       }
     },
+    getGithubImageFromName(name){
+      for(const img of this.githubImages){
+        if(img.name == name){
+          return img
+        }
+      }
+    },
     populateImages(releases){
       for(let release of releases){
         for(let asset of release.assets){
@@ -485,20 +510,16 @@ export default {
         }
       }
     },
-    async getData(){
-      const response = await axios.get(`/api/get_data`);
+    async getLocalImages(){
+      const response = await axios.get(`/api/get_local_images`);
       let data = response.data
       this.localImages = data.locals;
-      if(data.download_progress.state === "DOWNLOADING"){
-        this.downloadProgressTimer = setInterval(this.getDownloadProgress, 1000);
-        this.setVisible({name: 'transfer', visible: true});
-        this.isTransferring = true;
-      }
-      if(data.install_progress.state == "INSTALLING"){
-        this.installProgressTimer = setInterval(this.checkInstallProgress, 1000);
-        this.isInstalling = true;
-      }
       this.version = response.data.reflash_version;
+    },
+    async getGithubImages(){
+      fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
+      .then(response => response.json())
+      .then(data => (this.populateImages(data)));
     },
     async runCommand(command, params, on_success){
       await fetch(`api/run_command`, {
@@ -515,11 +536,11 @@ export default {
     }
   },
   created(){
-      this.selectedMethod = this.availableMethods[0]
-    fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
-      .then(response => response.json())
-      .then(data => (this.populateImages(data)));
-    this.getData();
+    this.selectedMethod = this.availableMethods[0]
+    this.getGithubImages();
+    this.getLocalImages();
+    this.checkDownloadProgress();
+    this.checkInstallProgress();
   },
   computed: mapGetters(['options', 'progress', 'flash']),
 }
