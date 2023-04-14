@@ -33,6 +33,7 @@ ${DEVICE}p2 : start=532480, size=9303520, type=83
 EOF
 
 sfdisk ${DEVICE} < image.layout
+rm image.layout
 
 sudo mkfs -t ext4 ${DEVICE}p1
 sudo mkfs -t ext4 ${DEVICE}p2
@@ -51,11 +52,11 @@ mount ${DEVICE}p1 ${OUTP1}
 mount ${DEVICE}p2 ${OUTP2}
 set_info "Copying files to partition 1"
 set_progress 3
-rsync -axHAWXS --numeric-ids --info=progress2 ${INP1}/* ${OUTP1}
+rsync -axHAWXS --numeric-ids --info=progress2 ${INP1}/* ${OUTP1} 1>>/tmp/recore-flash-log
 set_info "Copying files to partition 2"
 
 set_progress 10
-#rsync -axHAWXS --numeric-ids --info=progress2 ${INP2}/* ${OUTP2}
+#rsync -axHAWXS --numeric-ids --info=progress2 ${INP2}/* ${OUTP2} 1>/tmp/recore-flash-log
 sync
 set_progress 50
 set_info "Compressing image"

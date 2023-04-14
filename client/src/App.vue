@@ -5,8 +5,7 @@
         <div class="xs5 pa1">
           <img style="width: 40px; height: 40px" :src="computeImage('logo-thing')" />
           <h3>REFLASH</h3>
-          <TheLogger
-            :log="theLog"/>
+          <TheLogger :log="theLog"/>
           <w-button @click="openInfo = !openInfo" text>
             <w-icon md>fa fa-info-circle</w-icon>
           </w-button>
@@ -16,20 +15,8 @@
             @shutdown-board="shutdownBoard"/>
         </div>
         <div class="xs5 pa4">
-          <w-transition-expand y>
-              <p v-if="openInfo" class="text-left">
-                This page is running from a USB drive on Recore. You can use this page to download and
-                install distros to the eMMC of Recore.
-                <ol>
-                  <li>Start by downloading an image, probably the latest version. </li>
-                  <li>Once downloaded, you can flash the image to the internal storage (eMMC)</li>
-                  <li>Finally reboot the board. The board will boot from the internal storage.</li>
-                </ol>
-                <span>Reflash version {{version}}</span>
-              </p>
-          </w-transition-expand>
+         <TheInfo :open="openInfo" :version="version" />
         </div>
-
         <div class="xs1 pa1 align-self-center">
           <w-select
             v-model="selectedMethod"
@@ -70,12 +57,12 @@
             outline>
           </w-select>
           <w-input
+            v-if="selectedMethod.id == 1"
             type="file"
             ref="inputFile"
             v-model="selectedUploadImage"
             static-label
-            @input="onFileInput"
-            v-if="selectedMethod.id == 1">
+            @input="onFileInput">
               Select image file to upload
           </w-input>
         </div>
@@ -101,28 +88,33 @@
         </div>
 
         <div class="xs5">
-          <w-transition-expand y>
-            <w-alert v-if="installFinished">
-              Install finished! Now reboot the board by pressing this button
-            </w-alert>
-          </w-transition-expand>
-          <w-button v-if="installFinished" class="ma1 btn" @click="rebootBoard()">Reboot Now</w-button>
+          <div v-if="installFinished && !showOverlay">
+            <w-transition-expand y>
+              <w-alert>
+                Install finished! Please press the reboot button.
+              </w-alert>
+            </w-transition-expand>
+            <w-button  class="ma1 btn" @click="rebootBoard()">Reboot Now</w-button>
+          </div>
+          <div v-if="showOverlay">
+            <w-transition-expand y>
+              <w-alert v-if="showOverlay">
+                Please wait while board is rebooting
+              </w-alert>
+            </w-transition-expand>
+            <w-progress class="ma1" circle></w-progress><br>
+            <w-button @click="isServerUp()" v-if="showOverlay">Check server</w-button>
+          </div>
         </div>
       </w-flex>
     </w-card>
-    <w-overlay v-model="showOverlay">
-      <div class="text-center">
-        <w-progress class="ma1" circle></w-progress>
-        <p>Please wait while board is rebooting</p>
-        <w-button @click="isServerUp()">Check server</w-button>
-      </div>
-    </w-overlay>
   </w-app>
 </template>
 
 <script>
 import TheOptions from './components/TheOptions'
 import TheLogger from './components/TheLogger'
+import TheInfo from './components/TheInfo'
 import ProgressBar from './components/ProgressBar'
 import FlashSelector from './components/FlashSelector'
 import IntegrityChecker from './components/IntegrityChecker'
@@ -135,6 +127,7 @@ export default {
   components: {
     TheOptions,
     TheLogger,
+    TheInfo,
     ProgressBar,
     FlashSelector,
     IntegrityChecker
@@ -174,6 +167,7 @@ export default {
     ...mapActions([
       'setProgress',
       'setVisible',
+      'setFlashMethod',
       'setTimeStarted',
       'setTimeFinished']),
     computeImage(name){
@@ -447,7 +441,10 @@ export default {
         this.setVisible({name: 'install', visible: true});
         this.setTimeStarted({name: 'install', time: data.start_time}); 
         this.setProgress({name: 'install', progress: data.progress*100});
-        this.theLog = data.log  
+        this.theLog = data.log
+        if(this.selectedMethod.id != 1){
+          this.setFlashMethod(1)
+        }
         this.$refs.installprogressbar.update();
         setTimeout(this.checkBackupProgress, 1000);
       }
@@ -527,19 +524,6 @@ export default {
       fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
       .then(response => response.json())
       .then(data => (this.populateImages(data)));
-    },
-    async runCommand(command, params, on_success){
-      await fetch(`api/run_command`, {
-        method: 'POST',
-        headers: {
-          'Content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          "command": command,
-          ...params
-        })
-      }).then(response => response.json())
-      .then(data => (on_success(data)));
     }
   },
   created(){
@@ -548,6 +532,7 @@ export default {
     this.getLocalImages();
     this.checkDownloadProgress();
     this.checkInstallProgress();
+    this.checkBackupProgress();
   },
   computed: mapGetters(['options', 'progress', 'flash']),
 }

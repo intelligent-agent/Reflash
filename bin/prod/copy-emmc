@@ -59,10 +59,10 @@ mount ${DEVICE}p1 ${OUTP1}
 mount ${DEVICE}p2 ${OUTP2}
 set_info "Copying files to partition 1"
 set_progress 10
-rsync -axHAWXS --numeric-ids ${INP1}/* ${OUTP1}
+rsync -axHAWXS --numeric-ids --info=progress2 ${INP1}/* ${OUTP1} 1>>/tmp/recore-flash-log
 set_info "Copying files to partition 2"
 set_progress 12
-rsync -axHAWXS --numeric-ids ${INP2}/* ${OUTP2}
+rsync -axHAWXS --numeric-ids --info=progress2 ${INP2}/* ${OUTP2} 1>>/tmp/recore-flash-log
 sync
 set_info "Unmounting partitions"
 set_progress 50

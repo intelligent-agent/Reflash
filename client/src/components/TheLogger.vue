@@ -10,8 +10,7 @@
       width="30%">
       <w-flex class="pa5 secondary text-left" column>
         <h3>Log</h3>
-        <pre style="white-space: pre-wrap;"
-          v-html="replaceWithBr()" />
+        <pre style="white-space: pre-wrap; overflow: auto;" v-html="replaceWithBr()" />
        </w-flex>
     </w-drawer>
   </span>

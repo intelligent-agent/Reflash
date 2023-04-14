@@ -265,6 +265,7 @@ class Reflash:
         return ret
 
     def cancel_backup(self):
+        Reflash.run_system_command("sudo pkill -f copy-emmc -9")
         self.state.backup_state = "CANCELLED"
         self.state.save()
         return True
