@@ -40,15 +40,10 @@ def upload_chunk():
     stat = reflash.save_file_chunk(decoded_chunk, filename, is_new_file)
     return { "success": stat}
 
-@app.route('/api/start_file_integrity_check', methods = ['PUT'])
-def start_check_file_integrity():
+@app.route('/api/check_file_integrity', methods = ['PUT'])
+def check_file_integrity():
     filename = flask.request.json.get("filename")
-    stat = reflash.start_check_file_integrity(filename)
-    return {"success": stat}
-
-@app.route('/api/update_file_integrity_check')
-def update_check_file_integrity():
-    return reflash.update_check_file_integrity()
+    return reflash.check_file_integrity(filename)
 
 @app.route('/api/cancel_backup', methods = ['PUT'])
 def cancel_backup():
@@ -62,7 +57,8 @@ def get_backup_progress():
 @app.route('/api/backup_refactor', methods = ['PUT'])
 def backup_refactor():
     filename = flask.request.json.get("filename")
-    stat = reflash.backup_refactor(filename)
+    start_time = flask.request.json.get("start_time")
+    stat = reflash.backup_refactor(filename, start_time)
     return {"success": stat}
 
 @app.route('/api/cancel_installation', methods = ['PUT'])

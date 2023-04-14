@@ -10,30 +10,28 @@ class State(object):
         self.db.row_factory = sqlite3.Row
         self.cur = self.db.cursor()
 
-        self.bytes_downloaded = 0
-        self.bytes_to_download = 1
         self.download_state = "IDLE"
+        self.download_bytes_now = 0
+        self.download_bytes_total = 1
         self.download_start_time = 0
         self.download_filename = ""
         self.install_state = "IDLE"
         self.install_progress = 0.0
         self.install_start_time = 0
         self.install_filename = ""
-        self.bytes_total = 0.0
-        self.bytes_transferred = 0
         self.install_error = ""
+        self.install_bytes_now = 0
+        self.install_bytes_total = 0.0
+        self.backup_state = "IDLE"
         self.backup_progress = 0.0
-        self.is_backup_finished = False
-        self.backup_state = "NOT_STARTED"
-        self.backup_cancelled = False
+        self.backup_total = 0
+        self.backup_start_time = 0
         self.backup_error = ""
         self.backup_log = ""
-        self.progress_checker_finished = False
-        self.progress_checker_result = ""
 
         self.fields = [
-            'bytes_downloaded',
-            'bytes_to_download',
+            'download_bytes_now',
+            'download_bytes_total',
             'download_state',
             'download_start_time',
             'download_filename',
@@ -41,13 +39,13 @@ class State(object):
             'install_progress',
             'install_start_time',
             'install_filename',
-            'bytes_total',
-            'bytes_transferred',
+            'install_bytes_total',
+            'install_bytes_now',
             'install_error',
-            'backup_progress',
-            'is_backup_finished',
             'backup_state',
-            'backup_cancelled',
+            'backup_progress',
+            'backup_total',
+            'backup_start_time',
             'backup_error',
             'backup_log'
             ]
@@ -101,25 +99,12 @@ class Reflash:
             version = f.read().replace("\n", "")
             return version
 
-    def start_check_file_integrity(self, filename):
+    def check_file_integrity(self, filename):
         path = self.images_folder + "/"+filename +".img.xz"
-        self.state.progress_checker_finished = False
-        self.state.progress_checker_result = ""
-        self.state.save()
-        self.executor.submit(self.file_checker_runner, path)
-        return True
-
-    def update_check_file_integrity(self):
-        return {
-            "is_finished": self.state.progress_checker_finished,
-            "is_file_ok": self.state.progress_checker_result
-        }
-
-    def file_checker_runner(self, path):
         ret = os.system(f"xz -l {path}")
-        self.state.progress_checker_result = (ret == 0)
-        self.state.progress_checker_finished = True
-        self.state.save()
+        return {
+            "is_file_ok": (ret == 0)
+        }
 
     def get_local_releases(self):
         import glob
@@ -134,10 +119,10 @@ class Reflash:
 
     def download_version(self, refactor_image, start_time):
         url = refactor_image["url"]
-        self.state.bytes_downloaded = 0
+        self.state.download_bytes_now = 0
         self.state.download_start_time = start_time
         self.state.download_state = "DOWNLOADING"
-        self.state.bytes_to_download = refactor_image["size"]
+        self.state.download_bytes_total = refactor_image["size"]
         self.state.download_filename = refactor_image["name"]
         self.state.save()
         self.executor.submit(self.download_refactor, url, refactor_image["name"])
@@ -159,8 +144,8 @@ class Reflash:
             for chunk in r.iter_content(chunk_size=1024*1024):
                 if chunk:
                     f.write(chunk)
-                    self.state.bytes_downloaded += len(chunk)
-                    self.state.save('bytes_downloaded')
+                    self.state.download_bytes_now += len(chunk)
+                    self.state.save('download_bytes_now')
                     if self.state.download_state == "CANCELLED":
                         return
         self.state.is_download_finished = True
@@ -174,7 +159,7 @@ class Reflash:
 
     def get_download_progress(self):
         ret = {
-            "progress": (self.state.bytes_downloaded / self.state.bytes_to_download),
+            "progress": (self.state.download_bytes_now / self.state.download_bytes_total),
             "state": self.state.download_state,
             "start_time": self.state.download_start_time,
             "filename": self.state.download_filename,
@@ -194,10 +179,10 @@ class Reflash:
         self.state.install_start_time = start_time
         self.state.install_filename = filename
         self.state.install_progress = 0
-        self.state.bytes_transferred = 0
+        self.state.install_bytes_now = 0
         self.state.install_state = "INSTALLING"
         self.state.install_cancelled = False
-        self.state.bytes_total = self.get_uncompressed_size(infile)
+        self.state.install_bytes_total = self.get_uncompressed_size(infile)
         self.state.save()
         ex = self.executor.submit(self.install_refactor, infile)
         return True
@@ -226,13 +211,13 @@ class Reflash:
                 break
             tr = Reflash.run_system_command("tail -1  /tmp/recore-flash-progress")
             try:
-                self.state.bytes_transferred = int(tr.strip())
+                self.state.install_bytes_now = int(tr.strip())
                 self.state.save()
             except:
                 pass
             if self.state.install_state == "CANCELLED":
                 break
-            self.state.install_progress = self.state.bytes_transferred / self.state.bytes_total
+            self.state.install_progress = self.state.install_bytes_now / self.state.install_bytes_total
             self.state.save()
 
     def get_install_progress(self):
@@ -254,29 +239,32 @@ class Reflash:
         self.state.save()
         return True
 
-    def backup_refactor(self, filename):
+    def backup_refactor(self, filename, start_time):
         outfile = self.images_folder + "/" + filename
         self.state.backup_progress = 0
-        self.state.is_backup_finished = False
         self.state.backup_state = "INSTALLING"
-        self.state.backup_cancelled = False
+        self.state.backup_error = ""
+        self.state.backup_log = ""
+        self.state.backup_start_time = start_time
         self.state.backup_total = self.get_backup_size()
-        ex = self.executor.submit(self.ex_backup_refactor, outfile)
         self.state.save()
+        ex = self.executor.submit(self.ex_backup_refactor, outfile)
         return True
 
     def get_backup_progress(self):
-        return {
-            "progress": self.state.backup_progress,
-            "is_finished": self.state.is_backup_finished,
-            "error": self.state.backup_error,
+        ret = {
             "state": self.state.backup_state,
-            "cancelled": self.state.backup_cancelled,
+            "progress": self.state.backup_progress,
+            "start_time": self.state.backup_start_time,
+            "error": self.state.backup_error,
             "log": self.state.backup_log,
         }
+        if self.state.backup_state == "FINISHED":
+            self.state.backup_state = "IDLE"
+            self.state.save()
+        return ret
 
     def cancel_backup(self):
-        self.state.backup_cancelled = True
         self.state.backup_state = "CANCELLED"
         self.state.save()
         return True
@@ -286,26 +274,31 @@ class Reflash:
 
     def ex_backup_refactor(self, filename):
         cmd = ["sudo", "/usr/local/bin/copy-emmc", filename]
-        self.state.backup_transferred = 0
+        self.backup_transferred = 0
         self.backup_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
         while True:
             time.sleep(0.3)
-            if self.backup_process.poll() == 0:
-                self.state.is_backup_finished = True
-                self.state.backup_state = "FINISHED"
-                self.state.save()
-                break
+            status = self.backup_process.poll()
             tr = Reflash.run_system_command("tail -1  /tmp/recore-flash-progress")
             ti = Reflash.run_system_command("cat /tmp/recore-flash-log")
             try:
-                self.state.backup_transferred = int(tr.strip())
+                self.backup_transferred = int(tr.strip())
                 self.state.backup_log = ti
                 self.state.save()
             except:
                 pass
-            if self.state.backup_cancelled:
+            if status == 0:
+                self.state.backup_state = "FINISHED"
+                self.state.save()
                 break
-            self.state.backup_progress = self.state.backup_transferred / self.state.backup_total
+            if status != None:
+                self.state.backup_state = "ERROR"
+                self.state.backup_error = f"Error {status}"
+                self.state.save()
+                break
+            if self.state.backup_state == "CANCELLED":
+                break
+            self.state.backup_progress = self.backup_transferred / self.state.backup_total
             self.state.save()
 
     def run_system_command(command):

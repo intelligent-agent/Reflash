@@ -5,6 +5,8 @@
         <div class="xs5 pa1">
           <img style="width: 40px; height: 40px" :src="computeImage('logo-thing')" />
           <h3>REFLASH</h3>
+          <TheLogger
+            :log="theLog"/>
           <w-button @click="openInfo = !openInfo" text>
             <w-icon md>fa fa-info-circle</w-icon>
           </w-button>
@@ -120,6 +122,7 @@
 
 <script>
 import TheOptions from './components/TheOptions'
+import TheLogger from './components/TheLogger'
 import ProgressBar from './components/ProgressBar'
 import FlashSelector from './components/FlashSelector'
 import IntegrityChecker from './components/IntegrityChecker'
@@ -131,6 +134,7 @@ export default {
   name: 'App',
   components: {
     TheOptions,
+    TheLogger,
     ProgressBar,
     FlashSelector,
     IntegrityChecker
@@ -163,7 +167,8 @@ export default {
     imageColor: "white",
     files: [],
     backupFile: "",
-    version: ""
+    version: "",
+    theLog: ""
   }),
   methods: {
     ...mapActions([
@@ -424,37 +429,39 @@ export default {
       });
     },
     async backupSelected(){
-      this.setTimeStarted({name: 'install', time: Date.now()});
       this.setProgress({name: 'install', progress: 0});
       this.$refs.installprogressbar.update();
       let self = this;
       await axios.put(`/api/backup_refactor`, {
-          "filename": this.backupFile
+          "filename": this.backupFile,
+          "start_time": Date.now()
       }).then(() => {
-        self.backupProgressTimer = setInterval(self.checkBackupProgress, 1000);
+        self.checkBackupProgress()
       });
     },
     async checkBackupProgress(){
       const response = await axios.get(`/api/get_backup_progress`);
       let data = response.data
-      this.setProgress({name: 'install', progress: data.progress*100});
-      this.$refs.installprogressbar.update();
-      if(data.error){
-        clearInterval(this.backupProgressTimer);
-        this.isInstalling = false;
-        this.setVisible({name: 'install', visible: false});
+      if(data.state == "INSTALLING"){
+        this.isInstalling = true;
+        this.setVisible({name: 'install', visible: true});
+        this.setTimeStarted({name: 'install', time: data.start_time}); 
+        this.setProgress({name: 'install', progress: data.progress*100});
+        this.theLog = data.log  
+        this.$refs.installprogressbar.update();
+        setTimeout(this.checkBackupProgress, 1000);
       }
-      else if(data.is_finished){
-        clearInterval(this.backupProgressTimer);
+      else{
         this.isInstalling = false;
         this.setVisible({name: 'install', visible: false});
-        this.backupFile = "";
-        this.getLocalImages();
-      }
-      else if(data.state == "CANCELLED"){
-        clearInterval(this.backupProgressTimer);
-        this.isInstalling = false;
-        this.setVisible({name: 'install', visible: false});
+        if(data.state == "FINISHED"){
+          this.theLog = data.log
+          this.backupFile = "";
+          this.getLocalImages();
+        }
+        if(data.state == "ERROR"){
+          this.theLog = data.log+"\n\n"+data.error
+        }
       }
     },
     rebootBoard(){

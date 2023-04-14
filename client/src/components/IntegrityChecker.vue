@@ -18,29 +18,19 @@ export default {
   methods: {
     async fileSelected(filename){
       let self = this;
-      clearInterval(self.timer);
       if(filename){
         this.icon = "fa-spinner";
         this.visible = true;
-        await axios.put(`/api/start_file_integrity_check`, {
+        await axios.put(`/api/check_file_integrity`, {
           filename: filename
-        }).then(() => {
-          self.timer = setInterval(self.checkProgress, 100);
+        }).then(response => {
+          self.icon = response.data.is_file_ok ? "fa-check" : "fa-exclamation";
         });
       }
       else{
         this.icon = "";
         this.visible = false;
       }
-    },
-    async checkProgress(){
-      let self = this;
-      await axios.get(`/api/update_file_integrity_check`).then(response => {
-        if(response.data.is_finished){
-          clearInterval(self.timer);
-          this.icon = response.data.is_file_ok ? "fa-check" : "fa-exclamation";
-        }
-      });
     }
   }
 }

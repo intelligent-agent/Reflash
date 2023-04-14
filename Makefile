@@ -12,7 +12,7 @@ dev-server:
 	FLASK_APP="reflash" \
 	flask run --host=0.0.0.0 --port=8081
 
-client-dev:
+dev-client:
 	cd client; npm run serve
 
 build:
