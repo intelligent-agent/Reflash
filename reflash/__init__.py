@@ -70,7 +70,7 @@ def cancel_installation():
 def install_refactor():
     filename = flask.request.json.get("filename")
     start_time = flask.request.json.get("start_time")
-    stat = reflash.install_version(filename, start_time)
+    stat = reflash.install_refactor(filename, start_time)
     return {"success": stat}
 
 @app.route('/api/get_install_progress')

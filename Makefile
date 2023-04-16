@@ -1,6 +1,6 @@
 install_bins:
 	cp bin/dev/* /usr/local/bin
-	chmod +x /usr/local/bin/copy-emmc
+	chmod +x /usr/local/bin/backup-emmc
 	chmod +x /usr/local/bin/enable-emmc-ssh
 	chmod +x /usr/local/bin/flash-recore
 	chmod +x /usr/local/bin/reboot-board

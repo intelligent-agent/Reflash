@@ -22,7 +22,7 @@ const state = {
     }
   },
   flash: {
-    selectedMethod: { id: 0, label: 'Flash', value: 0}
+    selectedMethod: 0
   }
 };
 const getters = {

@@ -20,13 +20,14 @@ class State(object):
         self.install_start_time = 0
         self.install_filename = ""
         self.install_error = ""
+        self.install_log = ""
         self.install_bytes_now = 0
         self.install_bytes_total = 0.0
         self.backup_state = "IDLE"
         self.backup_progress = 0.0
+        self.backup_filename = ""
         self.backup_total = 0
         self.backup_start_time = 0
-        self.backup_error = ""
         self.backup_log = ""
 
         self.fields = [
@@ -39,14 +40,15 @@ class State(object):
             'install_progress',
             'install_start_time',
             'install_filename',
+            'install_error',
+            'install_log',
             'install_bytes_total',
             'install_bytes_now',
-            'install_error',
             'backup_state',
             'backup_progress',
+            'backup_filename',
             'backup_total',
             'backup_start_time',
-            'backup_error',
             'backup_log'
             ]
 
@@ -141,7 +143,7 @@ class Reflash:
         local_filename = self.images_folder + "/" + filename
         r = requests.get(url, stream=True)
         with open(local_filename, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=1024*1024):
+            for chunk in r.iter_content(chunk_size=5*1024*1024):
                 if chunk:
                     f.write(chunk)
                     self.state.download_bytes_now += len(chunk)
@@ -159,7 +161,7 @@ class Reflash:
 
     def get_download_progress(self):
         ret = {
-            "progress": (self.state.download_bytes_now / self.state.download_bytes_total),
+            "progress": (self.state.download_bytes_now / self.state.download_bytes_total)*100,
             "state": self.state.download_state,
             "start_time": self.state.download_start_time,
             "filename": self.state.download_filename,
@@ -169,7 +171,7 @@ class Reflash:
             self.state.save()
         return ret
 
-    def install_version(self, filename, start_time):
+    def install_refactor(self, filename, start_time):
         infile = self.images_folder + "/" + filename+".img.xz"
         if not os.path.isfile(infile):
             self.state.install_error = "Chosen file is not present"
@@ -182,43 +184,29 @@ class Reflash:
         self.state.install_bytes_now = 0
         self.state.install_state = "INSTALLING"
         self.state.install_cancelled = False
-        self.state.install_bytes_total = self.get_uncompressed_size(infile)
         self.state.save()
-        ex = self.executor.submit(self.install_refactor, infile)
+        ex = self.executor.submit(self.ex_install_refactor, infile)
         return True
 
-    def get_uncompressed_size(self, infile):
-        line = subprocess.run(f"xz -l {infile} | grep MiB",
-                              shell=True,
-                              capture_output=True,
-                              text=True).stdout
-        try:
-            size = float(line.split()[4].replace(",", "")) * 1024 * 1024
-        except:
-            self.state.install_error = "Unable to get uncompressed file size"
-            self.state.save()
-            size = 1
-        return size
-
-    def install_refactor(self, filename):
+    def ex_install_refactor(self, filename):
         cmd = ["sudo", "/usr/local/bin/flash-recore", filename]
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
         while True:
             time.sleep(0.3)
+            tr = Reflash.run_system_command("tail -1  /tmp/recore-flash-progress")
+            ti = Reflash.run_system_command("cat /tmp/recore-flash-log")
+            try:
+                self.state.install_progress = int(tr.strip())
+                self.state.install_log = ti
+                self.state.save()
+            except:
+                pass
             if self.process.poll() == 0:
                 self.state.install_state = "FINISHED"
                 self.state.save()
                 break
-            tr = Reflash.run_system_command("tail -1  /tmp/recore-flash-progress")
-            try:
-                self.state.install_bytes_now = int(tr.strip())
-                self.state.save()
-            except:
-                pass
             if self.state.install_state == "CANCELLED":
                 break
-            self.state.install_progress = self.state.install_bytes_now / self.state.install_bytes_total
-            self.state.save()
 
     def get_install_progress(self):
         ret = {
@@ -227,6 +215,7 @@ class Reflash:
             "filename": self.state.install_filename,
             "error": self.state.install_error,
             "start_time": self.state.install_start_time,
+            "log": self.state.install_log
         }
         if self.state.install_state == "FINISHED":
             self.state.install_state = "IDLE"
@@ -241,12 +230,11 @@ class Reflash:
 
     def backup_refactor(self, filename, start_time):
         outfile = self.images_folder + "/" + filename
+        self.state.backup_filename = filename
         self.state.backup_progress = 0
         self.state.backup_state = "INSTALLING"
-        self.state.backup_error = ""
         self.state.backup_log = ""
         self.state.backup_start_time = start_time
-        self.state.backup_total = self.get_backup_size()
         self.state.save()
         ex = self.executor.submit(self.ex_backup_refactor, outfile)
         return True
@@ -255,8 +243,8 @@ class Reflash:
         ret = {
             "state": self.state.backup_state,
             "progress": self.state.backup_progress,
+            "filename": self.state.backup_filename,
             "start_time": self.state.backup_start_time,
-            "error": self.state.backup_error,
             "log": self.state.backup_log,
         }
         if self.state.backup_state == "FINISHED":
@@ -265,25 +253,22 @@ class Reflash:
         return ret
 
     def cancel_backup(self):
-        Reflash.run_system_command("sudo pkill -f copy-emmc -9")
+        Reflash.run_system_command("sudo pkill -f backup-emmc -9")
         self.state.backup_state = "CANCELLED"
         self.state.save()
         return True
 
-    def get_backup_size(self):
-        return 100
-
     def ex_backup_refactor(self, filename):
-        cmd = ["sudo", "/usr/local/bin/copy-emmc", filename]
+        cmd = ["sudo", "/usr/local/bin/backup-emmc", filename]
         self.backup_transferred = 0
         self.backup_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
         while True:
             time.sleep(0.3)
             status = self.backup_process.poll()
-            tr = Reflash.run_system_command("tail -1  /tmp/recore-flash-progress")
+            tr = Reflash.run_system_command("tail -1 /tmp/recore-flash-progress")
             ti = Reflash.run_system_command("cat /tmp/recore-flash-log")
             try:
-                self.backup_transferred = int(tr.strip())
+                self.state.backup_progress = int(tr.strip())
                 self.state.backup_log = ti
                 self.state.save()
             except:
@@ -294,12 +279,11 @@ class Reflash:
                 break
             if status != None:
                 self.state.backup_state = "ERROR"
-                self.state.backup_error = f"Error {status}"
+                self.state.backup_log += f"\nError {status}"
                 self.state.save()
                 break
             if self.state.backup_state == "CANCELLED":
                 break
-            self.state.backup_progress = self.backup_transferred / self.state.backup_total
             self.state.save()
 
     def run_system_command(command):

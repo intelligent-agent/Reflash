@@ -27,7 +27,7 @@
         </div>
         <div class="xs1 pa1 align-self-center"><b>{{selectedMethod.id == 0 ? "Download" : "Upload"}}</b></div>
         <div class="xs1 pa1 align-self-center"><b >USB drive</b></div>
-        <div class="xs1 pa1 align-self-center"><FlashSelector /></div>
+        <div class="xs1 pa1 align-self-center"><FlashSelector ref="flashSelector"/></div>
         <div class="xs1 pa1 align-self-center"><b>eMMC</b></div>
 
         <div class="xs1 pa1 align-self-center"><img :src="computeImage(selectedMethod.image)" /></div>
@@ -44,7 +44,7 @@
         <div class="xs1 pa1">
           <ProgressBar ref="installprogressbar" name="install"/>
         </div>
-        <div class="xs1 pa1"><b v-if="flash.selectedMethod.id == 1">Backup Filename</b></div>
+        <div class="xs1 pa1"><b v-if="flash.selectedMethod == 1">Backup Filename</b></div>
 
         <div class="xs1 pa1">
           <w-select
@@ -67,7 +67,7 @@
           </w-input>
         </div>
         <div class="xs1 align-self-center justify-space-between">
-          <w-button @click="onTransferButtonClick()" v-if="this.computeTransferButtonVisible()">{{this.computeTransferButtonText()}}</w-button>
+          <w-button @click="onTransferButtonClick()" v-if="this.isTransferButtonVisible()">{{this.computeTransferButtonText()}}</w-button>
         </div>
         <w-flex class="xs1 align-self-center flex justify-start">
           <w-select
@@ -81,10 +81,10 @@
           <IntegrityChecker ref="integritychecker"/>
         </w-flex>
         <div class="xs1 align-self-center">
-          <w-button @click="onInstallButtonClick()" v-if="installButtonVisibility()">{{this.computeInstallButtonText()}}</w-button>
+          <w-button @click="onInstallButtonClick()" v-if="isInstallButtonVisibile()">{{this.installButtonText()}}</w-button>
         </div>
         <div class="xs1">
-          <w-input v-model="backupFile" v-if="flash.selectedMethod.id == 1" outline>Label</w-input>
+          <w-input v-model="backupFile" v-if="flash.selectedMethod == 1" outline>Label</w-input>
         </div>
 
         <div class="xs5">
@@ -143,7 +143,6 @@ export default {
     transferProgress: 0,
     isInstalling: false,
     installProgress: 0,
-    installButtonText: "Install",
     selectedGithubImage: null,
     selectedUploadImage: [],
     selectedLocalImage: null,
@@ -163,6 +162,7 @@ export default {
     version: "",
     theLog: ""
   }),
+  computed: mapGetters(['options', 'progress', 'flash']),
   methods: {
     ...mapActions([
       'setProgress',
@@ -183,28 +183,28 @@ export default {
       return "";
     },
     flashDirection(){
-      return this.flash.selectedMethod.id == 0 ? 'left' : 'right';
+      return this.flash.selectedMethod == 0 ? 'left' : 'right';
     },
-    computeInstallButtonText(){
+    installButtonText(){
       if(this.isInstalling){
         return "Cancel"
       }
-      if(this.flash.selectedMethod.id == 0){
+      if(this.flash.selectedMethod == 0){
         return "Install";
       }
       else{
         return "Backup";
       }
     },
-    installButtonVisibility(){
-      if(this.flash.selectedMethod.id == 0){
+    isInstallButtonVisibile(){
+      if(this.flash.selectedMethod == 0){
         return this.selectedLocalImage;
       }
       else{
         return this.backupFile != "";
       }
     },
-    computeTransferButtonVisible(){
+    isTransferButtonVisible(){
       if(this.selectedMethod.id == 0){
         return this.selectedGithubImage;
       }
@@ -212,16 +212,7 @@ export default {
         return this.selectedUploadImage.length > 0;
       }
       return "";
-    },
-    isTransferButtonVisible(){
-      if(this.selectedMethod.id == 0){
-        return this.selectedGithubImage !== null;
-      }
-      else if(this.selectedMethod.id == 1){
-        return this.selectedUploadImage != [];
-      }
-      return false;
-    },
+    },    
     setTheme(darkmode){
       this.imageColor = darkmode ? "white" : "black";
       if(darkmode){
@@ -327,7 +318,7 @@ export default {
 
       if(data.state == "DOWNLOADING"){
         this.isTransferring = true;
-        this.setProgress({name: 'transfer', progress: data.progress*100});
+        this.setProgress({name: 'transfer', progress: data.progress});
         this.setTimeStarted({name: 'transfer', time: data.start_time});
         this.setVisible({name: 'transfer', visible: true});
         this.selectedGithubImage = this.getGithubImageFromName(data.filename)
@@ -352,7 +343,7 @@ export default {
     },
     onInstallButtonClick(){
       this.isInstalling = !this.isInstalling;
-      if(this.flash.selectedMethod.id == 0){
+      if(this.flash.selectedMethod == 0){
         if(this.isInstalling){
           this.installSelected();
         }
@@ -389,10 +380,11 @@ export default {
     async checkInstallProgress() {
       const response = await axios.get(`/api/get_install_progress`);
       let data = response.data
+      this.theLog = data.log
       if(data.state == "INSTALLING"){
         this.isInstalling = true;
         this.setVisible({name: 'install', visible: true});
-        this.setProgress({name: 'install', progress: data.progress*100});
+        this.setProgress({name: 'install', progress: data.progress});
         this.setTimeStarted({name: 'install', time: data.start_time});
         this.selectedLocalImage = data.filename
         this.$refs.installprogressbar.update();
@@ -436,14 +428,16 @@ export default {
     async checkBackupProgress(){
       const response = await axios.get(`/api/get_backup_progress`);
       let data = response.data
+      this.theLog = data.log
       if(data.state == "INSTALLING"){
         this.isInstalling = true;
         this.setVisible({name: 'install', visible: true});
         this.setTimeStarted({name: 'install', time: data.start_time}); 
-        this.setProgress({name: 'install', progress: data.progress*100});
-        this.theLog = data.log
-        if(this.selectedMethod.id != 1){
-          this.setFlashMethod(1)
+        this.setProgress({name: 'install', progress: data.progress});
+
+        if(this.flash.selectedMethod != 1){
+          this.$refs.flashSelector.setSelection(1);
+          this.backupFile = data.filename
         }
         this.$refs.installprogressbar.update();
         setTimeout(this.checkBackupProgress, 1000);
@@ -452,7 +446,6 @@ export default {
         this.isInstalling = false;
         this.setVisible({name: 'install', visible: false});
         if(data.state == "FINISHED"){
-          this.theLog = data.log
           this.backupFile = "";
           this.getLocalImages();
         }
@@ -534,7 +527,6 @@ export default {
     this.checkInstallProgress();
     this.checkBackupProgress();
   },
-  computed: mapGetters(['options', 'progress', 'flash']),
 }
 </script>
 

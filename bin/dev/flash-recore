@@ -1,7 +1,24 @@
 #!/bin/bash
+set -e
+set -x
+
+echo "Recore flash script (dev)" >  /tmp/recore-flash-log
+echo "------------------" >> /tmp/recore-flash-log
 
 INFILE=$1
-
 OUTFILE="/dev/zero"
-(xz -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE}) 2>/tmp/recore-flash-progress
+REVISION="A7"
+
+
+SIZE=`xz -lv $INFILE | grep Uncompressed | sed 's/[,(]//g' | awk '{ printf "%s\n", $5 }'`
+
+echo "Found Recore hardware revision $REVISION" >> /tmp/recore-flash-log
+echo "Flashing file name $INFILE" >> /tmp/recore-flash-log
+echo "Overwriting block device $OUTFILE" >> /tmp/recore-flash-log
+echo "Uncompressed file size $SIZE bytes" >> /tmp/recore-flash-log
+
+echo "Starting flashing" >> /tmp/recore-flash-log
+(xz -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE} status=none) 2>&1 > /dev/null | unbuffer -p awk '{printf "%d\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
+echo "Flashing complete" >> /tmp/recore-flash-log
+echo "Script done!" >> /tmp/recore-flash-log
 sync
