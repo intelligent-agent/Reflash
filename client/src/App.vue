@@ -3,19 +3,28 @@
     <w-card  class="mxa pa3 card secondary" >
       <w-flex wrap class="text-center">
         <div class="xs5 pa1">
-          <img style="width: 40px; height: 40px" :src="computeImage('logo-thing')" />
+          <img style="width: 40px; height: 40px" :src="computeSVG('logo')" />
           <h3>REFLASH</h3>
-          <TheLogger :log="theLog"/>
-          <w-button @click="openInfo = !openInfo" text>
-            <w-icon md>fa fa-info-circle</w-icon>
-          </w-button>
-          <TheOptions
+          <div>
+            <w-button @click="openLog = !openLog" text>
+              <img style="width: 25px; height: 25px" :src="computeSVG('Log')" />
+            </w-button>
+            <w-button @click="openInfo = !openInfo" text>
+              <img style="width: 25px; height: 25px" :src="computeSVG('Info')" />
+            </w-button>
+            <w-button @click="openOptions = !openOptions" text>
+              <img style="width: 25px; height: 25px" :src="computeSVG('Options')" />
+            </w-button>
+          </div>
+        </div>
+        <div class="xs5 pa4">
+          <TheInfo :open="openInfo" :version="version" />
+          <TheLogger :log="theLog" :open="openLog"/>
+          <TheOptions 
+            :open="openOptions"
             @set-option="setOption"
             @reboot-board="rebootBoard"
             @shutdown-board="shutdownBoard"/>
-        </div>
-        <div class="xs5 pa4">
-         <TheInfo :open="openInfo" :version="version" />
         </div>
         <div class="xs1 pa1 align-self-center">
           <w-select
@@ -25,26 +34,26 @@
             return-object>
           </w-select>
         </div>
-        <div class="xs1 pa1 align-self-center"><b>{{selectedMethod.id == 0 ? "Download" : "Upload"}}</b></div>
-        <div class="xs1 pa1 align-self-center"><b >USB drive</b></div>
+        <div class="xs1 pa1 align-self-center">{{selectedMethod.id == 0 ? "Download" : "Upload"}}</div>
+        <div class="xs1 pa1 align-self-center">USB drive</div>
         <div class="xs1 pa1 align-self-center"><FlashSelector ref="flashSelector"/></div>
-        <div class="xs1 pa1 align-self-center"><b>eMMC</b></div>
+        <div class="xs1 pa1 align-self-center">eMMC</div>
 
-        <div class="xs1 pa1 align-self-center"><img :src="computeImage(selectedMethod.image)" /></div>
-        <div class="xs1 pa1 align-self-center"><img :src="computeImage('arrow-left')" /></div>
-        <div class="xs1 pa1 align-self-center"><img :src="computeImage('USB')" /></div>
-        <div class="xs1 pa1 align-self-center"><img :src="computeImage('arrow-'+flashDirection())" /></div>
-        <div class="xs1 pa1 align-self-center"><img :src="computeImage('eMMC')" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG(selectedMethod.image)" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('Arrow-right')" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('USB')" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('Arrow-'+flashDirection())" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('eMMC')" /></div>
 
-        <div class="xs1 pa1"><b>Choose image to {{selectedMethod.id == 0 ? "Download" : "Upload"}}</b></div>
+        <div class="xs1 pa1">Choose image to {{selectedMethod.id == 0 ? "Download" : "Upload"}}</div>
         <div class="xs1 pa1">
           <ProgressBar ref="transferprogressbar" name="transfer"/>
         </div>
-        <div class="xs1 pa1"><b>Choose image to install</b></div>
+        <div class="xs1 pa1">Choose image to install</div>
         <div class="xs1 pa1">
           <ProgressBar ref="installprogressbar" name="install"/>
         </div>
-        <div class="xs1 pa1"><b v-if="flash.selectedMethod == 1">Backup Filename</b></div>
+        <div class="xs1 pa1"><div v-if="flash.selectedMethod == 1">Backup Filename</div></div>
 
         <div class="xs1 pa1">
           <w-select
@@ -53,8 +62,7 @@
             return-object
             :items="githubImages"
             item-label-key="name"
-            placeholder="Please select one"
-            outline>
+            placeholder="Please select one">
           </w-select>
           <w-input
             v-if="selectedMethod.id == 1"
@@ -67,7 +75,9 @@
           </w-input>
         </div>
         <div class="xs1 align-self-center justify-space-between">
-          <w-button @click="onTransferButtonClick()" v-if="this.isTransferButtonVisible()">{{this.computeTransferButtonText()}}</w-button>
+          <w-button xl outline @click="onTransferButtonClick()" v-if="this.isTransferButtonVisible()">
+            <span>{{this.computeTransferButtonText()}}</span>
+          </w-button>
         </div>
         <w-flex class="xs1 align-self-center flex justify-start">
           <w-select
@@ -75,13 +85,16 @@
             :items="localImages"
             item-label-key="name"
             placeholder="Please select one"
-            :item-click="onSelectedFileChanged()"
-            outline>
+            :item-click="onSelectedFileChanged()">
           </w-select>
           <IntegrityChecker ref="integritychecker"/>
         </w-flex>
         <div class="xs1 align-self-center">
-          <w-button @click="onInstallButtonClick()" v-if="isInstallButtonVisibile()">{{this.installButtonText()}}</w-button>
+          <w-button xl outline  @click="onInstallButtonClick()" v-if="isInstallButtonVisibile()">
+            <span>
+              {{this.installButtonText()}}
+            </span>
+          </w-button>
         </div>
         <div class="xs1">
           <w-input v-model="backupFile" v-if="flash.selectedMethod == 1" outline>Label</w-input>
@@ -94,7 +107,7 @@
                 Install finished! Please press the reboot button.
               </w-alert>
             </w-transition-expand>
-            <w-button  class="ma1 btn" @click="rebootBoard()">Reboot Now</w-button>
+            <w-button xl outline class="ma1 btn" @click="rebootBoard()">Reboot Now</w-button>
           </div>
           <div v-if="showOverlay">
             <w-transition-expand y>
@@ -103,7 +116,7 @@
               </w-alert>
             </w-transition-expand>
             <w-progress class="ma1" circle></w-progress><br>
-            <w-button @click="isServerUp()" v-if="showOverlay">Check server</w-button>
+            <w-button xl outline @click="isServerUp()" v-if="showOverlay">Check server</w-button>
           </div>
         </div>
       </w-flex>
@@ -150,9 +163,11 @@ export default {
     localImages: [],
     uploadError: false,
     openInfo: false,
+    openLog: false,
+    openOptions: false,
     showOverlay: false,
     availableMethods: [
-      { id: 0, label: 'GitHub', value: 0, image: 'GitHub'},
+      { id: 0, label: 'GitHub', value: 0, image: 'Cloud'},
       { id: 1, label: 'File upload', value: 1, image: 'File'}
     ],
     selectedMethod: 0,
@@ -173,6 +188,9 @@ export default {
     computeImage(name){
       return require('./assets/'+name+'-'+this.imageColor+'.png')
     },
+    computeSVG(name){
+      return require('./assets/'+name+'-'+this.imageColor+'.svg')
+    },
     computeTransferButtonText(){
       if(this.selectedMethod.id == 0){
         return this.isTransferring ? "Cancel" : "Download";
@@ -183,7 +201,7 @@ export default {
       return "";
     },
     flashDirection(){
-      return this.flash.selectedMethod == 0 ? 'left' : 'right';
+      return this.flash.selectedMethod == 0 ? 'right' : 'left';
     },
     installButtonText(){
       if(this.isInstalling){
@@ -531,16 +549,25 @@ export default {
 </script>
 
 <style>
+h3 {
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 300;
+  font-size: 2em;
+  margin: 0.2em;
+}
+body {
+  background-color: #F1F1F1;
+}
 #app {
   font-family: Avenir, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-align: center;
-  color: #2c3e50;
+  color: #4D4D4D;
   margin-top: 60px;
 }
 .w-select--no-padding .w-select__selection {
-  font-weight: bold;
   text-align: center;
   font-size:  16px;
   color: #444;
@@ -550,13 +577,22 @@ export default {
   width: 70%;
 }
 
-.w-app .primary {
-    color: #234781;
+.w-button.size--xl .primary {
+  color: #4D4D4D;
+}
+
+.w-button.size--xl {
+  color: #04A3E5;
+}
+
+.w-button.size--xl span{
+  color: #4D4D4D;
+  height: 19px;
 }
 
 .w-app .primary--bg {
   color: #DDD;
-  background-color: #234781;
+  background-color: #04A3E5;
 }
 
 .w-app .secondary {
@@ -564,17 +600,25 @@ export default {
 }
 
 .w-card {
-  border: 1px solid #444;
+  border: none;
 }
 
 .w-select__selection-wrap {
-  border-color: #444;
+  border-color: #4D4D4D;
 }
 
 .w-select__selection {
-  color: #444;
+  color: #4D4D4D;
 }
 .w-input--floating-label .w-input__input-wrap{
   margin: 0;
+}
+.w-button.size--md {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.w-app .pa3{
+  border: none;
 }
 </style>

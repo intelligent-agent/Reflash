@@ -1,10 +1,7 @@
 <template>
-  <span>
-    <w-button @click="openDrawer = true" text>
-      <w-icon md>fa fa-cog</w-icon>
-    </w-button>
+  <div v-if="open">
     <w-drawer
-      v-model="openDrawer"
+      :v-model="open"
       absolute
       width="30%">
       <w-flex class="pa5 secondary" column>
@@ -48,7 +45,7 @@
         </w-button>
        </w-flex>
     </w-drawer>
-  </span>
+  </div>
 </template>
 
 <script>
@@ -73,6 +70,10 @@ export default {
     this.getOptions().then(() => {
       this.$emit('set-option','darkmode', this.options.darkmode);
     });
-  }
+  },
+  props: {
+    open: Boolean
+  },
+
 }
 </script>

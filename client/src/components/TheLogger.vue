@@ -1,18 +1,16 @@
 <template>
   <span>
-    <w-button @click="openDrawer = 'left'" text>
-      <w-icon md>fa fa-file</w-icon>
-    </w-button>
-    <w-drawer
-      v-model="openDrawer"
-      :left="true"
-      absolute
-      width="30%">
-      <w-flex class="pa5 secondary text-left" column>
-        <h3>Log</h3>
-        <pre style="white-space: pre-wrap; overflow: auto;" v-html="replaceWithBr()" />
-       </w-flex>
-    </w-drawer>
+    <div v-if="open">
+      <w-drawer
+        :left="true"
+        absolute
+        width="30%">
+        <w-flex class="pa5 secondary text-left" column>
+          <h3>Log</h3>
+          <pre style="white-space: pre-wrap; overflow: auto;" v-html="replaceWithBr()" />
+        </w-flex>
+      </w-drawer>
+    </div>
   </span>
 </template>
 
@@ -24,7 +22,8 @@ export default {
     openDrawer: false
   }),
   props: {
-    log: String
+    log: String,
+    open: Boolean
   },
   methods: {
     replaceWithBr() {
