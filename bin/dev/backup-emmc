@@ -16,6 +16,6 @@ echo "Uncompressed file size $SIZE bytes" >> /tmp/recore-flash-log
 
 mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount
 echo "Starting copy" >> /tmp/recore-flash-log
-(dd if=${INFILE} | pv -f -n -b | xz -0 -T 0 -f > ${OUTIMG}) 2>&1 > /dev/null | unbuffer -p awk '{printf "%d\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
+(dd if=${INFILE} | pv -f -n -b | xz -0 -T 0 -f > ${OUTIMG}) 2>&1 > /dev/null | unbuffer -p awk '{printf "%.2f\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
 echo "Backup complete" >> /tmp/recore-flash-log
 sync

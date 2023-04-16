@@ -18,7 +18,7 @@ echo "Overwriting block device $OUTFILE" >> /tmp/recore-flash-log
 echo "Uncompressed file size $SIZE bytes" >> /tmp/recore-flash-log
 
 echo "Starting flashing" >> /tmp/recore-flash-log
-(xz -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE} status=none) 2>&1 > /dev/null | unbuffer -p awk '{printf "%d\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
+(xz -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE} status=none) 2>&1 > /dev/null | unbuffer -p awk '{printf "%.2f\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
 echo "Flashing complete" >> /tmp/recore-flash-log
 echo "Script done!" >> /tmp/recore-flash-log
 sync

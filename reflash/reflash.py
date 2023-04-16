@@ -196,7 +196,7 @@ class Reflash:
             tr = Reflash.run_system_command("tail -1  /tmp/recore-flash-progress")
             ti = Reflash.run_system_command("cat /tmp/recore-flash-log")
             try:
-                self.state.install_progress = int(tr.strip())
+                self.state.install_progress = float(tr.strip())
                 self.state.install_log = ti
                 self.state.save()
             except:
@@ -268,7 +268,7 @@ class Reflash:
             tr = Reflash.run_system_command("tail -1 /tmp/recore-flash-progress")
             ti = Reflash.run_system_command("cat /tmp/recore-flash-log")
             try:
-                self.state.backup_progress = int(tr.strip())
+                self.state.backup_progress = float(tr.strip())
                 self.state.backup_log = ti
                 self.state.save()
             except:
