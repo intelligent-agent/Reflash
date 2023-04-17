@@ -3,7 +3,7 @@
 This is a simple python server that is set up to
 get and flash Refactor images
 
-Latest version is v0.0.9
+Latest version is v0.1.0
 
 ## Setup
 ### Additional packages for running
