@@ -42,7 +42,7 @@ export default {
       let timeRemaining = (timeFinished - Date.now())/1000;
       this.secondsR = Math.floor(timeRemaining % 60);
       this.minutesR = Math.floor(timeRemaining / 60);
-      if(isNaN(this.secondsR)){
+      if(isNaN(this.secondsR) || this.seconds == -1){
         this.secondsR = 0
         this.minutesR = 0
       }

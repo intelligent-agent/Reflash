@@ -206,6 +206,7 @@ class Reflash:
                 self.state.save()
                 break
             if self.state.install_state == "CANCELLED":
+                self.state.install_log += "\nInstallation cancelled"
                 break
 
     def get_install_progress(self):

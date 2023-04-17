@@ -1,22 +1,26 @@
 .w-app .primary {
-    color: #9bbff9;
+    color: #F1F1F1;
 }
 
 .w-select--no-padding .w-select__selection {
-  color: #fff;
+  color: #F1F1F1;
+}
+
+.w-button.size--xl {
+  color: #04A3E5;
 }
 
 .w-app .primary--bg {
-  color: #111;
-  background-color: #9bbff9;
+  color: #292A2C;
+  background-color: #04A3E5;
 }
 
 .w-app .secondary {
-  color: #fff;
+  color: #F1F1F1;
 }
 
 .w-card {
-  border: 1px solid #444;
+  border: none;
 }
 
 .w-select__selection-wrap {
@@ -40,5 +44,9 @@ body {
 }
 
 #app{
-  color: #9bbff9;
+  color: #F1F1F1;
+}
+
+.w-button.size--xl span{
+  color: #F1F1F1;
 }
