@@ -4,7 +4,8 @@
       <w-drawer
         :left="true"
         absolute
-        width="30%">
+        width="30%"
+        @close="this.$emit('close')">
         <w-flex class="pa5 secondary text-left" column>
           <h3>Log</h3>
           <pre style="white-space: pre-wrap; overflow: auto;" v-html="replaceWithBr()" />
@@ -18,9 +19,6 @@
 
 export default {
   name: 'TheLogger',
-  data: () => ({
-    openDrawer: false
-  }),
   props: {
     log: String,
     open: Boolean

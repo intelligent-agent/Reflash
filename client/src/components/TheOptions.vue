@@ -1,9 +1,9 @@
 <template>
   <div v-if="open">
     <w-drawer
-      :v-model="open"
       absolute
-      width="30%">
+      width="30%"
+      @close="this.$emit('close')">
       <w-flex class="pa5 secondary" column>
         <h3>Options</h3>
         <w-switch
@@ -25,7 +25,7 @@
         label="Enable SSH access on new image">
         </w-switch>
         <w-divider class="my6 mx-3"></w-divider>
-        <h3>Reboot to eMMC</h3>
+        <h4>Reboot to eMMC</h4>
         <w-switch
           @change="onChange('bootFromEmmc', options.bootFromEmmc)"
           v-model="options.bootFromEmmc"
@@ -34,15 +34,12 @@
         </w-switch>
         <w-divider class="my6 mx-3"></w-divider>
         <w-button
+          xl outline
           class="ma2"
           @click="$emit('reboot-board')">
-            Reboot
+            <span>Reboot</span>
         </w-button>
-        <w-button
-          class="ma2"
-          @click="$emit('shutdown-board')">
-            Shut down
-        </w-button>
+        <w-button xl outline class="ma2" @click="$emit('shutdown-board')"><span>Shut down</span></w-button>
        </w-flex>
     </w-drawer>
   </div>
@@ -62,9 +59,6 @@ export default {
       this.$emit('set-option',name, value);
     }
   },
-  data: () => ({
-    openDrawer: false
-  }),
   computed: mapGetters(['options']),
   created() {
     this.getOptions().then(() => {

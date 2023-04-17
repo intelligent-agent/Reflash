@@ -1,5 +1,12 @@
 <template>
   <w-app>
+    <TheLogger :log="theLog" :open="openLog"  @close="openLog=false"/>
+    <TheOptions 
+      :open="openOptions"
+      @set-option="setOption"
+      @reboot-board="rebootBoard"
+      @shutdown-board="shutdownBoard"
+      @close="openOptions=false"/>
     <w-card  class="mxa pa3 card secondary" >
       <w-flex wrap class="text-center">
         <div class="xs5 pa1">
@@ -19,12 +26,6 @@
         </div>
         <div class="xs5 pa4">
           <TheInfo :open="openInfo" :version="version" />
-          <TheLogger :log="theLog" :open="openLog"/>
-          <TheOptions 
-            :open="openOptions"
-            @set-option="setOption"
-            @reboot-board="rebootBoard"
-            @shutdown-board="shutdownBoard"/>
         </div>
         <div class="xs1 pa1 align-self-center">
           <w-select
@@ -45,7 +46,7 @@
         <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('Arrow-'+flashDirection())" /></div>
         <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('eMMC')" /></div>
 
-        <div class="xs1 pa1">Choose image to {{selectedMethod.id == 0 ? "Download" : "Upload"}}</div>
+        <div class="xs1 pa1 therow">Choose image to {{selectedMethod.id == 0 ? "Download" : "Upload"}}</div>
         <div class="xs1 pa1">
           <ProgressBar ref="transferprogressbar" name="transfer"/>
         </div>
@@ -54,7 +55,6 @@
           <ProgressBar ref="installprogressbar" name="install"/>
         </div>
         <div class="xs1 pa1"><div v-if="flash.selectedMethod == 1">Backup Filename</div></div>
-
         <div class="xs1 pa1">
           <w-select
             v-if="selectedMethod.id == 0"
@@ -107,7 +107,7 @@
                 Install finished! Please press the reboot button.
               </w-alert>
             </w-transition-expand>
-            <w-button xl outline class="ma1 btn" @click="rebootBoard()">Reboot Now</w-button>
+            <w-button xl outline class="ma1 btn" @click="rebootBoard()"><span>Reboot Now</span></w-button>
           </div>
           <div v-if="showOverlay">
             <w-transition-expand y>
@@ -116,7 +116,7 @@
               </w-alert>
             </w-transition-expand>
             <w-progress class="ma1" circle></w-progress><br>
-            <w-button xl outline @click="isServerUp()" v-if="showOverlay">Check server</w-button>
+            <w-button xl outline @click="isServerUp()" v-if="showOverlay"><span>Check server</span></w-button>
           </div>
         </div>
       </w-flex>
@@ -556,8 +556,16 @@ h3 {
   font-size: 2em;
   margin: 0.2em;
 }
+h4 {
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 300;
+}
 body {
   background-color: #F1F1F1;
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 300;
 }
 #app {
   font-family: Avenir, Helvetica, Arial, sans-serif;
@@ -565,7 +573,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
   text-align: center;
   color: #4D4D4D;
-  margin-top: 60px;
 }
 .w-select--no-padding .w-select__selection {
   text-align: center;
@@ -575,6 +582,7 @@ body {
 
 .card {
   width: 70%;
+  margin-top: 60px;
 }
 
 .w-button.size--xl .primary {
@@ -620,5 +628,8 @@ body {
 
 .w-app .pa3{
   border: none;
+}
+.therow {
+  height: 45px;
 }
 </style>
