@@ -3,12 +3,14 @@ import concurrent.futures
 import subprocess
 import time
 import sqlite3
+import threading
 
 class State(object):
     def __init__(self, db):
         self.db = db
         self.db.row_factory = sqlite3.Row
         self.cur = self.db.cursor()
+        self.lock = threading.Lock()
 
         self.download_state = "IDLE"
         self.download_bytes_now = 0
@@ -79,11 +81,15 @@ class State(object):
 
     def save(self, field=None):
         fields = self.fields if field == None else [field]
-        for line in fields:
-            value = getattr(self, line)
-            ins = f"UPDATE state set value = '{value}' where name = '{line}'"
-            self.cur.execute(ins)
-        self.db.commit()
+        try:
+            self.lock.acquire(True)
+            for line in fields:
+                value = getattr(self, line)
+                ins = f"UPDATE state set value = '{value}' where name = '{line}'"
+                self.cur.execute(ins)
+            self.db.commit()
+        finally:
+            self.lock.release()
 
 class Reflash:
     def __init__(self, settings):
@@ -192,7 +198,7 @@ class Reflash:
         cmd = ["sudo", "/usr/local/bin/flash-recore", filename]
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
         while True:
-            time.sleep(0.3)
+            time.sleep(1)
             tr = Reflash.run_system_command("tail -1  /tmp/recore-flash-progress")
             ti = Reflash.run_system_command("cat /tmp/recore-flash-log")
             try:
@@ -200,7 +206,10 @@ class Reflash:
                 self.state.install_log = ti
                 self.state.save()
             except:
-                pass
+                self.state.install_state = "ERROR"
+                self.state.install_log += "\nError getting progress and log"
+                self.state.save()
+                break
             if self.process.poll() == 0:
                 self.state.install_state = "FINISHED"
                 self.state.save()
@@ -218,7 +227,7 @@ class Reflash:
             "start_time": self.state.install_start_time,
             "log": self.state.install_log
         }
-        if self.state.install_state == "FINISHED":
+        if self.state.install_state not in ["INSTALLING", "IDLE"]:
             self.state.install_state = "IDLE"
             self.state.save()
         return ret

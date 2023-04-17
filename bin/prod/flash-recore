@@ -25,7 +25,7 @@ echo "Uncompressed file size $SIZE bytes" >> /tmp/recore-flash-log
 
 mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount
 echo "Starting flashing" >> /tmp/recore-flash-log
-(xz -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE} status=none) 2>&1 | unbuffer -p awk '{printf "%f\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
+(xz -T 0 -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE} status=none) 2>&1 | unbuffer -p awk '{printf "%f\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
 echo "Flashing complete" >> /tmp/recore-flash-log
 sync
 
