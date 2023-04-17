@@ -97,7 +97,7 @@
           </w-button>
         </div>
         <div class="xs1">
-          <w-input v-model="backupFile" v-if="flash.selectedMethod == 1" outline>Label</w-input>
+          <w-input v-model="backupFile" v-if="flash.selectedMethod == 1">Label</w-input>
         </div>
 
         <div class="xs5">
@@ -585,19 +585,6 @@ body {
   margin-top: 60px;
 }
 
-.w-button.size--xl .primary {
-  color: #4D4D4D;
-}
-
-.w-button.size--xl {
-  color: #04A3E5;
-}
-
-.w-button.size--xl span{
-  color: #4D4D4D;
-  height: 19px;
-}
-
 .w-app .primary--bg {
   color: #DDD;
   background-color: #04A3E5;
@@ -632,4 +619,15 @@ body {
 .therow {
   height: 45px;
 }
+.w-app .primary{
+  color: #292A2C;
+}
+.w-button.size--xl {
+  color: #04A3E5;
+}
+.w-button.size--xl span{
+  color: #4D4D4D;
+  height: 19px;
+}
+
 </style>

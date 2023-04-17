@@ -6,9 +6,9 @@
         absolute
         width="30%"
         @close="this.$emit('close')">
-        <w-flex class="pa5 secondary text-left" column>
+        <w-flex class="pa5 secondary" column>
           <h3>Log</h3>
-          <pre style="white-space: pre-wrap; overflow: auto;" v-html="replaceWithBr()" />
+          <pre class="text-left" style="white-space: pre-wrap; overflow: auto;" v-html="replaceWithBr()" />
         </w-flex>
       </w-drawer>
     </div>
