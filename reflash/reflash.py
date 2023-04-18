@@ -205,9 +205,11 @@ class Reflash:
                 self.state.install_progress = float(tr.strip())
                 self.state.install_log = ti
                 self.state.save()
-            except:
+            except ValueError:
+                pass
+            except Exception as err:
                 self.state.install_state = "ERROR"
-                self.state.install_log += "\nError getting progress and log"
+                self.state.install_log += "\nError getting progress and log: "+str(err)
                 self.state.save()
                 break
             if self.process.poll() == 0:
