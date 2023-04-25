@@ -29,4 +29,7 @@ chmod +x ./scripts/install_reflash.sh
 
 cd /boot/dtb/allwinner/; ln -s sun50i-a64-recore-a6.dtb sun50i-a64-recore.dtb
 sh -c 'echo root:kamikaze | chpasswd'
+cd /boot
+mklost+found
+chmod +r /boot/lost+found
 echo "Custom script completed"
