@@ -8,9 +8,10 @@ install_bins:
 	chmod +x /usr/local/bin/set-boot-media
 
 dev-server:
-	FLASK_ENV="development" \
-	FLASK_APP="reflash" \
-	flask run --host=0.0.0.0 --port=8081
+	FLASK_RUN_PORT=8081 \
+	FLASK_ENV=development \
+	FLASK_DEBUG=1 \
+	flask --app server run
 
 dev-client:
 	cd client; npm run serve
@@ -40,3 +41,6 @@ package:
 
 upload-tar:
 	scp reflash.tar.gz root@recore.local:/usr/src/
+
+test:
+	python3 -m pytest tests

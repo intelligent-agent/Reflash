@@ -6,12 +6,15 @@ import sqlite3
 import threading
 
 class State(object):
-    def __init__(self, db):
-        self.db = db
+    def __init__(self, db_file):
+        self.db = sqlite3.connect(db_file, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.cur = self.db.cursor()
         self.lock = threading.Lock()
 
+        self.settings_darkmode = True
+        self.settings_reboot_when_done = False
+        self.settings_enable_ssh = False
         self.download_state = "IDLE"
         self.download_bytes_now = 0
         self.download_bytes_total = 1
@@ -31,8 +34,13 @@ class State(object):
         self.backup_total = 0
         self.backup_start_time = 0
         self.backup_log = ""
+        self.upload_state = "IDLE"
+        self.upload_filename = ""
 
         self.fields = [
+            'settings_darkmode',
+            'settings_reboot_when_done',
+            'settings_enable_ssh',
             'download_bytes_now',
             'download_bytes_total',
             'download_state',
@@ -51,8 +59,11 @@ class State(object):
             'backup_filename',
             'backup_total',
             'backup_start_time',
-            'backup_log'
-            ]
+            'backup_log',
+            'upload_state',
+            'upload_filename',
+
+        ]
 
     def db_exists(self):
         self.cur.execute("SELECT count(name) FROM sqlite_master WHERE type='table' AND name='state'")
@@ -62,12 +73,10 @@ class State(object):
     def create_default(self):
         self.cur.execute("DROP TABLE IF EXISTS state")
         self.cur.execute("CREATE TABLE state(name, value, type)")
-
         for line in self.fields:
             ins = [line, getattr(self, line), type(getattr(self, line)).__name__]
             self.cur.execute("INSERT INTO state VALUES(?,?,?)", ins)
         self.db.commit()
-
 
     def assign_var(self, name, value, type_name):
         var = __builtins__[type_name](value)
@@ -95,17 +104,30 @@ class Reflash:
     def __init__(self, settings):
         self.reflash_version_file = settings.get("version_file")
         self.images_folder = settings.get("images_folder")
-        self.settings_folder = settings.get("settings_folder")
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-        self.state = State(settings.get("db"))
+        self.sudo = "sudo" if settings.get("use_sudo") else ""
+
+        self.state = State(settings.get("db_file"))
         if not self.state.db_exists():
             self.state.create_default()
         self.state.load()
 
-    def get_reflash_version(self):
-        with open(self.reflash_version_file, "r") as f:
-            version = f.read().replace("\n", "")
-            return version
+    def get_version(self):
+        return self._run_system_command(f"cat {self.reflash_version_file}")
+
+    def refresh(self):
+        self.state.load()
+
+    def get_state(self):
+        if self.state.install_state == "INSTALLING":
+            return "INSTALLING"
+        if self.state.download_state == "DOWNLOADING":
+            return "DOWNLOADING"
+        if self.state.backup_state == "INSTALLING":
+            return "BACKING_UP"
+        if self.state.upload_state == "UPLOADING":
+            return "UPLOADING"
+        return"IDLE"
 
     def check_file_integrity(self, filename):
         path = self.images_folder + "/"+filename +".img.xz"
@@ -125,23 +147,18 @@ class Reflash:
         ]
         return images
 
-    def download_version(self, refactor_image, start_time):
-        url = refactor_image["url"]
+    def download_refactor(self, url, size, filename, start_time):
+        url = url
         self.state.download_bytes_now = 0
         self.state.download_start_time = start_time
         self.state.download_state = "DOWNLOADING"
-        self.state.download_bytes_total = refactor_image["size"]
-        self.state.download_filename = refactor_image["name"]
+        self.state.download_bytes_total = size
+        self.state.download_filename = filename
         self.state.save()
-        self.executor.submit(self.download_refactor, url, refactor_image["name"])
-
-    def save_file_chunk(self, chunk, filename, is_new_file):
-        open_rights = "wb+" if is_new_file else "ab+"
-        with open(self.images_folder+"/"+filename, open_rights) as f:
-            f.write(chunk)
+        self.executor.submit(self._ex_download_refactor, url, filename)
         return True
 
-    def download_refactor(self, url, filename):
+    def _ex_download_refactor(self, url, filename):
         import requests
         # Answer by Dennis Patterson
         # https://stackoverflow.com/questions/53101597/how-to-download-binary-file-using-requests
@@ -161,10 +178,13 @@ class Reflash:
         self.state.save()
 
     def cancel_download(self):
+        if self.state.download_state != "DOWNLOADING":
+            return False
         os.remove(self.images_folder + "/" + self.state.download_filename)
         self.state.download_state = "CANCELLED"
         self.state.save()
-
+        return True
+    
     def get_download_progress(self):
         ret = {
             "progress": (self.state.download_bytes_now / self.state.download_bytes_total)*100,
@@ -176,6 +196,29 @@ class Reflash:
             self.state.download_state = "IDLE"
             self.state.save()
         return ret
+
+    def upload_start(self, filename):
+        if self.get_state() != "IDLE":
+            return False
+        if not filename.endswith(".img.xz"):
+            return False
+        path = self.images_folder+"/"+filename
+        with open(path, 'ab+'):
+            os.utime(path)
+        self.state.upload_state = "UPLOADING"
+        self.state.upload_filename = path
+        self.state.save()
+        return True
+
+    def upload_finish(self):
+        self.state.upload_state = "IDLE"
+        self.state.save()
+        return True
+
+    def upload_chunk(self, chunk):
+        with open(self.state.upload_filename, "wb+") as f:
+            f.write(chunk)
+        return True
 
     def install_refactor(self, filename, start_time):
         infile = self.images_folder + "/" + filename+".img.xz"
@@ -191,11 +234,11 @@ class Reflash:
         self.state.install_state = "INSTALLING"
         self.state.install_cancelled = False
         self.state.save()
-        ex = self.executor.submit(self.ex_install_refactor, infile)
+        ex = self.executor.submit(self._ex_install_refactor, infile)
         return True
 
-    def ex_install_refactor(self, filename):
-        cmd = ["sudo", "/usr/local/bin/flash-recore", filename]
+    def _ex_install_refactor(self, filename):
+        cmd = [self.sudo, "/usr/local/bin/flash-recore", filename]
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
         while True:
             time.sleep(1)
@@ -235,7 +278,7 @@ class Reflash:
         return ret
 
     def cancel_installation(self):
-        Reflash.run_system_command("sudo pkill -f xz -9")
+        Reflash.run_system_command(self.sudo+" pkill -f xz -9")
         self.state.install_state = "CANCELLED"
         self.state.save()
         return True
@@ -265,13 +308,13 @@ class Reflash:
         return ret
 
     def cancel_backup(self):
-        Reflash.run_system_command("sudo pkill -f backup-emmc -9")
+        Reflash.run_system_command(self.sudo+" pkill -f backup-emmc -9")
         self.state.backup_state = "CANCELLED"
         self.state.save()
         return True
 
     def ex_backup_refactor(self, filename):
-        cmd = ["sudo", "/usr/local/bin/backup-emmc", filename]
+        cmd = [self.sudo, "/usr/local/bin/backup-emmc", filename]
         self.backup_transferred = 0
         self.backup_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
         while True:
@@ -298,37 +341,37 @@ class Reflash:
                 break
             self.state.save()
 
-    def run_system_command(command):
+
+    def save_options(self, options):
+        if 'darkmode' in options:
+            self.state.settings_darkmode = options['darkmode']
+        if 'rebootWhenDone' in options:
+            self.state.settings_reboot_when_done = options['rebootWhenDone']
+        if 'enableSsh' in options:
+            self.state.settings_enable_ssh = options['enableSsh']
+        self.state.save()
+        return True
+
+    def get_options(self):
+        return {
+            'darkmode': self.state.settings_darkmode,
+            'rebootWhenDone': self.state.settings_reboot_when_done,
+            'enableSsh': self.state.settings_enable_ssh,
+        }
+
+    def _run_system_command(self, command):
         return subprocess.run(command.split(),
                               capture_output=True,
                               text=True).stdout.strip()
 
-    def save_settings(self, settings):
-        import json
-        json_file = json.dumps(settings, indent=4)
-        with open(self.settings_folder+"/settings.json", "w+") as f:
-            f.write(json_file)
-        return True
-
-    def read_settings(self):
-        import json
-        path = self.settings_folder+"/settings.json"
-        if not os.path.isfile(path):
-            return {}
-        with open(path, "r") as f:
-            try:
-                return json.load(f)
-            except:
-                return {}
-
     def enable_ssh(self):
-        return Reflash.run_system_command("sudo /usr/local/bin/enable-emmc-ssh")
+        return self._run_system_command(self.sudo+" /usr/local/bin/enable-emmc-ssh")
 
     def reboot(self):
-        return Reflash.run_system_command("sudo /usr/local/bin/reboot-board")
+        return self._run_system_command(self.sudo+" /usr/local/bin/reboot-board")
 
     def shutdown(self):
-        return Reflash.run_system_command("sudo /usr/local/bin/shutdown-board")
+        return self._run_system_command(self.sudo+" /usr/local/bin/shutdown-board")
 
     def set_boot_media(self, media):
-        return os.system(f"sudo /usr/local/bin/set-boot-media {media}")
+        return self._run_system_command(f"{self.sudo} /usr/local/bin/set-boot-media {media}")

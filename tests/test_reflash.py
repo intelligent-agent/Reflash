@@ -1,0 +1,99 @@
+import pytest
+import sys
+import os
+import shutil
+import requests_mock
+sys.path.append('..')
+sys.path.append('.')
+import reflash
+import time
+
+def stream_callback(req, context):
+    print("stream")
+    return "Y"*10*1024*1024
+
+def create_dummy_file(name):
+    open(name, 'a').close()
+    os.system(f"xz -z {name}")
+
+@pytest.fixture()
+def r():
+    shutil.rmtree('.tmp-test', ignore_errors=True)
+    settings = {
+        "version_file": ".tmp-test/reflash/reflash.version",
+        "images_folder": ".tmp-test/reflash/images",
+        "db_file": ".tmp-test/reflash/reflash.db",
+        "use_sudo": False
+    }
+    path = os.path.join("./", settings['images_folder'])
+    os.makedirs(path, exist_ok = True)
+    with open(settings["version_file"], 'w+') as f:
+        f.write("v0.1.2\n")
+        
+    r = reflash.Reflash(settings)
+    yield(r)
+
+
+@pytest.fixture()
+def p():
+    progress = {'filename': 'hamburger.img.xz', 'progress': 0.0, 'start_time': 666, 'state': 'DOWNLOADING'}
+    yield(progress)
+
+class TestReflash:
+    def test_get_state(self, r):
+        assert r.get_state() == "IDLE"
+    
+    def test_check_file_integrity(self, r):
+        assert r.check_file_integrity("missing_file") == {'is_file_ok': False}
+        create_dummy_file(".tmp-test/reflash/images/pizza.img")
+        assert r.check_file_integrity('pizza') == {'is_file_ok': True}
+
+    def test_get_local_releases(self, r):
+        assert r.get_local_releases() == []
+        create_dummy_file(".tmp-test/reflash/images/hamburger.img")
+        assert r.get_local_releases() == [{'id': 0, 'name': 'hamburger', 'size': 32}]
+    
+    def test_upload_start(self, r):
+        filename = "pizza.img.xz"
+        r.upload_start(filename)
+        assert r.get_state() == "UPLOADING"
+        assert r.upload_start(filename) == False
+
+    def test_upload_start_repeat(self, r):
+        filename = "pizza.img.xz"
+        assert r.upload_start(filename) == True
+        assert r.upload_start(filename) == False
+
+    def test_upload_chunk(self, r):
+        assert r.upload_start("pizza.img.xz") == True
+        assert r.get_state() == "UPLOADING"
+        assert r.upload_chunk(bytes("hamburger", 'utf-8')) == True
+        assert r.upload_finish() == True
+        assert r.get_state() == "IDLE"
+        assert r.get_local_releases() == [{'id': 0, 'name': 'pizza', 'size': len("hamburger")}]
+
+    def test_download_refactor_ok(self, r, p):
+        with requests_mock.Mocker() as mock:
+            url = "http://pizza.com"
+            size = 5
+            filename = "hamburger.img.xz"
+            start_time = 666
+            mock.get("http://pizza.com", text='tacos')
+            assert r.download_refactor(url, size, filename, start_time) == True
+            assert r.get_download_progress() == p
+            time.sleep(0.1)
+            p['state'] = 'FINISHED'
+            p['progress'] = 100.0
+            assert r.get_download_progress() == p
+            p['state'] = 'IDLE'
+            assert r.get_download_progress() == p
+            assert r.get_local_releases() == [{'id': 0, 'name': 'hamburger', 'size':5}]
+    
+    def test_install_missing_file(self, r):
+        assert r.install_refactor("tacos", 567) == False
+
+    def test_install_ok(self, r):
+        create_dummy_file(".tmp-test/reflash/images/tacos.img")
+        assert r.install_refactor("tacos", 39) == True
+        assert r.get_state() == "INSTALLING"
+        assert r.get_install_progress()['state'] == "INSTALLING"
