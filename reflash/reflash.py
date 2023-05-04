@@ -36,6 +36,9 @@ class State(object):
         self.backup_log = ""
         self.upload_state = "IDLE"
         self.upload_filename = ""
+        self.upload_bytes_total = 1
+        self.upload_bytes_now = 0
+        self.upload_start_time = 0
 
         self.fields = [
             'settings_darkmode',
@@ -62,7 +65,9 @@ class State(object):
             'backup_log',
             'upload_state',
             'upload_filename',
-
+            'upload_bytes_total',
+            'upload_bytes_now',
+            'upload_start_time',
         ]
 
     def db_exists(self):
@@ -180,7 +185,10 @@ class Reflash:
     def cancel_download(self):
         if self.state.download_state != "DOWNLOADING":
             return False
-        os.remove(self.images_folder + "/" + self.state.download_filename)
+        try:
+            os.remove(self.images_folder + "/" + self.state.download_filename)
+        except FileNotFoundError:
+            pass
         self.state.download_state = "CANCELLED"
         self.state.save()
         return True
@@ -192,12 +200,12 @@ class Reflash:
             "start_time": self.state.download_start_time,
             "filename": self.state.download_filename,
         }
-        if self.state.download_state == "FINISHED":
+        if self.state.download_state in ["FINISHED", "CANCELLED"]:
             self.state.download_state = "IDLE"
             self.state.save()
         return ret
 
-    def upload_start(self, filename):
+    def upload_start(self, filename, size, start_time):
         if self.get_state() != "IDLE":
             return False
         if not filename.endswith(".img.xz"):
@@ -206,19 +214,44 @@ class Reflash:
         with open(path, 'ab+'):
             os.utime(path)
         self.state.upload_state = "UPLOADING"
-        self.state.upload_filename = path
+        self.state.upload_filename = filename
+        self.state.upload_bytes_total = size
+        self.state.upload_bytes_now = 0
+        self.state.upload_start_time = start_time
         self.state.save()
         return True
 
     def upload_finish(self):
-        self.state.upload_state = "IDLE"
+        self.state.upload_state = "FINISHED"
+        self.state.save()
+        return True
+
+    def upload_cancel(self):
+        self.state.upload_state = "CANCELLED"
         self.state.save()
         return True
 
     def upload_chunk(self, chunk):
-        with open(self.state.upload_filename, "wb+") as f:
+        path = self.images_folder+"/"+self.state.upload_filename
+        with open(path, "ab+") as f:
             f.write(chunk)
+        self.state.upload_bytes_now += len(chunk)
+        self.state.save('upload_bytes_now')
         return True
+
+    def get_upload_progress(self):
+        ret = {
+            "state": self.state.upload_state,
+            "progress": (self.state.upload_bytes_now/self.state.upload_bytes_total)*100,
+            "filename": self.state.upload_filename,
+            "bytes_total": self.state.upload_bytes_total,
+            "bytes_now": self.state.upload_bytes_now,
+            "start_time": self.state.upload_start_time,
+        }
+        if self.state.upload_state not in ["UPLOADING", "IDLE"]:
+            self.state.upload_state = "IDLE"
+            self.state.save()
+        return ret
 
     def install_refactor(self, filename, start_time):
         infile = self.images_folder + "/" + filename+".img.xz"
@@ -234,36 +267,29 @@ class Reflash:
         self.state.install_state = "INSTALLING"
         self.state.install_cancelled = False
         self.state.save()
-        ex = self.executor.submit(self._ex_install_refactor, infile)
+        self.executor.submit(self._ex_install_refactor, infile)
         return True
 
     def _ex_install_refactor(self, filename):
-        cmd = [self.sudo, "/usr/local/bin/flash-recore", filename]
-        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
-        while True:
-            time.sleep(1)
-            tr = Reflash.run_system_command("tail -1  /tmp/recore-flash-progress")
-            ti = Reflash.run_system_command("cat /tmp/recore-flash-log")
-            try:
-                self.state.install_progress = float(tr.strip())
-                self.state.install_log = ti
-                self.state.save()
-            except ValueError:
-                pass
-            except Exception as err:
-                self.state.install_state = "ERROR"
-                self.state.install_log += "\nError getting progress and log: "+str(err)
-                self.state.save()
-                break
-            if self.process.poll() == 0:
-                self.state.install_state = "FINISHED"
-                self.state.save()
-                break
-            if self.state.install_state == "CANCELLED":
-                self.state.install_log += "\nInstallation cancelled"
-                break
+        cmd = " ".join([self.sudo, "/usr/local/bin/flash-recore", filename])
+        self._run_system_command(cmd)
+        if self.state.install_state != "CANCELLED":
+            self.state.install_state = "FINISHED"
+            self.state.save()
 
     def get_install_progress(self):
+        tr = self._run_system_command("tail -1  /tmp/recore-flash-progress")
+        ti = self._run_system_command("cat /tmp/recore-flash-log")
+        try:
+            self.state.install_progress = float(tr.strip())
+            self.state.install_log = ti
+            self.state.save()
+        except ValueError:
+            pass
+        except Exception as err:
+            self.state.install_state = "ERROR"
+            self.state.install_log += "\nError getting progress and log: "+str(err)
+            self.state.save()
         ret = {
             "state": self.state.install_state,
             "progress": self.state.install_progress,
@@ -278,7 +304,7 @@ class Reflash:
         return ret
 
     def cancel_installation(self):
-        Reflash.run_system_command(self.sudo+" pkill -f xz -9")
+        self._run_system_command(self.sudo+" pkill -f xz -9")
         self.state.install_state = "CANCELLED"
         self.state.save()
         return True
@@ -291,10 +317,30 @@ class Reflash:
         self.state.backup_log = ""
         self.state.backup_start_time = start_time
         self.state.save()
-        ex = self.executor.submit(self.ex_backup_refactor, outfile)
+        self.executor.submit(self._ex_backup_refactor, outfile)
         return True
 
+    def _ex_backup_refactor(self, filename):
+        cmd = " ".join([self.sudo, "/usr/local/bin/backup-emmc", filename])
+        self._run_system_command(cmd)
+        if self.state.backup_state != "CANCELLED":
+            self.state.backup_state = "FINISHED"
+            self.state.save()
+
+    def _parse_float(self, val):
+        try:
+            val = float(val)
+        except:
+            val = 0.0
+        return val
+
     def get_backup_progress(self):
+        tr = self._run_system_command("tail -1 /tmp/recore-flash-progress")
+        ti = self._run_system_command("cat /tmp/recore-flash-log")
+        self.state.backup_progress = self._parse_float(tr)
+        self.state.backup_log = ti
+        self.state.save()
+
         ret = {
             "state": self.state.backup_state,
             "progress": self.state.backup_progress,
@@ -308,38 +354,12 @@ class Reflash:
         return ret
 
     def cancel_backup(self):
-        Reflash.run_system_command(self.sudo+" pkill -f backup-emmc -9")
+        self._run_system_command(self.sudo+" pkill -f backup-emmc -9")
         self.state.backup_state = "CANCELLED"
         self.state.save()
         return True
 
-    def ex_backup_refactor(self, filename):
-        cmd = [self.sudo, "/usr/local/bin/backup-emmc", filename]
-        self.backup_transferred = 0
-        self.backup_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, close_fds=True)
-        while True:
-            time.sleep(0.3)
-            status = self.backup_process.poll()
-            tr = Reflash.run_system_command("tail -1 /tmp/recore-flash-progress")
-            ti = Reflash.run_system_command("cat /tmp/recore-flash-log")
-            try:
-                self.state.backup_progress = float(tr.strip())
-                self.state.backup_log = ti
-                self.state.save()
-            except:
-                pass
-            if status == 0:
-                self.state.backup_state = "FINISHED"
-                self.state.save()
-                break
-            if status != None:
-                self.state.backup_state = "ERROR"
-                self.state.backup_log += f"\nError {status}"
-                self.state.save()
-                break
-            if self.state.backup_state == "CANCELLED":
-                break
-            self.state.save()
+    
 
 
     def save_options(self, options):

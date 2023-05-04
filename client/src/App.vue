@@ -253,56 +253,99 @@ export default {
       this.files = files
       this.file = files[0].file;
     },
-    uploadLocalFile(){
+    async uploadFinish(){
+      await axios.put(`/api/upload_finish`
+      ).then(function(response) {
+            self.status = response.data["success"];
+      });
+    },
+    async uploadCancel(){
+      await axios.put(`/api/upload_cancel`
+      ).then(function(response) {
+            self.status = response.data["success"];
+      });      
+    },
+    async uploadSelected(){
+      let self = this;
+      if(this.isTransferring){
+          await axios.put(`/api/upload_start`, {
+          "filename": self.file.name,
+          "size": self.file.size,
+          "start_time": Date.now(),
+        }).then(function(response) {
+              self.status = response.data["success"];
+              self.uploadLocalFile();
+              self.checkUploadProgress();
+        });
+      }
+      else{
+        self.uploadCancel();
+      }
+    },
+    async uploadLocalFile(){
       const CHUNK_SIZE = 3*1024*1024;
       let self = this;
       var reader = new FileReader();
       var offset = 0;
       var filesize = this.file.size;
-      this.setTimeStarted({name: 'transfer', time: Date.now()});
 
       reader.onload = function(){
           var result = reader.result;
           var chunk = result;
           axios.post(`/api/upload_chunk`, {
-             "chunk": chunk,
-             "filename": self.fileName,
-             "is_new_file": offset == 0
+             "chunk": chunk
            }).then(function(response) {
             const status = response.data
             if(status.success && self.isTransferring){
-              self.$refs.transferprogressbar.update();
               offset += CHUNK_SIZE;
               if(offset <= filesize){
                 var slice = self.file.slice(offset, offset + CHUNK_SIZE);
                 reader.readAsDataURL(slice);
-                self.transferProgress = Math.round((offset/filesize)*100);
-                self.setProgress({name: 'transfer', progress: self.transferProgress });
-                self.setVisible({name: 'transfer', visible: true});
               }
               else{
                 offset = filesize;
-                self.transferProgress = 100;
-                self.isTransferring = false;
-                self.setVisible({name: 'transfer', visible: false});
-                self.getLocalImages();
-                self.selectedLocalImage = self.selectedUploadImage[0].name.slice(0, -7);
-                self.selectedUploadImage = []
+                self.uploadFinish();
               }
             }
             else{
-              self.uploadError = true;
-              self.isTransferring = false;
-              self.setVisible({name: 'transfer', visible: false});
+              self.uploadCancel();
             }
           });
       };
 
-      if(this.file)
-      {
+      if(this.file){
           var slice = this.file.slice(offset, offset + CHUNK_SIZE);
           reader.readAsDataURL(slice);
           self.fileName = this.file.name;
+      }
+    },
+    async checkUploadProgress(){
+      const response = await axios.get(`/api/get_upload_progress`);
+      let data = response.data;
+
+      if(data.state == "UPLOADING"){
+        this.isTransferring = true;
+        this.setProgress({name: 'transfer', progress: data.progress});
+        this.setTimeStarted({name: 'transfer', time: data.start_time});
+        this.setVisible({name: 'transfer', visible: true});
+        this.$refs.transferprogressbar.update();
+        this.selectedMethod = this.availableMethods[1];
+        setTimeout(this.checkUploadProgress, 1000);
+      }
+      else{
+        this.isTransferring = false;
+        this.setVisible({name: 'transfer', visible: false});
+        if(data.state == "ERROR"){
+          console.log(data.error);
+        }
+        else if(data.state == "FINISHED"){
+          this.selectedUploadImage = [];
+          await this.getLocalImages();
+          this.selectedLocalImage = data.filename.slice(0, -7);
+        }
+        else if(data.state == "CANCELED"){
+          this.getLocalImages();
+        }
       }
     },
     onTransferButtonClick(){
@@ -311,7 +354,7 @@ export default {
         this.downloadSelected();
       }
       else if(this.selectedMethod.id == 1){
-        this.uploadLocalFile();
+        this.uploadSelected();
       }
     },
     async downloadSelected(){
@@ -538,12 +581,13 @@ export default {
     }
   },
   created(){
-    this.selectedMethod = this.availableMethods[0]
+    this.selectedMethod = this.availableMethods[0];
     this.getGithubImages();
     this.getLocalImages();
     this.checkDownloadProgress();
     this.checkInstallProgress();
     this.checkBackupProgress();
+    this.checkUploadProgress();
   },
 }
 </script>

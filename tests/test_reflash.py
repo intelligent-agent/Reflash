@@ -29,7 +29,7 @@ def r():
     os.makedirs(path, exist_ok = True)
     with open(settings["version_file"], 'w+') as f:
         f.write("v0.1.2\n")
-        
+
     r = reflash.Reflash(settings)
     yield(r)
 
@@ -55,17 +55,23 @@ class TestReflash:
     
     def test_upload_start(self, r):
         filename = "pizza.img.xz"
-        r.upload_start(filename)
+        size = 42
+        start_time = 666
+        r.upload_start(filename, size, start_time)
         assert r.get_state() == "UPLOADING"
-        assert r.upload_start(filename) == False
+        assert r.upload_start(filename, size, start_time) == False
 
     def test_upload_start_repeat(self, r):
         filename = "pizza.img.xz"
-        assert r.upload_start(filename) == True
-        assert r.upload_start(filename) == False
+        size = 42
+        start_time = 666
+        assert r.upload_start(filename, size, start_time) == True
+        assert r.upload_start(filename, size, start_time) == False
 
     def test_upload_chunk(self, r):
-        assert r.upload_start("pizza.img.xz") == True
+        size = 42
+        start_time = 666
+        assert r.upload_start("pizza.img.xz", size, start_time) == True
         assert r.get_state() == "UPLOADING"
         assert r.upload_chunk(bytes("hamburger", 'utf-8')) == True
         assert r.upload_finish() == True
@@ -88,7 +94,10 @@ class TestReflash:
             p['state'] = 'IDLE'
             assert r.get_download_progress() == p
             assert r.get_local_releases() == [{'id': 0, 'name': 'hamburger', 'size':5}]
-    
+
+    def test_download_refactor_cancel(self, r, p):
+        pass
+
     def test_install_missing_file(self, r):
         assert r.install_refactor("tacos", 567) == False
 
@@ -97,3 +106,19 @@ class TestReflash:
         assert r.install_refactor("tacos", 39) == True
         assert r.get_state() == "INSTALLING"
         assert r.get_install_progress()['state'] == "INSTALLING"
+
+    def test_set_get_optons(self ,r):
+        options = {
+            "darkmode": True,
+            "enableSsh": True,
+            "rebootWhenDone": False
+        }
+        assert r.save_options(options) == True
+
+        # adding other option is silently ignored
+        options['pizza'] = True
+        assert r.save_options(options) == True
+        del options['pizza']
+        assert r.get_options() == options
+
+    

@@ -13,6 +13,11 @@ dev-server:
 	FLASK_DEBUG=1 \
 	flask --app server run
 
+clean:
+	rm -rf .tmp
+	mkdir -p .tmp/reflash/images
+	echo "0.1.2" > .tmp/reflash_version
+
 dev-client:
 	cd client; npm run serve
 

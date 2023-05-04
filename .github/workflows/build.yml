@@ -27,6 +27,11 @@ jobs:
       with:
         node-version: 18
 
+    - name: Run tests
+      working-directory: ./Reflash
+      run: |
+        make test
+
     - name: install and build
       working-directory: ./Reflash/client
       run: |
