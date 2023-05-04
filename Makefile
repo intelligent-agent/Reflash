@@ -13,10 +13,13 @@ dev-server:
 	FLASK_DEBUG=1 \
 	flask --app server run
 
-clean:
+dev-clean:
 	rm -rf .tmp
-	mkdir -p .tmp/reflash/images
-	echo "0.1.2" > .tmp/reflash_version
+	mkdir -p .tmp/opt/reflash/images
+	mkdir -p .tmp/dev/
+	mkdir -p .tmp/etc/
+	dd if=/dev/random of=.tmp/dev/mmcblk0 count=1000 bs=1M
+	echo "0.1.2" > .tmp/etc/reflash_version
 
 dev-client:
 	cd client; npm run serve
@@ -47,5 +50,7 @@ package:
 upload-tar:
 	scp reflash.tar.gz root@recore.local:/usr/src/
 
-test:
+tests:
 	python3 -m pytest tests
+
+.PHONY: tests

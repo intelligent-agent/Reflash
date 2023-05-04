@@ -6,7 +6,7 @@ echo "Recore eMMC backup (dev)" >  /tmp/recore-flash-log
 echo "------------------" >> /tmp/recore-flash-log
 
 OUTFILE=$1
-INFILE="/opt/reflash/sde2/dummy3.bin"
+INFILE=".tmp/dev/mmcblk0"
 OUTIMG=${OUTFILE}.img.xz
 SIZE=$(stat --printf="%s" $INFILE)
 

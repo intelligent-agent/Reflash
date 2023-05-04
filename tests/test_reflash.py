@@ -20,11 +20,12 @@ def create_dummy_file(name):
 def r():
     shutil.rmtree('.tmp-test', ignore_errors=True)
     settings = {
-        "version_file": ".tmp-test/reflash/reflash.version",
-        "images_folder": ".tmp-test/reflash/images",
-        "db_file": ".tmp-test/reflash/reflash.db",
+        "version_file": ".tmp-test/etc/reflash/reflash.version",
+        "images_folder": ".tmp-test/opt/reflash/images",
+        "db_file": ".tmp-test/opt/reflash/reflash.db",
         "use_sudo": False
     }
+    os.makedirs(".tmp-test/etc/reflash/", exist_ok = True)
     path = os.path.join("./", settings['images_folder'])
     os.makedirs(path, exist_ok = True)
     with open(settings["version_file"], 'w+') as f:
@@ -45,12 +46,12 @@ class TestReflash:
     
     def test_check_file_integrity(self, r):
         assert r.check_file_integrity("missing_file") == {'is_file_ok': False}
-        create_dummy_file(".tmp-test/reflash/images/pizza.img")
+        create_dummy_file(".tmp-test/opt/reflash/images/pizza.img")
         assert r.check_file_integrity('pizza') == {'is_file_ok': True}
 
     def test_get_local_releases(self, r):
         assert r.get_local_releases() == []
-        create_dummy_file(".tmp-test/reflash/images/hamburger.img")
+        create_dummy_file(".tmp-test/opt/reflash/images/hamburger.img")
         assert r.get_local_releases() == [{'id': 0, 'name': 'hamburger', 'size': 32}]
     
     def test_upload_start(self, r):
@@ -102,7 +103,7 @@ class TestReflash:
         assert r.install_refactor("tacos", 567) == False
 
     def test_install_ok(self, r):
-        create_dummy_file(".tmp-test/reflash/images/tacos.img")
+        create_dummy_file(".tmp-test/opt/reflash/images/tacos.img")
         assert r.install_refactor("tacos", 39) == True
         assert r.get_state() == "INSTALLING"
         assert r.get_install_progress()['state'] == "INSTALLING"

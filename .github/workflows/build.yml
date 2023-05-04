@@ -30,7 +30,7 @@ jobs:
     - name: Run tests
       working-directory: ./Reflash
       run: |
-        make test
+        make tests
 
     - name: install and build
       working-directory: ./Reflash/client

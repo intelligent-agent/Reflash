@@ -11,9 +11,9 @@ app = flask.Flask(__name__,
 
 if app.config['ENV'] == "development":
     settings = {
-        "version_file": ".tmp/reflash.version",
-        "images_folder": ".tmp/reflash/images",
-        "db_file": ".tmp/reflash/reflash.db",
+        "version_file": ".tmp/etc/reflash.version",
+        "images_folder": ".tmp/opt/reflash/images",
+        "db_file": ".tmp/opt/reflash/reflash.db",
         "env": "development",
     }
     with open(settings["version_file"], 'w+') as f:

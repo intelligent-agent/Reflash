@@ -47,19 +47,24 @@ class CenterText(object):
         self.x = 0
         self.width = width-1
         self.win = curses.newwin(self.height, self.width, self.y, self.x)
+        self.visible = True
 
     def set_text(self, text):
+        self.visible = True
         self.text = text
 
     def draw(self):
         self.win.clear()
-        self.win.addstr(1, int((self.width/2)-(len(self.text)/2)), self.text, curses.A_NORMAL)
-        self.win.refresh()
+        if self.visible:
+            self.win.addstr(1, int((self.width/2)-(len(self.text)/2)), self.text, curses.A_NORMAL)
+            self.win.refresh()
 
     def set_offset(self, y_offset):
         self.y = int((height/2)-(self.height/2))+y_offset
         self.win = curses.newwin(self.height, self.width, self.y, self.x)
 
+    def hide(self):
+        self.visible = False
 
 class Status(CenterText):
     def __init__(self):
@@ -111,9 +116,9 @@ header = Header()
 state = StateMachine()
 
 settings = {
-    "version_file": ".tmp/reflash.version",
-    "images_folder": ".tmp/reflash/images",
-    "db_file": ".tmp/reflash/reflash.db",
+    "version_file": ".tmp/etc/reflash.version",
+    "images_folder": ".tmp/opt/reflash/images",
+    "db_file": ".tmp/opt/reflash/reflash.db",
     "use_sudo": True,
 }
 
@@ -124,14 +129,13 @@ stdscr.nodelay(1)
 curses.noecho()
 while (k != ord('q')):
     k = stdscr.getch()
-    #stdscr.clear()
+    stdscr.clear()
     reflash.refresh()
     global_state = reflash.get_state()
-    logger.debug(global_state)
     if global_state == 'IDLE':
         progress_bar.hide()
-        status.set_text("Idle")
-        status.set_offset(1)
+        status.hide()
+        header.set_offset(0)
     else:
         status.set_offset(3)
         header.set_offset(-3)
@@ -143,7 +147,6 @@ while (k != ord('q')):
     elif global_state == 'UPLOADING':
         progress = reflash.get_upload_progress()
         status.set_text("Uploading")
-        logger.debug(progress)
         progress_bar.set_progress(progress['progress'])
     elif global_state == 'INSTALLING':
         progress = reflash.get_install_progress()
@@ -154,10 +157,10 @@ while (k != ord('q')):
         status.set_text("Backing up")
         progress_bar.set_progress(progress['progress'])
     
+    stdscr.refresh()
     progress_bar.draw()
     header.draw()
     status.draw()    
-    stdscr.refresh()
     curses.doupdate()
     time.sleep(1)
  

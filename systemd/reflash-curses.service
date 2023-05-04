@@ -1,0 +1,9 @@
+[Unit]
+Description=Refactor flashing curses ui
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/reflash-curses.py
+
+[Install]
+WantedBy=multi-user.target

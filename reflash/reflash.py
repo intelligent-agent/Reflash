@@ -278,18 +278,12 @@ class Reflash:
             self.state.save()
 
     def get_install_progress(self):
-        tr = self._run_system_command("tail -1  /tmp/recore-flash-progress")
+        tr = self._run_system_command("tail -1 /tmp/recore-flash-progress")
         ti = self._run_system_command("cat /tmp/recore-flash-log")
-        try:
-            self.state.install_progress = float(tr.strip())
-            self.state.install_log = ti
-            self.state.save()
-        except ValueError:
-            pass
-        except Exception as err:
-            self.state.install_state = "ERROR"
-            self.state.install_log += "\nError getting progress and log: "+str(err)
-            self.state.save()
+        self.state.install_progress = self._parse_float(tr)
+        self.state.install_log = ti
+        self.state.save()
+
         ret = {
             "state": self.state.install_state,
             "progress": self.state.install_progress,
@@ -358,9 +352,6 @@ class Reflash:
         self.state.backup_state = "CANCELLED"
         self.state.save()
         return True
-
-    
-
 
     def save_options(self, options):
         if 'darkmode' in options:
