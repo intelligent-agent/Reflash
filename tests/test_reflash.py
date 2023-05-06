@@ -3,14 +3,21 @@ import sys
 import os
 import shutil
 import requests_mock
-sys.path.append('..')
-sys.path.append('.')
 import reflash
 import time
 
+
+from unittest.mock import MagicMock, patch
+from reflash.reflash import Reflash
+
+@patch("mypackage.proc.subprocess.run")
+
 def stream_callback(req, context):
-    print("stream")
     return "Y"*10*1024*1024
+
+def create_file_with_size(name, size):
+    with open(name, 'w+') as f:
+        f.write('0' * size)
 
 def create_dummy_file(name):
     open(name, 'a').close()
@@ -33,7 +40,6 @@ def r():
 
     r = reflash.Reflash(settings)
     yield(r)
-
 
 @pytest.fixture()
 def p():
@@ -122,4 +128,11 @@ class TestReflash:
         del options['pizza']
         assert r.get_options() == options
 
-    
+    @patch('subprocess.run')
+    def test_backup_refactor(self, run, r):
+        filename = "pizza"
+        start_time = 123
+        create_file_with_size(".tmp/dev/mmcblk0", 100)
+        assert r.backup_refactor(filename, start_time) == True
+        cmd = ['/usr/local/bin/backup-emmc', '.tmp-test/opt/reflash/images/pizza']
+        run.assert_called_once_with(cmd, capture_output=True, text=True)
