@@ -40,8 +40,10 @@ tar: package
 package:
 	mkdir -p zip/reflash/bin
 	mkdir -p zip/reflash/reflash
-	cp -r client/dist zip/reflash/reflash
 	cp reflash/*.py zip/reflash/reflash
+	mkdir -p zip/reflash/server
+	cp -r server/*.py zip/reflash/server
+	cp -r client/dist zip/reflash/server
 	cp bin/prod/* zip/reflash/bin
 	cp -r systemd zip/reflash
 	cp -r scripts zip/reflash

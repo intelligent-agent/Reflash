@@ -116,9 +116,9 @@ header = Header()
 state = StateMachine()
 
 settings = {
-    "version_file": ".tmp/etc/reflash.version",
-    "images_folder": ".tmp/opt/reflash/images",
-    "db_file": ".tmp/opt/reflash/reflash.db",
+    "version_file": "/etc/reflash.version",
+    "images_folder": "/opt/reflash/images",
+    "db_file": "/opt/reflash/reflash.db",
     "use_sudo": True,
 }
 
@@ -129,7 +129,6 @@ stdscr.nodelay(1)
 curses.noecho()
 while (k != ord('q')):
     k = stdscr.getch()
-    stdscr.clear()
     reflash.refresh()
     global_state = reflash.get_state()
     if global_state == 'IDLE':
@@ -157,6 +156,7 @@ while (k != ord('q')):
         status.set_text("Backing up")
         progress_bar.set_progress(progress['progress'])
     
+    stdscr.clear()
     stdscr.refresh()
     progress_bar.draw()
     header.draw()

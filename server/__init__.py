@@ -14,7 +14,7 @@ if app.config['ENV'] == "development":
         "version_file": ".tmp/etc/reflash.version",
         "images_folder": ".tmp/opt/reflash/images",
         "db_file": ".tmp/opt/reflash/reflash.db",
-        "env": "development",
+        "use_sudo": False,
     }
     with open(settings["version_file"], 'w+') as f:
         f.write("v0.1.3\n")
@@ -26,7 +26,7 @@ else:
         "version_file": "/etc/reflash.version",
         "images_folder": "/opt/reflash/images",
         "db_file": "/opt/reflash/reflash.db",
-        "env": "prod",
+        "use_sudo": True,
     }
 
 with app.app_context():

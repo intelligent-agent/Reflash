@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=/var/www/html
-ExecStart=/usr/bin/gunicorn reflash:app
+ExecStart=/usr/bin/gunicorn server:app
 
 [Install]
 WantedBy=multi-user.target
