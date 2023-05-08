@@ -30,7 +30,7 @@ jobs:
     - name: Run tests
       working-directory: ./Reflash
       run: |
-        sudo apt install python3-pip
+        apt install python3-pip
         pip3 install pytest requests-mock
         make tests
 
