@@ -1,9 +1,17 @@
 [Unit]
 Description=Refactor flashing curses ui
-After=network.target
+Conflicts=getty@tty1.service
+Before=getty.target
 
 [Service]
 ExecStart=/usr/local/bin/reflash-curses.py
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+SendSIGHUP=yes
 
 [Install]
 WantedBy=multi-user.target
