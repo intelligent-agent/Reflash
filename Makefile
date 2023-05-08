@@ -46,6 +46,7 @@ package:
 	cp -r systemd zip/reflash
 	cp -r scripts zip/reflash
 	cp -r u-boot zip/reflash
+	cp -r curses zip/reflash
 
 upload-tar:
 	scp reflash.tar.gz root@recore.local:/usr/src/
