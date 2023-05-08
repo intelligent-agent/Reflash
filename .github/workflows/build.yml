@@ -30,6 +30,7 @@ jobs:
     - name: Run tests
       working-directory: ./Reflash
       run: |
+        pip3 install pytest requests-mock
         make tests
 
     - name: install and build
