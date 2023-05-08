@@ -25,8 +25,6 @@ do
 done
 cp -r u-boot /opt/reflash
 
-chown -R www-data:www-data /var/www/html/reflash
-
 cat << EOF > /etc/nginx/sites-available/reflash
 server {
     listen 80;
