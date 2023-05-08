@@ -3,12 +3,15 @@ set -e
 
 mkdir -p /opt/reflash/settings
 mkdir -p /opt/reflash/images
+mkdir -p /opt/reflash/curses
 chown -R www-data:www-data /opt/reflash
 
 mkdir -p /var/www/html
 cp -r reflash /var/www/html/
 cp reflash.version /etc
 cp systemd/reflash.service /etc/systemd/system
+cp curses/client.py /usr/local/bin/reflash-curses.py
+chmod +x /usr/local/bin/reflash-curses.py
 FILES="./bin/*"
 for f in $FILES
 do

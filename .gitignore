@@ -1,4 +1,5 @@
-__pycache__/*
-reflash/__pycache__/*
+**__pycache__
+**/*.pyc
+*/*.log
 reflash/dist
-images/
+.tmp*
