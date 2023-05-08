@@ -1,16 +1,10 @@
 import pytest
-import sys
 import os
 import shutil
 import requests_mock
 import reflash
 import time
-
-
-from unittest.mock import MagicMock, patch
-from reflash.reflash import Reflash
-
-@patch("mypackage.proc.subprocess.run")
+from unittest.mock import  patch
 
 def stream_callback(req, context):
     return "Y"*10*1024*1024
@@ -132,7 +126,6 @@ class TestReflash:
     def test_backup_refactor(self, run, r):
         filename = "pizza"
         start_time = 123
-        create_file_with_size(".tmp/dev/mmcblk0", 100)
         assert r.backup_refactor(filename, start_time) == True
         cmd = ['/usr/local/bin/backup-emmc', '.tmp-test/opt/reflash/images/pizza']
         run.assert_called_once_with(cmd, capture_output=True, text=True)
