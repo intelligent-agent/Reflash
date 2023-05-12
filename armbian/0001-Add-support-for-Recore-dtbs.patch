@@ -567,7 +567,7 @@ index 000000000000..b58a25be1cf9
 +	bus-width = <8>;
 +  cap-mmc-hw-reset;
 +  mmc-hs200-1_8v;
-+  max-frequency = <150000000>;
++  max-frequency = <100000000>;
 +	status = "okay";
 +};
 +

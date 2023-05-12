@@ -161,7 +161,7 @@ index 0000000000..2d29fe1556
 +	bus-width = <8>;
 +	status = "okay";
 +  mmc-hs200-1_8v;
-+  max-frequency = <150000000>;
++  max-frequency = <100000000>;
 +};
 +
 +&ohci0 {
