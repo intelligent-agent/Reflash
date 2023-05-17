@@ -53,6 +53,7 @@ jobs:
       with:
         repository: 'armbian/build'
         path: 'build'
+        ref: 'v23.02'
         clean: false
     - uses: actions/checkout@v3
       with:
