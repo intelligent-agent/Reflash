@@ -68,7 +68,6 @@ jobs:
         cp Reflash/armbian/reflash.sh build/
         cp Reflash/armbian/lib.config build/userpatches
         cp Reflash/armbian/customize-image.sh build/userpatches
-        cp Reflash/armbian/config-docker.conf build/userpatches
         cp Reflash/armbian/0001-Add-support-for-Recore-dtbs.patch build/userpatches/kernel/archive/sunxi-5.15
         cp Reflash/armbian/0002-Add-support-for-Recore.patch build/userpatches/u-boot/u-boot-sunxi
         cp Reflash/armbian/add-scp.sh build/userpatches/extensions/
