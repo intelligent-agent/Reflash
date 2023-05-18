@@ -72,6 +72,7 @@ jobs:
         cp Reflash/armbian/0002-Add-support-for-Recore.patch build/userpatches/u-boot/u-boot-sunxi
         cp Reflash/armbian/add-scp.sh build/userpatches/extensions/
         cp Reflash/armbian/config-reflash.conf build/userpatches/
+        cp Reflash/armbian/recore.csc build/config/boards/
 
     - name: Run build
       working-directory: ./build
@@ -88,7 +89,7 @@ jobs:
       run: rm -f *.img.xz
 
     - name: Move and rename file
-      run: cp build/output/images/Armbian_23.02.0-trunk_Recore_bullseye_current_5.15.93_minimal.img.xz ./Reflash-${VERSION}.img.xz
+      run: cp build/output/images/Armbian_23.05.0-trunk_Recore_bullseye_legacy_5.15.111_minimal.img.xz ./Reflash-${VERSION}.img.xz
 
     - name: Release if tagged
       uses: ncipollo/release-action@v1
