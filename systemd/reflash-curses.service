@@ -12,6 +12,8 @@ TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
 SendSIGHUP=yes
+Restart=on-failure
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
