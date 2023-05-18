@@ -72,6 +72,7 @@ jobs:
         cp Reflash/armbian/0001-Add-support-for-Recore-dtbs.patch build/userpatches/kernel/archive/sunxi-5.15
         cp Reflash/armbian/0002-Add-support-for-Recore.patch build/userpatches/u-boot/u-boot-sunxi
         cp Reflash/armbian/add-scp.sh build/userpatches/extensions/
+        cp Reflash/armbian/config-reflash.conf build/userpatches/
 
     - name: Run build
       working-directory: ./build

@@ -41,12 +41,8 @@ server {
 }
 EOF
 
-sudo ln -sf /etc/nginx/sites-available/reflash /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
+ln -sf /etc/nginx/sites-available/reflash /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
 
 systemctl enable reflash
-systemctl restart reflash
-systemctl restart nginx
-
 systemctl enable reflash-curses
-systemctl restart reflash-curses

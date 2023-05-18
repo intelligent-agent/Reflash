@@ -1,6 +1,6 @@
 #!/bin/bash
 
-./compile.sh docker \
+./compile.sh reflash \
 BOARD=recore \
 BRANCH=current \
 RELEASE=bullseye \
