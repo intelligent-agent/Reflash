@@ -2,7 +2,7 @@
 
 ./compile.sh reflash \
 BOARD=recore \
-BRANCH=current \
+BRANCH=legacy \
 RELEASE=bullseye \
 BUILD_ONLY=default \
 BUILD_DESKTOP=no \
