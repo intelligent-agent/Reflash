@@ -211,8 +211,7 @@ class Reflash:
         if not filename.endswith(".img.xz"):
             return False
         path = self.images_folder+"/"+filename
-        with open(path, 'ab+'):
-            os.utime(path)
+        open(path, 'w').close()
         self.state.upload_state = "UPLOADING"
         self.state.upload_filename = filename
         self.state.upload_bytes_total = size

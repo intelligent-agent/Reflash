@@ -242,7 +242,7 @@ index 000000000000..081e85d0f197
 +	bus-width = <8>;
 +	cap-mmc-hw-reset;
 +	mmc-hs200-1_8v;
-+	max-frequency = <100000000>;
++	max-frequency = <150000000>;
 +	status = "okay";
 +};
 +

@@ -76,7 +76,7 @@ jobs:
 
     - name: Run build
       working-directory: ./build
-      run: sh ./reflash.sh
+      run: sh ./compile.sh reflash
 
     - name: Make filename
       run: echo "VERSION=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
@@ -89,7 +89,7 @@ jobs:
       run: rm -f *.img.xz
 
     - name: Move and rename file
-      run: cp build/output/images/Armbian_23.05.0-trunk_Recore_bullseye_legacy_5.15.111_minimal.img.xz ./Reflash-${VERSION}.img.xz
+      run: cp build/output/images/Armbian_23.05.0-trunk_Recore_bullseye_legacy_5.15.112_minimal.img.xz ./Reflash-${VERSION}.img.xz
 
     - name: Release if tagged
       uses: ncipollo/release-action@v1
