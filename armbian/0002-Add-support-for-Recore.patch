@@ -153,15 +153,15 @@ index 0000000000..2d29fe1556
 +
 +&mmc2 {
 +	pinctrl-names = "default";
-+  pinctrl-0 = <&mmc2_pins>, <&mmc2_ds_pin>;
++ 	pinctrl-0 = <&mmc2_pins>, <&mmc2_ds_pin>;
 +	vmmc-supply = <&reg_dcdc1>;
-+  vqmmc-supply = <&reg_eldo1>;
-+  non-removable;
-+  cap-mmc-hw-reset;
++ 	vqmmc-supply = <&reg_eldo1>;
++ 	non-removable;
++ 	cap-mmc-hw-reset;
 +	bus-width = <8>;
 +	status = "okay";
-+  mmc-hs200-1_8v;
-+  max-frequency = <100000000>;
++ 	mmc-hs200-1_8v;
++	max-frequency = <150000000>;
 +};
 +
 +&ohci0 {
