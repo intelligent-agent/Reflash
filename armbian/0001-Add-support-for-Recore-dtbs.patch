@@ -15,7 +15,7 @@ new file mode 100644
 index 000000000000..081e85d0f197
 --- /dev/null
 +++ b/arch/arm64/boot/dts/allwinner/sun50i-a64-recore.dts
-@@ -0,0 +1,438 @@
+@@ -0,0 +1,437 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +
 +/dts-v1/;
