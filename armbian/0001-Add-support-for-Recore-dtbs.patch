@@ -15,7 +15,7 @@ new file mode 100644
 index 000000000000..081e85d0f197
 --- /dev/null
 +++ b/arch/arm64/boot/dts/allwinner/sun50i-a64-recore.dts
-@@ -0,0 +1,413 @@
+@@ -0,0 +1,438 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +
 +/dts-v1/;
@@ -235,7 +235,7 @@ index 000000000000..081e85d0f197
 +
 +&mmc2 {
 +	pinctrl-names = "default";
-+	pinctrl-0 = <&mmc2_pins>, <&mmc2_ds_pin>;
++	pinctrl-0 = <&mmc2_pins>;
 +	vmmc-supply = <&reg_dcdc1>;
 +	vqmmc-supply = <&reg_eldo1>;
 +	non-removable;
@@ -429,3 +429,27 @@ index 000000000000..081e85d0f197
 +	vcc-supply = <&reg_dcdc1>;
 +	status = "okay";
 +};
++&cpu0 {
++	/delete-property/ cpu-idle-states;
++};
++
++&cpu1 {
++	/delete-property/ cpu-idle-states;
++};
++
++&cpu2 {
++	/delete-property/ cpu-idle-states;
++};
++
++&cpu3 {
++	/delete-property/ cpu-idle-states;
++};
++
++/ {
++	cpus {
++		/delete-node/ idle-states;
++	};
++	/delete-node/ scpi;
++};
++
++/delete-node/ &sram_a2;
