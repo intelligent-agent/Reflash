@@ -72,6 +72,8 @@ jobs:
         cp Reflash/armbian/add-scp.sh build/userpatches/extensions/
         cp Reflash/armbian/config-reflash.conf build/userpatches/
         cp Reflash/armbian/recore.csc build/config/boards/
+        cp Reflash/armbian/autohotspot build/userpatches/overlay
+        cp Reflash/armbian/autohotspot.service build/userpatches/overlay
 
     - name: Run build
       working-directory: ./build

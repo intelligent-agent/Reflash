@@ -20,14 +20,35 @@ BOARD=$3
 BUILD_DESKTOP=$4
 
 
-cd /usr/src
-cp /tmp/overlay/reflash.tar.gz .
-tar -xf reflash.tar.gz
-cd reflash
-chmod +x ./scripts/install_reflash.sh
-./scripts/install_reflash.sh
+install_reflash() {
+    cd /usr/src
+    cp /tmp/overlay/reflash.tar.gz .
+    tar -xf reflash.tar.gz
+    cd reflash
+    chmod +x ./scripts/install_reflash.sh
+    ./scripts/install_reflash.sh
+}
+
+install_autohotspot() {
+    # Disable unique naming scheme
+    ln -s /dev/null /etc/systemd/network/99-default.link
+
+    # Install autohotspot script
+    cp /tmp/overlay/autohotspot /usr/local/bin
+    chmod +x /usr/local/bin/autohotspot
+
+    # Install autohotspot service file
+    cp /tmp/overlay/autohotspot.service /etc/systemd/system/
+
+    systemctl enable autohotspot.service
+}
+
+
+install_reflash
+install_autohotspot
 
 sh -c 'echo root:kamikaze | chpasswd'
+
 cd /boot
 mklost+found
 chmod +r /boot/lost+found
