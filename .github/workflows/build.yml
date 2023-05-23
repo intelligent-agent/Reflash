@@ -64,12 +64,10 @@ jobs:
         mkdir -p build/userpatches/overlay
         mkdir -p build/userpatches/kernel/archive/sunxi-5.15
         mkdir -p build/userpatches/u-boot/u-boot-sunxi
-        mkdir -p build/userpatches/extensions/
         cp reflash.tar.gz build/userpatches/overlay
         cp Reflash/armbian/customize-image.sh build/userpatches
         cp Reflash/armbian/0001-Add-support-for-Recore-dtbs.patch build/userpatches/kernel/archive/sunxi-5.15
         cp Reflash/armbian/0002-Add-support-for-Recore.patch build/userpatches/u-boot/u-boot-sunxi
-        cp Reflash/armbian/reflash.sh build/userpatches/extensions/
         cp Reflash/armbian/config-reflash.conf build/userpatches/
         cp Reflash/armbian/recore.csc build/config/boards/
         cp Reflash/armbian/autohotspot build/userpatches/overlay
