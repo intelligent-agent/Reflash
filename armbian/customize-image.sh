@@ -45,15 +45,12 @@ install_autohotspot() {
 
 
 install_reflash
-install_autohotspot
+#install_autohotspot
 
 sh -c 'echo root:kamikaze | chpasswd'
 
 cd /boot
 mklost+found
 chmod +r /boot/lost+found
-
-# changing dram frequency sems to cause corruption. Set it to max.
-echo "class/devfreq/1c62000.dram-controller/governor = performance" > /etc/sysfs.d/dram_governor.conf
 
 echo "Custom script completed"

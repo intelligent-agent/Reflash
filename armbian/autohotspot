@@ -1,6 +1,6 @@
 #!/bin/bash
 
-wifidev="wlan0"
+wifidev=`nmcli dev | grep "wifi " | cut -d' ' -f1`
 hotspot_SSID="Recore"
 hotspot_PW="12345678"
 

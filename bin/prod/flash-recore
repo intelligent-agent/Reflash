@@ -64,9 +64,9 @@ cd
 umount ${OUTFILE}p2
 
 mount ${OUTFILE}p1 /mnt/emmc
-sed -i "s:^rootdev=.*::" /mnt/emmc/armbianEnv.txt
-sed -i '/^$/d' /boot/armbianEnv.txt
-echo "rootdev=UUID=${UUID2}" > /mnt/emmc/armbianEnv.txt
+sed -i "/^rootdev=.*/d" /mnt/emmc/armbianEnv.txt
+sed -i '/^$/d' /mnt/emmc/armbianEnv.txt
+echo "rootdev=UUID=${UUID2}" >> /mnt/emmc/armbianEnv.txt
 
 cd /mnt/emmc/dtb/allwinner/
 if test -f sun50i-a64-recore-$REVISION.dtb; then

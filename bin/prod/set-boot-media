@@ -1,28 +1,34 @@
 #!/bin/bash
 
 NEW_MEDIA=$1
+EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+
+PATH_EMMC="/dev/${EMMC}p2"
+PATH_USB="/dev/sda2"
+UUID_EMMC=`lsblk -o UUID -n $PATH_EMMC 2>/dev/null`
+UUID_USB=`lsblk -o UUID -n /dev/sda2 2>/dev/null`
 
 if [ "x${NEW_MEDIA}" == "xusb" ]; then
   NEW_DEV="/dev/sda2"
 elif [ "x${NEW_MEDIA}" == "xemmc" ]; then
-  NEW_DEV="/dev/mmcblk0p2"
+  NEW_DEV="UUID=$UUID_EMMC"
 else
   echo "usage $0 usb/emmc"
   exit 1
 fi
 
 KEY="^rootdev=.*$"
-REPLACE="rootdev=${NEW_DEV}"
 
 mkdir -p /mnt/emmc
 if ! mountpoint -q /mnt/emmc
 then
-  mount /dev/mmcblk0p1 /mnt/emmc
+  mount "/dev/${EMMC}p1" /mnt/emmc
 else
-  mount -o remount -rw /dev/mmcblk0p1 /mnt/emmc
+  mount -o remount -rw "/dev/${EMMC}p1" /mnt/emmc
 fi
 
-mount -o remount -rw /dev/mmcblk0p1 /mnt/emmc
-sed -i "s:${KEY}:${REPLACE}:g" /mnt/emmc/armbianEnv.txt
+sed -i "s:${KEY}::g" /mnt/emmc/armbianEnv.txt
+sed -i '/^$/d' /mnt/emmc/armbianEnv.txt
+echo "rootdev=${NEW_DEV}" >> /mnt/emmc/armbianEnv.txt
 sync
-mount -o remount -r /dev/mmcblk0p1 /mnt/emmc
+umount /mnt/emmc
