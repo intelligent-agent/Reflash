@@ -87,8 +87,11 @@ jobs:
     - name: Delete all old images
       run: rm -f *.img.xz
 
+    - name: Get filename of build
+      run: echo "IMG=`ls -1 build/output/images/ | grep "img.xz$"`" >> $GITHUB_ENV
+
     - name: Move and rename file
-      run: cp build/output/images/Armbian_23.05.0-trunk_Recore_bullseye_legacy_5.15.112_minimal.img.xz ./Reflash-${VERSION}.img.xz
+      run: cp build/output/images/${IMG} ./Reflash-${VERSION}.img.xz
 
     - name: Release if tagged
       uses: ncipollo/release-action@v1
