@@ -136,7 +136,7 @@ while (k != ord('q')):
         status.hide()
         header.set_offset(0)
     else:
-        status.set_offset(3)
+        status.set_offset(1)
         header.set_offset(-3)
 
     if global_state == 'DOWNLOADING':
@@ -155,12 +155,12 @@ while (k != ord('q')):
         progress = reflash.get_backup_progress()
         status.set_text("Backing up")
         progress_bar.set_progress(progress['progress'])
-    
+
     stdscr.clear()
     stdscr.refresh()
+    status.draw()
     progress_bar.draw()
     header.draw()
-    status.draw()    
     curses.doupdate()
     time.sleep(1)
  
