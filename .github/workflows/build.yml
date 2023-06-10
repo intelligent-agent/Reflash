@@ -53,7 +53,7 @@ jobs:
       with:
         repository: 'armbian/build'
         path: 'build'
-        ref: 'main'
+        ref: 'v23.05.2'
         clean: false
     - uses: actions/checkout@v3
       with:
@@ -75,7 +75,7 @@ jobs:
 
     - name: Run build
       working-directory: ./build
-      run: ./compile.sh reflash
+      run: DOCKER_EXTRA_ARGS="--cpus=12" ./compile.sh reflash
 
     - name: Make filename
       run: echo "VERSION=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV

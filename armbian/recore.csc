@@ -17,9 +17,6 @@ function post_family_config__shrink_atf() {
 function format_partitions__make_boot_ro() {
     echo "🍰Making boot partition ro"
     sed -i 's:/boot ext4 defaults,commit=600,errors=remount-ro:/boot ext4 ro,defaults:' $SDCARD/etc/fstab
-
-    echo "🍰Updating u-boot splash image"
-    cp $SRC/packages/blobs/splash/rebuild.bmp $SDCARD/boot/boot.bmp
 }
 
 function extension_finish_config__enable_plymouth() {
