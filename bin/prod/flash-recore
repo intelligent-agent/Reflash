@@ -47,17 +47,19 @@ sed -i "s:UUID=.* \/ :UUID=${UUID2} / :" /mnt/emmc/etc/fstab
 sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" /mnt/emmc/etc/fstab
 
 # Copy config file, if one is not already present
-cd /mnt/emmc/home/debian/
-if ! test -f printer_data/config/printer.cfg; then
-  if test -f klipper/config/generic-recore-$REVISION.cfg; then
-    echo "Installing Klipper config file" >> /tmp/recore-flash-log
-    cp klipper/config/generic-recore-$REVISION.cfg printer_data/config/printer.cfg
-    chown 1000:1000 printer_data/config/printer.cfg
-  fi
-  # Enable mainsail on mainsail distro
-  if test -f printer_data/config/mainsail.cfg; then
-    echo "Including Mainsail in config file" >> /tmp/recore-flash-log
-    sed -i 's/\#\[include mainsail.cfg\]/\[include mainsail.cfg\]/' printer_data/config/printer.cfg
+if test -d /mnt/emmc/home/debian; then
+  cd /mnt/emmc/home/debian/
+  if ! test -f printer_data/config/printer.cfg; then
+    if test -f klipper/config/generic-recore-$REVISION.cfg; then
+      echo "Installing Klipper config file" >> /tmp/recore-flash-log
+      cp klipper/config/generic-recore-$REVISION.cfg printer_data/config/printer.cfg
+      chown 1000:1000 printer_data/config/printer.cfg
+    fi
+    # Enable mainsail on mainsail distro
+    if test -f printer_data/config/mainsail.cfg; then
+      echo "Including Mainsail in config file" >> /tmp/recore-flash-log
+      sed -i 's/\#\[include mainsail.cfg\]/\[include mainsail.cfg\]/' printer_data/config/printer.cfg
+    fi
   fi
 fi
 cd

@@ -19,7 +19,6 @@ LINUXFAMILY=$2
 BOARD=$3
 BUILD_DESKTOP=$4
 
-
 install_reflash() {
     cd /usr/src
     cp /tmp/overlay/reflash.tar.gz .
@@ -30,9 +29,6 @@ install_reflash() {
 }
 
 install_autohotspot() {
-    # Disable unique naming scheme
-    ln -s /dev/null /etc/systemd/network/99-default.link
-
     # Install autohotspot script
     cp /tmp/overlay/autohotspot /usr/local/bin
     chmod +x /usr/local/bin/autohotspot
@@ -43,11 +39,10 @@ install_autohotspot() {
     systemctl enable autohotspot.service
 }
 
-
 install_reflash
-#install_autohotspot
+install_autohotspot
 
-sh -c 'echo root:kamikaze | chpasswd'
+sh -c 'echo root:temppwd | chpasswd'
 
 cd /boot
 mklost+found

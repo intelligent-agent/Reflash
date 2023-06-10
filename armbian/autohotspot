@@ -6,7 +6,7 @@ hotspot_PW="12345678"
 
 create_hotspot() {
   echo "Creating hotspot"
-  nmcli con add type wifi ifname wlan0 con-name Hotspot ssid "$hotspot_SSID"
+  nmcli con add type wifi ifname "$wifidev" con-name Hotspot ssid "$hotspot_SSID"
   nmcli con modify Hotspot 802-11-wireless.mode ap
   nmcli con modify Hotspot 802-11-wireless.band bg
   nmcli con modify Hotspot ipv4.method shared
