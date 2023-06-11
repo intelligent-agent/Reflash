@@ -5,7 +5,7 @@ import time
 import enum
 import logging
 
-import sys 
+import sys
 sys.path.append('..')
 sys.path.append('.')
 
@@ -29,7 +29,7 @@ class ProgressBar(object):
 
     def draw(self):
         bar = '█'
-        self.win.clear()
+        self.win.erase()
         if self.visible:
             self.win.border(0)
             self.win.addstr(1, 1, bar*self.progress, self.colors)
@@ -54,10 +54,10 @@ class CenterText(object):
         self.text = text
 
     def draw(self):
-        self.win.clear()
+        self.win.erase()
         if self.visible:
             self.win.addstr(1, int((self.width/2)-(len(self.text)/2)), self.text, curses.A_NORMAL)
-            self.win.refresh()
+        self.win.refresh()
 
     def set_offset(self, y_offset):
         self.y = int((height/2)-(self.height/2))+y_offset
@@ -127,10 +127,15 @@ reflash = ref.Reflash(settings)
 k = 0
 stdscr.nodelay(1)
 curses.noecho()
+old_global_state = "NONE"
 while (k != ord('q')):
     k = stdscr.getch()
     reflash.refresh()
     global_state = reflash.get_state()
+    if global_state != old_global_state:
+        stdscr.erase()
+        stdscr.refresh()
+    old_global_state = global_state
     if global_state == 'IDLE':
         progress_bar.hide()
         status.hide()
@@ -155,13 +160,10 @@ while (k != ord('q')):
         progress = reflash.get_backup_progress()
         status.set_text("Backing up")
         progress_bar.set_progress(progress['progress'])
-
-    stdscr.clear()
-    stdscr.refresh()
     status.draw()
     progress_bar.draw()
     header.draw()
     curses.doupdate()
     time.sleep(1)
- 
+
 curses.endwin()
