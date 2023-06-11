@@ -72,7 +72,7 @@ jobs:
         cp Reflash/armbian/recore.csc build/config/boards/
         cp Reflash/armbian/autohotspot build/userpatches/overlay
         cp Reflash/armbian/autohotspot.service build/userpatches/overlay
-        cp reflash/armbian/watermark.png build/packages/plymouth-theme-armbian
+        cp Reflash/armbian/watermark.png build/packages/plymouth-theme-armbian
 
     - name: Run build
       working-directory: ./build
