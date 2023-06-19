@@ -1,7 +1,6 @@
 import os.path
 import concurrent.futures
 import subprocess
-import time
 import sqlite3
 import threading
 
@@ -85,6 +84,8 @@ class State(object):
 
     def assign_var(self, name, value, type_name):
         var = __builtins__[type_name](value)
+        if type_name == 'bool':
+            var = (value == "True")
         setattr(self, name, var)
 
     def load(self):
@@ -111,7 +112,6 @@ class Reflash:
         self.images_folder = settings.get("images_folder")
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self.sudo = "sudo" if settings.get("use_sudo") else ""
-
         self.state = State(settings.get("db_file"))
         if not self.state.db_exists():
             self.state.create_default()
@@ -120,10 +120,8 @@ class Reflash:
     def get_version(self):
         return self._run_system_command(f"cat {self.reflash_version_file}")
 
-    def refresh(self):
-        self.state.load()
-
     def get_state(self):
+        self.state.load()
         if self.state.install_state == "INSTALLING":
             return "INSTALLING"
         if self.state.download_state == "DOWNLOADING":
@@ -281,7 +279,8 @@ class Reflash:
         ti = self._run_system_command("cat /tmp/recore-flash-log")
         self.state.install_progress = self._parse_float(tr)
         self.state.install_log = ti
-        self.state.save()
+        self.state.save('install_progress')
+        self.state.save('install_log')
 
         ret = {
             "state": self.state.install_state,
@@ -293,7 +292,7 @@ class Reflash:
         }
         if self.state.install_state not in ["INSTALLING", "IDLE"]:
             self.state.install_state = "IDLE"
-            self.state.save()
+            self.state.save('install_state')
         return ret
 
     def cancel_installation(self):
@@ -332,7 +331,8 @@ class Reflash:
         ti = self._run_system_command("cat /tmp/recore-flash-log")
         self.state.backup_progress = self._parse_float(tr)
         self.state.backup_log = ti
-        self.state.save()
+        self.state.save('backup_progress')
+        self.state.save('backup_log')
 
         ret = {
             "state": self.state.backup_state,
@@ -343,7 +343,7 @@ class Reflash:
         }
         if self.state.backup_state == "FINISHED":
             self.state.backup_state = "IDLE"
-            self.state.save()
+            self.state.save('backup_state')
         return ret
 
     def cancel_backup(self):
@@ -363,11 +363,12 @@ class Reflash:
         return True
 
     def get_options(self):
-        return {
+        options = {
             'darkmode': self.state.settings_darkmode,
             'rebootWhenDone': self.state.settings_reboot_when_done,
             'enableSsh': self.state.settings_enable_ssh,
         }
+        return options
 
     def _run_system_command(self, command):
         return subprocess.run(command.split(),

@@ -130,7 +130,6 @@ curses.noecho()
 old_global_state = "NONE"
 while (k != ord('q')):
     k = stdscr.getch()
-    reflash.refresh()
     global_state = reflash.get_state()
     if global_state != old_global_state:
         stdscr.erase()
