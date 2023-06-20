@@ -7,7 +7,7 @@ echo "------------------" >> /tmp/recore-flash-log
 
 INFILE=$1
 OUTFILE="/dev/"`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
-partprobe
+partx -a ${OUTFILE}boot0p1
 
 mkdir -p /mnt/config
 if ! grep -qs '/mnt/config ' /proc/mounts; then
