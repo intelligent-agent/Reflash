@@ -78,7 +78,7 @@ class State(object):
         self.cur.execute("DROP TABLE IF EXISTS state")
         self.cur.execute("CREATE TABLE state(name, value, type)")
         for line in self.fields:
-            ins = [line, getattr(self, line), type(getattr(self, line)).__name__]
+            ins = [line, str(getattr(self, line)), type(getattr(self, line)).__name__]
             self.cur.execute("INSERT INTO state VALUES(?,?,?)", ins)
         self.db.commit()
 
