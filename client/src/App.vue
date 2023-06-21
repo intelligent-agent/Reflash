@@ -54,7 +54,10 @@
         <div class="xs1 pa1">
           <ProgressBar ref="installprogressbar" name="install"/>
         </div>
-        <div class="xs1 pa1"><div v-if="flash.selectedMethod == 1">Backup Filename</div></div>
+        <div class="xs1 pa1">
+          <div v-if="flash.selectedMethod == 1">Backup Filename</div>
+          <div v-if="flash.selectedMethod == 0">{{ emmc_version }}</div>
+        </div>
         <div class="xs1 pa1">
           <w-select
             v-if="selectedMethod.id == 0"
@@ -175,6 +178,7 @@ export default {
     files: [],
     backupFile: "",
     version: "",
+    emmc_version: "Unknown version",
     theLog: ""
   }),
   computed: mapGetters(['options', 'progress', 'flash']),
@@ -322,7 +326,7 @@ export default {
     async checkUploadProgress(){
       const response = await axios.get(`/api/get_upload_progress`);
       let data = response.data;
-
+      this.theLog = data.log;
       if(data.state == "UPLOADING"){
         this.isTransferring = true;
         this.setProgress({name: 'transfer', progress: data.progress});
@@ -375,8 +379,8 @@ export default {
     },
     async checkDownloadProgress() {
       const response = await axios.get(`/api/get_download_progress`);
-      let data = response.data
-
+      let data = response.data;
+      this.theLog = data.log;
       if(data.state == "DOWNLOADING"){
         this.isTransferring = true;
         this.setProgress({name: 'transfer', progress: data.progress});
@@ -573,6 +577,7 @@ export default {
       let data = response.data
       this.localImages = data.locals;
       this.version = response.data.reflash_version;
+      this.emmc_version = response.data.emmc_version;
     },
     async getGithubImages(){
       fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")

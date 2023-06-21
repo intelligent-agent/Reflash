@@ -3,7 +3,7 @@
 This is a simple python server that is set up to
 get and flash Refactor images
 
-Latest version is v0.1.0
+Latest version is v0.1.1
 
 ## Setup
 ### Additional packages for running
@@ -18,8 +18,7 @@ python3-curses
 ### Additional packages for installation
 apt install setuptools unzip
 
-
-Download source
+Download source, then run
 
 ```
 mkdir -p /opt/reflash/images

@@ -19,6 +19,7 @@ class State(object):
         self.download_bytes_total = 1
         self.download_start_time = 0
         self.download_filename = ""
+        self.download_log = ""
         self.install_state = "IDLE"
         self.install_progress = 0.0
         self.install_start_time = 0
@@ -38,6 +39,7 @@ class State(object):
         self.upload_bytes_total = 1
         self.upload_bytes_now = 0
         self.upload_start_time = 0
+        self.upload_log = ""
 
         self.fields = [
             'settings_darkmode',
@@ -48,6 +50,7 @@ class State(object):
             'download_state',
             'download_start_time',
             'download_filename',
+            'download_log',
             'install_state',
             'install_progress',
             'install_start_time',
@@ -67,6 +70,7 @@ class State(object):
             'upload_bytes_total',
             'upload_bytes_now',
             'upload_start_time',
+            'upload_log',
         ]
 
     def db_exists(self):
@@ -120,6 +124,9 @@ class Reflash:
     def get_version(self):
         return self._run_system_command(f"cat {self.reflash_version_file}")
 
+    def get_emmc_version(self):
+        return self._run_system_command(f"{self.sudo} /usr/local/bin/get-emmc-version")
+
     def get_state(self):
         self.state.load()
         if self.state.install_state == "INSTALLING":
@@ -157,6 +164,9 @@ class Reflash:
         self.state.download_state = "DOWNLOADING"
         self.state.download_bytes_total = size
         self.state.download_filename = filename
+        self.state.download_log = "Starting download\n"
+        self.state.download_log += f"Filename: {filename}\n"
+        self.state.download_log += f"Filesize: {size}\n"
         self.state.save()
         self.executor.submit(self._ex_download_refactor, url, filename)
         return True
@@ -178,6 +188,7 @@ class Reflash:
                         return
         self.state.is_download_finished = True
         self.state.download_state = "FINISHED"
+        self.state.download_log += "Download finished\n"
         self.state.save()
 
     def cancel_download(self):
@@ -188,6 +199,7 @@ class Reflash:
         except FileNotFoundError:
             pass
         self.state.download_state = "CANCELLED"
+        self.state.download_log += "Download cancelled\n"
         self.state.save()
         return True
     
@@ -197,6 +209,7 @@ class Reflash:
             "state": self.state.download_state,
             "start_time": self.state.download_start_time,
             "filename": self.state.download_filename,
+            "log": self.state.download_log,
         }
         if self.state.download_state in ["FINISHED", "CANCELLED"]:
             self.state.download_state = "IDLE"
@@ -211,6 +224,9 @@ class Reflash:
         path = self.images_folder+"/"+filename
         open(path, 'w').close()
         self.state.upload_state = "UPLOADING"
+        self.state.upload_log = "Upload starting\n"
+        self.state.upload_log += f"Filename: {filename}\n"
+        self.state.upload_log += f"Filesize: {size}\n"
         self.state.upload_filename = filename
         self.state.upload_bytes_total = size
         self.state.upload_bytes_now = 0
@@ -220,11 +236,13 @@ class Reflash:
 
     def upload_finish(self):
         self.state.upload_state = "FINISHED"
+        self.state.upload_log += "Upload finished\n"
         self.state.save()
         return True
 
     def upload_cancel(self):
         self.state.upload_state = "CANCELLED"
+        self.state.upload_log += "Upload cancelled\n"
         self.state.save()
         return True
 
@@ -244,6 +262,7 @@ class Reflash:
             "bytes_total": self.state.upload_bytes_total,
             "bytes_now": self.state.upload_bytes_now,
             "start_time": self.state.upload_start_time,
+            "log": self.state.upload_log,
         }
         if self.state.upload_state not in ["UPLOADING", "IDLE"]:
             self.state.upload_state = "IDLE"

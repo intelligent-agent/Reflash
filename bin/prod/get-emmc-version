@@ -1,0 +1,17 @@
+#!/bin/bash
+
+EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+
+mkdir -p /mnt/emmc
+if ! mountpoint -q /mnt/emmc
+then
+  mount "/dev/${EMMC}p1" /mnt/emmc
+fi
+if test -f /mnt/emmc/etc/refactor.version ; then
+  cat /mnt/emmc/etc/refactor.version
+elif test -f /mnt/emmc/etc/rebuild-version ; then
+    cat /mnt/emmc/etc/rebuild-version
+else
+    echo "Unknown version"
+fi
+umount /mnt/emmc

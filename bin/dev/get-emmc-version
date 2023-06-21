@@ -1,0 +1,3 @@
+#!/bin/bash
+
+echo "Dummy version v1.0.0"

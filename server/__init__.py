@@ -119,7 +119,8 @@ def cancel_download():
 def get_local_images():
     return {
         "locals": reflash.get_local_releases(),
-        "reflash_version": reflash.get_version()
+        "reflash_version": reflash.get_version(),
+        "emmc_version": reflash.get_emmc_version(),
     }
 
 @app.route('/api/get_download_progress')

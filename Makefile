@@ -6,12 +6,14 @@ install_bins:
 	chmod +x /usr/local/bin/reboot-board
 	chmod +x /usr/local/bin/shutdown-board
 	chmod +x /usr/local/bin/set-boot-media
+	chmod +x /usr/local/bin/get-emmc-version
 
 dev-server:
 	FLASK_RUN_PORT=8081 \
 	FLASK_ENV=development \
 	FLASK_DEBUG=1 \
-	flask --app server run
+	FLASK_APP=server/__init__.py \
+	flask run
 
 dev-clean:
 	rm -rf .tmp
