@@ -60,13 +60,17 @@ if test -d /mnt/emmc/home/debian; then
     fi
     # Enable mainsail on mainsail distros
     if test -f printer_data/config/mainsail.cfg; then
-      echo "Including Mainsail in config file" >> /tmp/recore-flash-log
-      sed -i 's/\#\[include mainsail.cfg\]/\[include mainsail.cfg\]/' printer_data/config/printer.cfg
+      echo "Including Mainsail in config file, above the first section" >> /tmp/recore-flash-log
+      # Older distros has the include fiel as a comment
+      sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
+      sed -i 's:\(\[recore.*\]\):\[include mainsail.cfg\]\n\n\1:' printer_data/config/printer.cfg
     fi
     # Enable fluidd on fluidd distros
     if test -f printer_data/config/fluidd.cfg; then
-      echo "Including Fluidd in config file" >> /tmp/recore-flash-log      
-      sed -i 's/\#\[include mainsail.cfg\]/\[include fluidd.cfg\]/' printer_data/config/printer.cfg
+      echo "Including Fluidd in config file, above the first section" >> /tmp/recore-flash-log
+      # Older distros has the include fiel as a comment
+      sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
+      sed -i 's:\(\[recore.*\]\):\[include fluidd.cfg\]\n\n\1:' printer_data/config/printer.cfg
     fi
   fi
 fi
