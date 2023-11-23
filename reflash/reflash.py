@@ -107,6 +107,8 @@ class State(object):
                 ins = f"UPDATE state set value = '{value}' where name = '{line}'"
                 self.cur.execute(ins)
             self.db.commit()
+        except sqlite3.OperationalError:
+            pass
         finally:
             self.lock.release()
 
