@@ -1,0 +1,60 @@
+#!/bin/bash
+
+HW_REV=$1
+SERIAL_NR=$2
+
+usage(){
+  echo "Usage: $0 <hardware revision> <serial number>"
+  echo "This scipt is for adding a serial number and"
+  echo "calibration file to Recore A5/A6/A7. The serial number should be"
+  echo "in have the following format: "
+  echo "A5: 0100"
+  echo "A6: 0200"
+  echo "A7: 0300"
+}
+
+case $HW_REV in
+  A5|A6|A7)
+    echo "Using recore revision ${HW_REV}"
+    ;;
+  *)
+    echo "Wrong hardware revision ${HW_REV}"
+    usage
+    exit 1
+    ;;
+esac
+
+FILE="Recore_${HW_REV}_${SERIAL_NR}.json"
+URL="https://raw.githubusercontent.com/intelligent-agent/Recore/master/Calibrations/${FILE}"
+
+if [[ ! `wget -NS --spider $URL 2>&1 | grep 'HTTP/1.1 200 OK'` ]]; then
+  echo "Unable to find the calibration file at the remote location: $URL". 
+  exit 2
+fi
+
+echo "Calibration file valid"
+
+DEV=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+
+echo 0 > "/sys/block/${DEV}boot0/force_ro"
+
+echo "Creating boot partition"
+dd if=/dev/zero of=/dev/${DEV}boot0
+partprobe
+printf "g\nn\n\n\n\nw\n" | fdisk /dev/${DEV}boot0
+mkfs.ext4 -E nodiscard /dev/${DEV}boot0p1
+
+mkdir -p /mnt/config
+if ! grep -qs '/mnt/config ' /proc/mounts; then
+    echo "Mounting /mnt/config"
+    mount /dev/${DEV}boot0p1 /mnt/config/
+fi
+echo "$SERIAL_NR" > /mnt/config/serial_number
+
+echo "Downloading calibration file ${FILE}"
+wget $URL
+mv ${FILE} /mnt/config
+
+umount -q /mnt/config/
+echo 1 > "/sys/block/${DEV}boot0/force_ro"
+echo "Done"

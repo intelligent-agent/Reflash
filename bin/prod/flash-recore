@@ -35,6 +35,10 @@ sync
 # Re-read partition table
 partprobe ${OUTFILE}
 
+echo "Checking filesystems" >> /tmp/recore-flash-log
+e2fsck -y -f ${OUTFILE}p1
+e2fsck -y -f ${OUTFILE}p2
+
 # Create new uuids so they are different than the USB drive
 tune2fs -U random ${OUTFILE}p1
 tune2fs -U random ${OUTFILE}p2

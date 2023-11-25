@@ -1,0 +1,114 @@
+#!/bin/bash
+
+ROTATION=$1
+PLACE=$2
+
+# Valid rotation options are normal,inverted,left,right
+ROTATIONS=(0 90 180 270)
+
+# Valid places to update
+PLACES=(FBCON XORG CMDLINE)
+
+usage(){
+    echo "Usage: $0 <rotation> <place>"
+    echo "Valid  rotations: '${ROTATIONS[@]}'"
+    echo "Valid  places: '${PLACES[@]}'"
+}
+
+update_xorg(){
+    EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+
+    mkdir -p /mnt/emmc
+    if ! mountpoint -q /mnt/emmc
+    then
+    mount "/dev/${EMMC}p2" /mnt/emmc
+    fi
+
+    XORG_DIR="/mnt/emmc/usr/share/X11/xorg.conf.d"
+    if [ ! -d ${XORG_DIR} ]; then
+        echo "Misssig directory: ${XORG_DIR}"
+        exit 1
+    fi
+
+    cat <<EOF > "${XORG_DIR}/90-monitor.conf"
+    Section "Monitor"
+        Identifier "HDMI-1"
+        Option "Rotate" "$ROT_XORG"
+    EndSection
+EOF
+    umount /mnt/emmc
+}
+
+update_cmdline(){
+    EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+
+    mkdir -p /mnt/emmc
+    if ! mountpoint -q /mnt/emmc
+    then
+        mount "/dev/${EMMC}p1" /mnt/emmc
+    fi
+    if [[ `grep 'fbcon=' /mnt/emmc/armbianEnv.txt` ]]; then
+        sed -i "s/\(fbcon=rotate:\)[0-3]/\1${ROT_FBCON}/" /mnt/emmc/armbianEnv.txt
+    else
+        sed -i "/extraargs=/ s/$/ fbcon=rotate:${ROT_FBCON}/" /mnt/emmc/armbianEnv.txt
+    fi
+    cat /mnt/emmc/armbianEnv.txt
+    umount /mnt/emmc
+}
+
+
+if [ "x$ROTATION" == "x" ]; then
+    usage 
+    exit 1
+fi
+
+if [ "x$PLACE" == "x" ]; then
+    usage
+    exit 1
+fi
+
+echo "Setting rotation to ${ROTATION} for place ${PLACE}"
+
+case "${ROTATION}" in 
+    0)
+        ROT_XORG="normal"
+        ROT_FBCON="0"
+        ROT_PLYMOUTH=""
+        ;;
+    90)
+        ROT_XORG="left"
+        ROT_FBCON="1"
+        ROT_PLYMOUTH=""
+        ;;
+    180)
+        ROT_XORG="inverted"
+        ROT_FBCON="2"
+        ROT_PLYMOUTH=""
+        ;;
+    270)
+        ROT_XORG="right"
+        ROT_FBCON="3"
+        ROT_PLYMOUTH=""
+        ;;
+    *)
+        echo "$ROTATION not in '${ROTATIONS[@]}'"
+        exit 1
+        ;;
+esac
+
+case "${PLACE}" in 
+    FBCON)
+        echo $ROT_FBCON > /sys/devices/virtual/graphics/fbcon/rotate
+        systemctl restart reflash-curses
+        ;;
+    XORG)
+        update_xorg
+        ;;
+    CMDLINE)
+        update_cmdline
+        ;;
+    *)
+        echo "$PLACE not in '${PLACES[@]}'"
+        exit 1
+        ;;
+esac
