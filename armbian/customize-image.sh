@@ -47,9 +47,15 @@ fix_netplan(){
 	EOF
 }
 
+enable_ttyGS0(){
+    echo ttyGS0 >> /etc/securetty
+    serial-getty@ttyGS0.service
+}
+
 install_reflash
 install_autohotspot
 fix_netplan
+enable_ttyGS0
 
 sh -c 'echo root:temppwd | chpasswd'
 
