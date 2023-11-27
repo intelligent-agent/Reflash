@@ -49,7 +49,7 @@ fix_netplan(){
 
 enable_ttyGS0(){
     echo ttyGS0 >> /etc/securetty
-    serial-getty@ttyGS0.service
+    systemctl enable serial-getty@ttyGS0.service
 }
 
 install_reflash
