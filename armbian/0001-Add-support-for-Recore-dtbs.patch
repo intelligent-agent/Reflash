@@ -63,7 +63,7 @@ index 000000000000..081e85d0f197
 +		emmc-led {
 +			label = "recore:white:emmc";
 +			gpios = <&pio 1 5 GPIO_ACTIVE_HIGH>;
-+			linux,default-trigger = "mmc0";
++			linux,default-trigger = "mmc2";
 +		};
 +
 +		cpu-led {
@@ -247,7 +247,7 @@ index 000000000000..081e85d0f197
 +};
 +
 +&ohci0 {
-+	status = "okay";
++	status = "disabled";
 +};
 +
 +&ohci1 {
@@ -255,7 +255,7 @@ index 000000000000..081e85d0f197
 +};
 +
 +&ehci0 {
-+	status = "okay";
++	status = "disabled";
 +};
 +
 +&ehci1 {
@@ -425,7 +425,7 @@ index 000000000000..081e85d0f197
 +};
 +
 +&usbphy {
-+	usb0_vbus_power-supply = <&usb_power_supply>;
++	//usb0_vbus_power-supply = <&usb_power_supply>;
 +	vcc-supply = <&reg_dcdc1>;
 +	status = "okay";
 +};

@@ -76,7 +76,7 @@ case "${ROTATION}" in
         ROT_PLYMOUTH=""
         ;;
     90)
-        ROT_XORG="left"
+        ROT_XORG="right"
         ROT_FBCON="1"
         ROT_PLYMOUTH=""
         ;;
@@ -86,7 +86,7 @@ case "${ROTATION}" in
         ROT_PLYMOUTH=""
         ;;
     270)
-        ROT_XORG="right"
+        ROT_XORG="left"
         ROT_FBCON="3"
         ROT_PLYMOUTH=""
         ;;

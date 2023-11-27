@@ -39,8 +39,17 @@ install_autohotspot() {
     systemctl enable autohotspot.service
 }
 
+fix_netplan(){
+    cat <<- EOF > /etc/netplan/armbian-default.yaml
+		network:
+		  version: 2
+		  renderer: NetworkManager
+	EOF
+}
+
 install_reflash
 install_autohotspot
+fix_netplan
 
 sh -c 'echo root:temppwd | chpasswd'
 
