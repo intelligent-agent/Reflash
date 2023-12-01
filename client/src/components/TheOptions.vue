@@ -31,7 +31,8 @@
           v-model="options.screenRotation"
           :items="radioItems"
           inline 
-          label="Screen rotation">
+          label="Screen rotation"
+          style="align-self: center;">
         </w-radios>
         <w-divider class="my6 mx-3"></w-divider>
         <h4>Reboot to eMMC</h4>

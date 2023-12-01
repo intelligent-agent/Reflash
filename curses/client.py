@@ -17,7 +17,7 @@ class ProgressBar(object):
         self.width = int(width/3)
         self.height = 3
         self.x = int((width/2)-(self.width/2))
-        self.y = int((height/2)-(self.height/2))
+        self.y = int((height/2)-int(self.height/2))
         self.win = curses.newwin(self.height, self.width, self.y, self.x)
         self.colors = curses.color_pair(1)
         self.progress = 0
@@ -140,7 +140,7 @@ while (k != ord('q')):
         status.hide()
         header.set_offset(0)
     else:
-        status.set_offset(1)
+        status.set_offset(3)
         header.set_offset(-3)
 
     if global_state == 'DOWNLOADING':
