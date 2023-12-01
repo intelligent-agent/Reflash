@@ -401,6 +401,7 @@ class Reflash:
     def _run_install_finished_commands(self):
         self.rotate_screen(self.state.settings_screen_rotation, "CMDLINE")
         self.rotate_screen(self.state.settings_screen_rotation, "XORG")
+        self.rotate_screen(self.state.settings_screen_rotation, "WESTON")
 
         if(self.state.settings_enable_ssh):
             self.enable_ssh()
