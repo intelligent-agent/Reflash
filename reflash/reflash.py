@@ -14,6 +14,7 @@ class State(object):
         self.settings_darkmode = True
         self.settings_reboot_when_done = False
         self.settings_enable_ssh = False
+        self.settings_screen_rotation = 0
         self.download_state = "IDLE"
         self.download_bytes_now = 0
         self.download_bytes_total = 1
@@ -45,6 +46,7 @@ class State(object):
             'settings_darkmode',
             'settings_reboot_when_done',
             'settings_enable_ssh',
+            'settings_screen_rotation',
             'download_bytes_now',
             'download_bytes_total',
             'download_state',
@@ -294,6 +296,7 @@ class Reflash:
         if self.state.install_state != "CANCELLED":
             self.state.install_state = "FINISHED"
             self.state.save()
+            self._run_install_finished_commands()
 
     def get_install_progress(self):
         tr = self._run_system_command("tail -1 /tmp/recore-flash-progress")
@@ -380,6 +383,9 @@ class Reflash:
             self.state.settings_reboot_when_done = options['rebootWhenDone']
         if 'enableSsh' in options:
             self.state.settings_enable_ssh = options['enableSsh']
+        if 'screenRotation' in options:
+            self.state.settings_screen_rotation = options['screenRotation']
+            self.rotate_screen(options['screenRotation'], "FBCON")
         self.state.save()
         return True
 
@@ -388,8 +394,16 @@ class Reflash:
             'darkmode': self.state.settings_darkmode,
             'rebootWhenDone': self.state.settings_reboot_when_done,
             'enableSsh': self.state.settings_enable_ssh,
+            'screenRotation': self.state.settings_screen_rotation,
         }
         return options
+
+    def _run_install_finished_commands(self):
+        self.rotate_screen(self.state.settings_screen_rotation, "CMDLINE")
+        self.rotate_screen(self.state.settings_screen_rotation, "XORG")
+
+        if(self.state.settings_enable_ssh):
+            self.enable_ssh()
 
     def _run_system_command(self, command):
         return subprocess.run(command.split(),
@@ -398,6 +412,10 @@ class Reflash:
 
     def enable_ssh(self):
         return self._run_system_command(self.sudo+" /usr/local/bin/enable-emmc-ssh")
+
+    def rotate_screen(self, rotation, place):
+        print(f"rotate screen {rotation} {place}")
+        return self._run_system_command(f"{self.sudo} /usr/local/bin/rotate-screen {rotation} {place}")
 
     def reboot(self):
         return self._run_system_command(self.sudo+" /usr/local/bin/reboot-board")

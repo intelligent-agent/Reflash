@@ -25,6 +25,16 @@
         label="Enable SSH access on new image">
         </w-switch>
         <w-divider class="my6 mx-3"></w-divider>
+        <h4>Screen rotation</h4>
+        <w-radios
+          @change="onChange('rotateScreen', selection)"
+          v-model="options.screenRotation"
+          :items="radioItems"
+          inline 
+          label="Screen rotation"
+          style="align-self: center;">
+        </w-radios>
+        <w-divider class="my6 mx-3"></w-divider>
         <h4>Reboot to eMMC</h4>
         <w-switch
           @change="onChange('bootFromEmmc', options.bootFromEmmc)"
@@ -68,6 +78,13 @@ export default {
   props: {
     open: Boolean
   },
-
+  data: () => ({
+    radioItems: [
+      { label: 'Normal', value: 0 },
+      { label: '90 degrees', value: 90 },
+      { label: '180 degrees', value: 180 },
+      { label: '270 degrees', value: 270 }
+    ]
+  })
 }
 </script>

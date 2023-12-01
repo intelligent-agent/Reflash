@@ -25,6 +25,9 @@ dev-clean:
 	mkdir -p .tmp/etc/
 	dd if=/dev/random of=.tmp/dev/mmcblk0 count=1000 bs=1M
 	echo "0.1.2" > .tmp/etc/reflash_version
+	touch /opt/reflash/xorg
+	touch /opt/reflash/fbcon
+	touch /opt/reflash/
 
 dev-client:
 	cd client; npm run serve
@@ -34,7 +37,8 @@ build:
 
 upload:
 	scp -r client/dist root@recore.local:/var/www/html/reflash
-	scp reflash/*.py root@recore.local:/var/www/html/reflash
+	scp server/*.py root@recore.local:/var/www/html/server/
+	scp reflash/*.py root@recore.local:/usr/local/lib/python3.9/dist-packages/reflash
 	scp systemd/*.service root@recore.local:/etc/systemd/system/
 
 tar: package

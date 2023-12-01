@@ -142,6 +142,12 @@ def enable_ssh():
     stat = reflash.enable_ssh()
     return {"success": stat}
 
+@app.route('/api/rotate_screen', methods = ['PUT'])
+def rotate_screen():
+    rotation = flask.request.json.get("rotation")
+    stat = reflash.rotate_screen(rotation)
+    return {"success": stat}
+
 @app.route('/api/set_boot_media', methods = ['PUT'])
 def set_boot_media():
     media = flask.request.json.get("media")
