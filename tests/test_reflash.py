@@ -109,7 +109,8 @@ class TestReflash:
         assert r.get_state() == "INSTALLING"
         assert r.get_install_progress()['state'] == "INSTALLING"
 
-    def test_set_get_optons(self ,r):
+    @patch('subprocess.run')
+    def test_set_get_optons(self, run, r):
         options = {
             "darkmode": True,
             "enableSsh": True,
