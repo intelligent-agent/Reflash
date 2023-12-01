@@ -113,7 +113,8 @@ class TestReflash:
         options = {
             "darkmode": True,
             "enableSsh": True,
-            "rebootWhenDone": False
+            "rebootWhenDone": False,
+            "screenRotation": 0
         }
         assert r.save_options(options) == True
 
