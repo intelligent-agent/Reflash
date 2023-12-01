@@ -462,9 +462,6 @@ export default {
           console.log(data.error);
         }
         else if(data.state == "FINISHED"){
-          if(this.options.enableSsh){
-            this.enableSsh();
-          }
           if(this.options.rebootWhenDone){
             this.rebootBoard();
           }
@@ -676,7 +673,6 @@ body {
 }
 .w-button.size--xl span{
   color: #4D4D4D;
-  height: 19px;
 }
 
 </style>

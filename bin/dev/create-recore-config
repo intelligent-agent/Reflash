@@ -1,0 +1,37 @@
+#!/bin/bash
+
+HW_REV=$1
+SERIAL_NR=$2
+
+usage(){
+  echo "Usage: $0 <hardware revision> <serial number>"
+  echo "This scipt is for adding a serial number and"
+  echo "calibration file to Recore A5/A6/A7. The serial number should be"
+  echo "in have the following format: "
+  echo "A5: 0100"
+  echo "A6: 0200"
+  echo "A7: 0300"
+}
+
+case $HW_REV in
+  A5|A6|A7)
+    echo "Using recore revision ${HW_REV}"
+    ;;
+  *)
+    echo "Wrong hardware revision ${HW_REV}"
+    usage
+    exit 1
+    ;;
+esac
+
+FILE="Recore_${HW_REV}_${SERIAL_NR}.json"
+URL="https://raw.githubusercontent.com/intelligent-agent/Recore/master/Calibrations/${FILE}"
+
+if [[ ! `wget -NS --spider $URL 2>&1 | grep 'HTTP/1.1 200 OK'` ]]; then
+  echo "Unable to find the calibration file at the remote location: $URL". 
+  exit 2
+fi
+
+echo "Calibration file valid"
+
+echo "Done"

@@ -7,9 +7,10 @@ Latest version is v0.1.1
 
 ## Setup
 ### Additional packages for running
-apt install \
+sudo apt install \
 python3-flask \
-python3-requests
+python3-flask-cors \
+python3-requests \
 pv \
 xz \
 avahi-daemon \
