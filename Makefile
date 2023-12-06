@@ -1,11 +1,12 @@
 install_bins:
 	cp bin/dev/* /usr/local/bin
 	chmod +x /usr/local/bin/backup-emmc
-	chmod +x /usr/local/bin/enable-emmc-ssh
+	chmod +x /usr/local/bin/enable-ssh
 	chmod +x /usr/local/bin/flash-recore
 	chmod +x /usr/local/bin/reboot-board
 	chmod +x /usr/local/bin/shutdown-board
 	chmod +x /usr/local/bin/set-boot-media
+	chmod +x /usr/local/bin/get-boot-media
 	chmod +x /usr/local/bin/get-emmc-version
 	chmod +x /usr/local/bin/get-recore-serial-number
 	chmod +x /usr/local/bin/rotate-screen
@@ -31,6 +32,9 @@ dev-clean:
 
 dev-client:
 	cd client; npm run serve
+
+dev-board:
+	cd board; npm run serve
 
 build:
 	cd client; npm run build

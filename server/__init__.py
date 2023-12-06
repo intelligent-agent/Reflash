@@ -137,15 +137,17 @@ def shutdown_board():
     stat = reflash.shutdown()
     return {"success": stat}
 
-@app.route('/api/enable_ssh', methods = ['PUT'])
-def enable_ssh():
-    stat = reflash.enable_ssh()
+@app.route('/api/set_ssh_enabled', methods = ['PUT'])
+def set_ssh_enabled():
+    is_enabled = flask.request.json.get("is_enabled")
+    media = flask.request.json.get("media")
+    stat = reflash.set_ssh_enabled(is_enabled, media)
     return {"success": stat}
 
 @app.route('/api/rotate_screen', methods = ['PUT'])
 def rotate_screen():
     rotation = flask.request.json.get("rotation")
-    stat = reflash.rotate_screen(rotation)
+    stat = reflash.rotate_screen(rotation, "FBCON")
     return {"success": stat}
 
 @app.route('/api/set_boot_media', methods = ['PUT'])

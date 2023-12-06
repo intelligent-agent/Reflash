@@ -404,25 +404,29 @@ class Reflash:
         self.rotate_screen(self.state.settings_screen_rotation, "WESTON")
 
         if(self.state.settings_enable_ssh):
-            self.enable_ssh()
+            self.set_ssh_enabled("true", "emmc")
 
     def _run_system_command(self, command):
         return subprocess.run(command.split(),
                               capture_output=True,
                               text=True).stdout.strip()
 
-    def enable_ssh(self):
-        return self._run_system_command(self.sudo+" /usr/local/bin/enable-emmc-ssh")
+    def set_ssh_enabled(self, is_enabled, media):
+        if media not in ["usb", "emmc"]:
+            return False
+        return self._run_system_command(f"{self.sudo} /usr/local/bin/enable-ssh {'true' if is_enabled else 'false'} {media}")
 
     def rotate_screen(self, rotation, place):
-        print(f"rotate screen {rotation} {place}")
         return self._run_system_command(f"{self.sudo} /usr/local/bin/rotate-screen {rotation} {place}")
+
+    def set_boot_media(self, media):
+        return self._run_system_command(f"{self.sudo} /usr/local/bin/set-boot-media {media}")
+
+    def get_boot_media(self):
+        return self._run_system_command(f"{self.sudo} /usr/local/bin/get-boot-media")
 
     def reboot(self):
         return self._run_system_command(self.sudo+" /usr/local/bin/reboot-board")
 
     def shutdown(self):
         return self._run_system_command(self.sudo+" /usr/local/bin/shutdown-board")
-
-    def set_boot_media(self, media):
-        return self._run_system_command(f"{self.sudo} /usr/local/bin/set-boot-media {media}")
