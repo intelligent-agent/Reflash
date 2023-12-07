@@ -31,10 +31,7 @@ export default {
     }
   },
   created() {
-    const url = "http://"+location.hostname+":8081/api/stream_log"
-    const evtSource = new EventSource(url, {
-      withCredentials: false
-    });
+    const evtSource = new EventSource(`/api/stream_log`);
     evtSource.onmessage = (event) => {
       this.log.push(event.data);
     };

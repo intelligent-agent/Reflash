@@ -39,6 +39,9 @@ dev-board:
 build:
 	cd client; npm run build
 
+build-board:
+	cd board; npm run build
+
 upload:
 	scp -r client/dist root@recore.local:/var/www/html/reflash
 	scp server/*.py root@recore.local:/var/www/html/server/
