@@ -15,9 +15,10 @@ if app.config['ENV'] == "development":
         "images_folder": ".tmp/opt/reflash/images",
         "db_file": ".tmp/opt/reflash/reflash.db",
         "use_sudo": False,
+        "platform": "dev",
     }
     with open(settings["version_file"], 'w+') as f:
-        f.write("v0.1.3\n")
+        f.write("v0.2.0\n")
 
     from flask_cors import CORS
     CORS(app)
@@ -27,6 +28,7 @@ else:
         "images_folder": "/opt/reflash/images",
         "db_file": "/opt/reflash/reflash.db",
         "use_sudo": True,
+        "platform": "prod",
     }
 
 with app.app_context():
@@ -140,8 +142,7 @@ def shutdown_board():
 @app.route('/api/set_ssh_enabled', methods = ['PUT'])
 def set_ssh_enabled():
     is_enabled = flask.request.json.get("is_enabled")
-    media = flask.request.json.get("media")
-    stat = reflash.set_ssh_enabled(is_enabled, media)
+    stat = reflash.set_ssh_enabled(is_enabled)
     return {"success": stat}
 
 @app.route('/api/rotate_screen', methods = ['PUT'])
@@ -169,6 +170,11 @@ def get_options():
 def save_options():
     options = flask.request.json
     ret = reflash.save_options(options)
+    return { "success": ret}
+
+@app.route('/api/get_log',methods = ['GET'])
+def get_log():
+    ret = reflash.get_log()
     return { "success": ret}
 
 @app.route('/favicon.ico')

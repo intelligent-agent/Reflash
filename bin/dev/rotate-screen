@@ -99,15 +99,15 @@ esac
 case "${PLACE}" in 
     FBCON)
         echo "rotation = ${ROT_XORG}" > /opt/reflash/fbcon
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p warning
+        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p info
         ;;
     XORG)
         echo "rotation = ${ROT_XORG}" > /opt/reflash/xorg
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p warning
+        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p info
         ;;
     CMDLINE)
         echo "rotation = ${ROT_FBCON}" > /opt/reflash/cmdline
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p warning
+        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p info
         ;;
     *)
         echo "$PLACE not in '${PLACES[@]}'"

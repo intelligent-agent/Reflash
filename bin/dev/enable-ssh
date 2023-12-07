@@ -1,4 +1,0 @@
-#!/bin/bash
-IS_ENABLED=$1
-MEDIA=$2
-echo "setting ssh to ${IS_ENABLED} for media ${MEDIA}" | systemd-cat -t reflash -p warning

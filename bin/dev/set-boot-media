@@ -12,4 +12,4 @@ else
 fi
 
 echo "${NEW_MEDIA}" > /opt/reflash/media
-echo "Setting boot media to ${NEW_MEDIA}" | systemd-cat -t reflash -p warning
+echo "Setting boot media to ${NEW_MEDIA}" | systemd-cat -t reflash -p info

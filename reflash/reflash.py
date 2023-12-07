@@ -121,6 +121,7 @@ class Reflash:
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self.sudo = "sudo" if settings.get("use_sudo") else ""
         self.state = State(settings.get("db_file"))
+        self.platform = "-d dev" if settings.get("platform") == "dev" else ""
         if not self.state.db_exists():
             self.state.create_default()
         self.state.load()
@@ -411,10 +412,8 @@ class Reflash:
                               capture_output=True,
                               text=True).stdout.strip()
 
-    def set_ssh_enabled(self, is_enabled, media):
-        if media not in ["usb", "emmc"]:
-            return False
-        return self._run_system_command(f"{self.sudo} /usr/local/bin/enable-ssh {'true' if is_enabled else 'false'} {media}")
+    def set_ssh_enabled(self, is_enabled):
+        return self._run_system_command(f"{self.sudo} /usr/local/bin/set-ssh-enabled {self.platform} {'true' if is_enabled else 'false'} ")
 
     def rotate_screen(self, rotation, place):
         return self._run_system_command(f"{self.sudo} /usr/local/bin/rotate-screen {rotation} {place}")
@@ -424,6 +423,9 @@ class Reflash:
 
     def get_boot_media(self):
         return self._run_system_command(f"{self.sudo} /usr/local/bin/get-boot-media")
+
+    def get_log(self):
+        return self._run_system_command("journalctl -t reflash --output cat -a")
 
     def reboot(self):
         return self._run_system_command(self.sudo+" /usr/local/bin/reboot-board")
