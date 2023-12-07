@@ -1,5 +1,18 @@
 #!/bin/bash
 
+set -o pipefail
+
+handle_error() {
+    echo "Error $1 occurred on line $2" | tee >(systemd-cat -t reflash -p err)
+    exit $1
+}
+
+info() {
+    echo "$1" | tee >(systemd-cat -t reflash -p info)
+}
+
+trap 'handle_error $? $LINENO' ERR
+
 NEW_MEDIA=$1
 EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 
@@ -32,3 +45,5 @@ sed -i '/^$/d' /mnt/emmc/armbianEnv.txt
 echo "rootdev=${NEW_DEV}" >> /mnt/emmc/armbianEnv.txt
 sync
 umount /mnt/emmc
+
+info "Updated rootdev to ${NEW_DEV}"

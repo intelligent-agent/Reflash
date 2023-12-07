@@ -2,8 +2,8 @@
 
 import os
 import flask
-
 import reflash as ref
+
 
 app = flask.Flask(__name__,
             static_folder = "./dist/static",
@@ -33,6 +33,7 @@ else:
 
 with app.app_context():
     reflash = ref.Reflash(settings)
+    reflash.start_log_worker()
 
 @app.route('/api/upload_start',methods = ['PUT'])
 def upload_start():
@@ -177,6 +178,19 @@ def get_log():
     ret = reflash.get_log()
     return { "success": ret}
 
+@app.route('/api/stream_log',methods = ['GET'])
+def stream_log():
+
+    def stream():
+        lines = reflash.get_log().split('\n')
+        for line in lines:
+            yield f"data: {line}\n\n"
+        log = reflash.log_listen()
+        while True:
+            yield log.get()
+
+    return flask.Response(stream(), mimetype='text/event-stream')
+
 @app.route('/favicon.ico')
 def favicon():
     return flask.send_from_directory(os.path.join(app.root_path, 'dist'),
@@ -196,3 +210,5 @@ def close_connection(exception):
     db = getattr(flask.g, '_database', None)
     if db is not None:
         db.close()
+
+

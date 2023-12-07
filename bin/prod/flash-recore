@@ -1,9 +1,19 @@
 #!/bin/bash
-set -e
-set -x
+set -o pipefail
 
-echo "Recore flash script" >  /tmp/recore-flash-log
-echo "------------------" >> /tmp/recore-flash-log
+handle_error() {
+    echo "Error $1 occurred on line $2" | tee >(systemd-cat -t reflash -p err)
+    exit $1
+}
+
+info() {
+    echo "$1" | tee >(systemd-cat -t reflash -p info)
+}
+
+trap 'handle_error $? $LINENO' ERR
+
+info "Starting recore flash script"
+info "------------------"
 
 INFILE=$1
 OUTFILE="/dev/"`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
@@ -21,25 +31,27 @@ CONFIG=`ls /mnt/config/*.json`
 REVISION=`cat "$CONFIG" | jq -r ".Revision" | tr '[:upper:]' '[:lower:]'`
 SIZE=`xz -lv $INFILE | grep Uncompressed | sed 's/[,(]//g' | awk '{ printf "%s\n", $5 }'`
 
-echo "Found Recore hardware revision $REVISION" >> /tmp/recore-flash-log
-echo "Flashing file name $INFILE" >> /tmp/recore-flash-log
-echo "Overwriting block device $OUTFILE" >> /tmp/recore-flash-log
-echo "Uncompressed file size $SIZE bytes" >> /tmp/recore-flash-log
+info "Found Recore hardware revision $REVISION"
+info "Flashing file name $INFILE"
+info "Overwriting block device $OUTFILE"
+info "Uncompressed file size is $SIZE bytes"
 
 mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount
-echo "Starting flashing" >> /tmp/recore-flash-log
+info "Starting flashing..."
 (xz -T 0 -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE} status=none) 2>&1 | unbuffer -p awk '{printf "%f\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
-echo "Flashing complete" >> /tmp/recore-flash-log
+info "Flashing done"
+info "Syncing drives"
 sync
 
 # Re-read partition table
 partprobe ${OUTFILE}
 
-echo "Checking filesystems" >> /tmp/recore-flash-log
+info "Checking filesystems"
 e2fsck -y -f ${OUTFILE}p1
 e2fsck -y -f ${OUTFILE}p2
 
 # Create new uuids so they are different than the USB drive
+info "Creating new UUIDs"
 tune2fs -U random ${OUTFILE}p1
 tune2fs -U random ${OUTFILE}p2
 
@@ -49,7 +61,7 @@ UUID2=`blkid -s UUID -o value ${OUTFILE}p2`
 mkdir -p /mnt/emmc
 # mount and exchange UUID
 mount ${OUTFILE}p2 /mnt/emmc
-echo "Creating disk UUIDs" >> /tmp/recore-flash-log
+info "Updating fstab with new UUIDs"
 sed -i "s:UUID=.* \/ :UUID=${UUID2} / :" /mnt/emmc/etc/fstab
 sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" /mnt/emmc/etc/fstab
 
@@ -58,20 +70,20 @@ if test -d /mnt/emmc/home/debian; then
   cd /mnt/emmc/home/debian/
   if ! test -f printer_data/config/printer.cfg; then
     if test -f klipper/config/generic-recore-$REVISION.cfg; then
-      echo "Installing Klipper config file" >> /tmp/recore-flash-log
+      info "Installing Klipper config file"
       cp klipper/config/generic-recore-$REVISION.cfg printer_data/config/printer.cfg
       chown 1000:1000 printer_data/config/printer.cfg
     fi
     # Enable mainsail on mainsail distros
     if test -f printer_data/config/mainsail.cfg; then
-      echo "Including Mainsail in config file, above the first section" >> /tmp/recore-flash-log
+      info "Including Mainsail in config file, above the first section"
       # Older distros has the include fiel as a comment
       sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
       sed -i 's:\(\[recore.*\]\):\[include mainsail.cfg\]\n\n\1:' printer_data/config/printer.cfg
     fi
     # Enable fluidd on fluidd distros
     if test -f printer_data/config/fluidd.cfg; then
-      echo "Including Fluidd in config file, above the first section" >> /tmp/recore-flash-log
+      info "Including Fluidd in config file, above the first section"
       # Older distros has the include fiel as a comment
       sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
       sed -i 's:\(\[recore.*\]\):\[include fluidd.cfg\]\n\n\1:' printer_data/config/printer.cfg
@@ -88,11 +100,11 @@ echo "rootdev=UUID=${UUID2}" >> /mnt/emmc/armbianEnv.txt
 
 cd /mnt/emmc/dtb/allwinner/
 if test -f sun50i-a64-recore-$REVISION.dtb; then
-  echo "Symlinking device tree" >> /tmp/recore-flash-log
+  info "Symlinking device tree"
   ln -sf sun50i-a64-recore-$REVISION.dtb sun50i-a64-recore.dtb
 fi
 cd
 umount ${OUTFILE}p1
 
-echo "Script done!" >> /tmp/recore-flash-log
 sync
+info "Script done!"

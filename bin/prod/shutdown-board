@@ -1,3 +1,4 @@
 #!/bin/bash
 
+echo "Shutdown" | systemd-cat -t reflash -p info
 shutdown now

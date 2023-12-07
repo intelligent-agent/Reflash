@@ -8,7 +8,6 @@
         @close="this.$emit('close')">
         <w-flex class="pa5 secondary" column>
           <h3>Log</h3>
-          <w-button @click="getLog">Get log</w-button>
           <pre class="text-left" style="white-space: pre-wrap; overflow: auto;" v-html="replaceWithBr()" />
         </w-flex>
       </w-drawer>
@@ -17,27 +16,28 @@
 </template>
 
 <script>
-import axios from "axios";
 
 export default {
   name: 'TheLogger',
   props: {
-    log: String,
     open: Boolean
   },
   data: () => ({
-    log2: ""
+    log: []
   }),
   methods: {
     replaceWithBr() {
-      return this.log2.replace(/\\n/g, "<br />")
+      return this.log.join('<br />')
     },
-    getLog() {
-      var self = this;
-      axios.get(`/api/get_log`).then(function(response){
-        self.log2 = response.data.success;
-      });
-    }
+  },
+  created() {
+    url = "http://"+location.hostname+":8081/api/stream_log"
+    const evtSource = new EventSource(url, {
+      withCredentials: false
+    });
+    evtSource.onmessage = (event) => {
+      this.log.push(event.data);
+    };
   }
 }
 

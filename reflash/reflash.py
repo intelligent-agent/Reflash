@@ -1,8 +1,10 @@
 import os.path
+import os
 import concurrent.futures
 import subprocess
 import sqlite3
 import threading
+import queue
 
 class State(object):
     def __init__(self, db_file):
@@ -20,13 +22,11 @@ class State(object):
         self.download_bytes_total = 1
         self.download_start_time = 0
         self.download_filename = ""
-        self.download_log = ""
         self.install_state = "IDLE"
         self.install_progress = 0.0
         self.install_start_time = 0
         self.install_filename = ""
         self.install_error = ""
-        self.install_log = ""
         self.install_bytes_now = 0
         self.install_bytes_total = 0.0
         self.backup_state = "IDLE"
@@ -34,13 +34,11 @@ class State(object):
         self.backup_filename = ""
         self.backup_total = 0
         self.backup_start_time = 0
-        self.backup_log = ""
         self.upload_state = "IDLE"
         self.upload_filename = ""
         self.upload_bytes_total = 1
         self.upload_bytes_now = 0
         self.upload_start_time = 0
-        self.upload_log = ""
 
         self.fields = [
             'settings_darkmode',
@@ -52,13 +50,11 @@ class State(object):
             'download_state',
             'download_start_time',
             'download_filename',
-            'download_log',
             'install_state',
             'install_progress',
             'install_start_time',
             'install_filename',
             'install_error',
-            'install_log',
             'install_bytes_total',
             'install_bytes_now',
             'backup_state',
@@ -66,13 +62,11 @@ class State(object):
             'backup_filename',
             'backup_total',
             'backup_start_time',
-            'backup_log',
             'upload_state',
             'upload_filename',
             'upload_bytes_total',
             'upload_bytes_now',
             'upload_start_time',
-            'upload_log',
         ]
 
     def db_exists(self):
@@ -125,6 +119,7 @@ class Reflash:
         if not self.state.db_exists():
             self.state.create_default()
         self.state.load()
+        self.listeners = []
 
     def get_version(self):
         return self._run_system_command(f"cat {self.reflash_version_file}")
@@ -147,6 +142,7 @@ class Reflash:
     def check_file_integrity(self, filename):
         path = self.images_folder + "/"+filename +".img.xz"
         ret = os.system(f"xz -l {path}")
+        self.log(f"File check intergity: {'OK' if (ret == 0) else 'Not OK'}")
         return {
             "is_file_ok": (ret == 0)
         }
@@ -169,10 +165,8 @@ class Reflash:
         self.state.download_state = "DOWNLOADING"
         self.state.download_bytes_total = size
         self.state.download_filename = filename
-        self.state.download_log = "Starting download\n"
-        self.state.download_log += f"Filename: {filename}\n"
-        self.state.download_log += f"Filesize: {size}\n"
         self.state.save()
+        self.log(f"starting download of {filename} width size {size}")
         self.executor.submit(self._ex_download_refactor, url, filename)
         return True
 
@@ -193,7 +187,6 @@ class Reflash:
                         return
         self.state.is_download_finished = True
         self.state.download_state = "FINISHED"
-        self.state.download_log += "Download finished\n"
         self.state.save()
 
     def cancel_download(self):
@@ -204,7 +197,6 @@ class Reflash:
         except FileNotFoundError:
             pass
         self.state.download_state = "CANCELLED"
-        self.state.download_log += "Download cancelled\n"
         self.state.save()
         return True
     
@@ -214,9 +206,12 @@ class Reflash:
             "state": self.state.download_state,
             "start_time": self.state.download_start_time,
             "filename": self.state.download_filename,
-            "log": self.state.download_log,
         }
         if self.state.download_state in ["FINISHED", "CANCELLED"]:
+            if self.state.download_state == "FINISHED":
+                self.log("Download finished")
+            if self.state.download_state == "CANCELLED":
+                self.log("Download cancelled")
             self.state.download_state = "IDLE"
             self.state.save()
         return ret
@@ -229,9 +224,7 @@ class Reflash:
         path = self.images_folder+"/"+filename
         open(path, 'w').close()
         self.state.upload_state = "UPLOADING"
-        self.state.upload_log = "Upload starting\n"
-        self.state.upload_log += f"Filename: {filename}\n"
-        self.state.upload_log += f"Filesize: {size}\n"
+        self.log(f"Starting upload of {filename}, size {size}")
         self.state.upload_filename = filename
         self.state.upload_bytes_total = size
         self.state.upload_bytes_now = 0
@@ -241,13 +234,13 @@ class Reflash:
 
     def upload_finish(self):
         self.state.upload_state = "FINISHED"
-        self.state.upload_log += "Upload finished\n"
+        self.log("File upload finished")
         self.state.save()
         return True
 
     def upload_cancel(self):
         self.state.upload_state = "CANCELLED"
-        self.state.upload_log += "Upload cancelled\n"
+        self.log("File upload cancelled")
         self.state.save()
         return True
 
@@ -266,8 +259,7 @@ class Reflash:
             "filename": self.state.upload_filename,
             "bytes_total": self.state.upload_bytes_total,
             "bytes_now": self.state.upload_bytes_now,
-            "start_time": self.state.upload_start_time,
-            "log": self.state.upload_log,
+            "start_time": self.state.upload_start_time
         }
         if self.state.upload_state not in ["UPLOADING", "IDLE"]:
             self.state.upload_state = "IDLE"
@@ -301,19 +293,15 @@ class Reflash:
 
     def get_install_progress(self):
         tr = self._run_system_command("tail -1 /tmp/recore-flash-progress")
-        ti = self._run_system_command("cat /tmp/recore-flash-log")
         self.state.install_progress = self._parse_float(tr)
-        self.state.install_log = ti
         self.state.save('install_progress')
-        self.state.save('install_log')
 
         ret = {
             "state": self.state.install_state,
             "progress": self.state.install_progress,
             "filename": self.state.install_filename,
             "error": self.state.install_error,
-            "start_time": self.state.install_start_time,
-            "log": self.state.install_log
+            "start_time": self.state.install_start_time
         }
         if self.state.install_state not in ["INSTALLING", "IDLE"]:
             self.state.install_state = "IDLE"
@@ -331,7 +319,6 @@ class Reflash:
         self.state.backup_filename = filename
         self.state.backup_progress = 0
         self.state.backup_state = "INSTALLING"
-        self.state.backup_log = ""
         self.state.backup_start_time = start_time
         self.state.save()
         self.executor.submit(self._ex_backup_refactor, outfile)
@@ -353,18 +340,14 @@ class Reflash:
 
     def get_backup_progress(self):
         tr = self._run_system_command("tail -1 /tmp/recore-flash-progress")
-        ti = self._run_system_command("cat /tmp/recore-flash-log")
         self.state.backup_progress = self._parse_float(tr)
-        self.state.backup_log = ti
         self.state.save('backup_progress')
-        self.state.save('backup_log')
 
         ret = {
             "state": self.state.backup_state,
             "progress": self.state.backup_progress,
             "filename": self.state.backup_filename,
-            "start_time": self.state.backup_start_time,
-            "log": self.state.backup_log,
+            "start_time": self.state.backup_start_time
         }
         if self.state.backup_state == "FINISHED":
             self.state.backup_state = "IDLE"
@@ -405,7 +388,7 @@ class Reflash:
         self.rotate_screen(self.state.settings_screen_rotation, "WESTON")
 
         if(self.state.settings_enable_ssh):
-            self.set_ssh_enabled("true", "emmc")
+            self.set_ssh_enabled("true")
 
     def _run_system_command(self, command):
         return subprocess.run(command.split(),
@@ -424,8 +407,34 @@ class Reflash:
     def get_boot_media(self):
         return self._run_system_command(f"{self.sudo} /usr/local/bin/get-boot-media")
 
+    def log(self, msg):
+        self._run_system_command(f"systemd-cat -t reflash -p info echo {msg}")
+
     def get_log(self):
-        return self._run_system_command("journalctl -t reflash --output cat -a")
+        return self._run_system_command("journalctl -t reflash --output cat -a -n 100")
+
+    def start_log_worker(self):
+        self.executor.submit(self._ex_log_worker)
+
+    def _ex_log_worker(self):
+        cmd = ['journalctl', '-f', '-t','reflash', '--output', 'cat', '-a', '-n', '0']
+        p = subprocess.Popen(cmd,  stdout=subprocess.PIPE)
+        while True: 
+            line = p.stdout.readline().strip().decode("utf-8") 
+            self.add_log(line)
+
+    def log_listen(self):
+        q = queue.Queue(maxsize=100)
+        self.listeners.append(q)
+        return q
+
+    def add_log(self, msg):
+        for i in reversed(range(len(self.listeners))):
+            try:
+                self.listeners[i].put_nowait(f'data: {msg}\n\n')
+            except queue.Full:
+                print("queue full")
+                del self.listeners[i]
 
     def reboot(self):
         return self._run_system_command(self.sudo+" /usr/local/bin/reboot-board")

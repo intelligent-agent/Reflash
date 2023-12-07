@@ -11,6 +11,10 @@ PLACES=(FBCON XORG CMDLINE WESTON)
 
 EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 
+info() {
+    echo "$1" | tee >(systemd-cat -t reflash -p info)
+}
+
 usage(){
     echo "Usage: $0 <rotation> <place>"
     echo "Valid  rotations: '${ROTATIONS[@]}'"
@@ -83,8 +87,6 @@ if [ "x$PLACE" == "x" ]; then
     exit 1
 fi
 
-echo "Setting rotation to ${ROTATION} for place ${PLACE}"
-
 case "${ROTATION}" in 
     0)
         ROT_XORG="normal"
@@ -119,6 +121,8 @@ case "${ROTATION}" in
         exit 1
         ;;
 esac
+
+info "Setting rotation to ${ROTATION} for place ${PLACE}"
 
 case "${PLACE}" in 
     FBCON)

@@ -1,6 +1,6 @@
 <template>
   <w-app>
-    <TheLogger :log="theLog" :open="openLog"  @close="openLog=false"/>
+    <TheLogger :open="openLog"  @close="openLog=false"/>
     <TheOptions 
       :open="openOptions"
       @set-option="setOption"
@@ -179,7 +179,6 @@ export default {
     backupFile: "",
     version: "",
     emmc_version: "Unknown version",
-    theLog: ""
   }),
   computed: mapGetters(['options', 'progress', 'flash']),
   methods: {
@@ -326,7 +325,6 @@ export default {
     async checkUploadProgress(){
       const response = await axios.get(`/api/get_upload_progress`);
       let data = response.data;
-      this.theLog = data.log;
       if(data.state == "UPLOADING"){
         this.isTransferring = true;
         this.setProgress({name: 'transfer', progress: data.progress});
@@ -380,7 +378,6 @@ export default {
     async checkDownloadProgress() {
       const response = await axios.get(`/api/get_download_progress`);
       let data = response.data;
-      this.theLog = data.log;
       if(data.state == "DOWNLOADING"){
         this.isTransferring = true;
         this.setProgress({name: 'transfer', progress: data.progress});
@@ -445,7 +442,6 @@ export default {
     async checkInstallProgress() {
       const response = await axios.get(`/api/get_install_progress`);
       let data = response.data
-      this.theLog = data.log
       if(data.state == "INSTALLING"){
         this.isInstalling = true;
         this.setVisible({name: 'install', visible: true});
@@ -490,7 +486,6 @@ export default {
     async checkBackupProgress(){
       const response = await axios.get(`/api/get_backup_progress`);
       let data = response.data
-      this.theLog = data.log
       if(data.state == "INSTALLING"){
         this.isInstalling = true;
         this.setVisible({name: 'install', visible: true});
@@ -512,7 +507,7 @@ export default {
           this.getLocalImages();
         }
         if(data.state == "ERROR"){
-          this.theLog = data.log+"\n\n"+data.error
+          console.log(data.error)
         }
       }
     },

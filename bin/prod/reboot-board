@@ -1,3 +1,4 @@
 #!/bin/bash
 
+echo "Reboot" | systemd-cat -t reflash -p info
 systemctl reboot

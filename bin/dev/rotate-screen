@@ -7,7 +7,7 @@ PLACE=$2
 ROTATIONS=(0 90 180 270)
 
 # Valid places to update
-PLACES=(FBCON XORG CMDLINE)
+PLACES=(FBCON XORG CMDLINE WESTON)
 
 usage(){
     echo "Usage: $0 <rotation> <place>"
@@ -74,21 +74,29 @@ case "${ROTATION}" in
         ROT_XORG="normal"
         ROT_FBCON="0"
         ROT_PLYMOUTH=""
+        ROT_WESTON_10="0"
+        ROT_WESTON_11="normal"
         ;;
     90)
         ROT_XORG="right"
         ROT_FBCON="1"
         ROT_PLYMOUTH=""
+        ROT_WESTON_10="90"
+        ROT_WESTON_11="rotate-90"
         ;;
     180)
         ROT_XORG="inverted"
         ROT_FBCON="2"
         ROT_PLYMOUTH=""
+        ROT_WESTON_10="180"
+        ROT_WESTON_11="rotate-180"
         ;;
     270)
         ROT_XORG="left"
         ROT_FBCON="3"
         ROT_PLYMOUTH=""
+        ROT_WESTON_10="270"
+        ROT_WESTON_11="rotate-270"
         ;;
     *)
         echo "$ROTATION not in '${ROTATIONS[@]}'"
@@ -106,6 +114,10 @@ case "${PLACE}" in
         echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p info
         ;;
     CMDLINE)
+        echo "rotation = ${ROT_FBCON}" > /opt/reflash/cmdline
+        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p info
+        ;;
+     WESTON)
         echo "rotation = ${ROT_FBCON}" > /opt/reflash/cmdline
         echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p info
         ;;

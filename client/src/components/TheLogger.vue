@@ -20,13 +20,24 @@
 export default {
   name: 'TheLogger',
   props: {
-    log: String,
     open: Boolean
   },
+  data: () => ({
+    log: []
+  }),
   methods: {
     replaceWithBr() {
-      return this.log.replace(/\\n/g, "<br />")
+      return this.log.join('<br />')
     }
+  },
+  created() {
+    const url = "http://"+location.hostname+":8081/api/stream_log"
+    const evtSource = new EventSource(url, {
+      withCredentials: false
+    });
+    evtSource.onmessage = (event) => {
+      this.log.push(event.data);
+    };
   }
 }
 

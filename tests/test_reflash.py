@@ -37,7 +37,7 @@ def r():
 
 @pytest.fixture()
 def p():
-    progress = {'filename': 'hamburger.img.xz', 'progress': 0.0, 'start_time': 666, 'state': 'DOWNLOADING', 'log': 'Starting download\nFilename: hamburger.img.xz\nFilesize: 5\n'}
+    progress = {'filename': 'hamburger.img.xz', 'progress': 0.0, 'start_time': 666, 'state': 'DOWNLOADING'}
     yield(progress)
 
 class TestReflash:
@@ -90,7 +90,6 @@ class TestReflash:
             assert r.get_download_progress() == p
             time.sleep(0.1)
             p['state'] = 'FINISHED'
-            p['log'] = 'Starting download\nFilename: hamburger.img.xz\nFilesize: 5\nDownload finished\n'
             p['progress'] = 100.0
             assert r.get_download_progress() == p
             p['state'] = 'IDLE'
