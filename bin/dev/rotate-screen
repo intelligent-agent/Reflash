@@ -9,6 +9,11 @@ ROTATIONS=(0 90 180 270)
 # Valid places to update
 PLACES=(FBCON XORG CMDLINE WESTON)
 
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
 usage(){
     echo "Usage: $0 <rotation> <place>"
     echo "Valid  rotations: '${ROTATIONS[@]}'"
@@ -67,7 +72,7 @@ if [ "x$PLACE" == "x" ]; then
     exit 1
 fi
 
-echo "Setting rotation to ${ROTATION} for place ${PLACE}"
+info "Setting rotation to ${ROTATION} for place ${PLACE}"
 
 case "${ROTATION}" in 
     0)
@@ -107,19 +112,19 @@ esac
 case "${PLACE}" in 
     FBCON)
         echo "rotation = ${ROT_XORG}" > /opt/reflash/fbcon
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p info
+        echo "Setting rotation to ${ROTATION} for place ${PLACE}" tee -a /var/log/reflash.log
         ;;
     XORG)
         echo "rotation = ${ROT_XORG}" > /opt/reflash/xorg
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p info
+        echo "Setting rotation to ${ROTATION} for place ${PLACE}" tee -a /var/log/reflash.log
         ;;
     CMDLINE)
         echo "rotation = ${ROT_FBCON}" > /opt/reflash/cmdline
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p info
+        echo "Setting rotation to ${ROTATION} for place ${PLACE}" tee -a /var/log/reflash.log
         ;;
      WESTON)
         echo "rotation = ${ROT_FBCON}" > /opt/reflash/cmdline
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p info
+        echo "Setting rotation to ${ROTATION} for place ${PLACE}" tee -a /var/log/reflash.log
         ;;
     *)
         echo "$PLACE not in '${PLACES[@]}'"

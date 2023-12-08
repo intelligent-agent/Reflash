@@ -1,11 +1,7 @@
 import axios from 'axios';
 
 const state = {
-  options: {
-    darkmode: true,
-    rebootWhenDone: false,
-    enableSsh: false,
-    bootFromEmmc: false
+  options: {    
   },
   progress: {
     install: {

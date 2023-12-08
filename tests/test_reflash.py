@@ -114,13 +114,14 @@ class TestReflash:
             "darkmode": True,
             "enableSsh": True,
             "rebootWhenDone": False,
-            "screenRotation": 0
+            "screenRotation": 0,
+            "bootFromEmmc": False
         }
-        assert r.save_options(options) == True
+        assert r.save_options(options) == {"status": 0}
 
         # adding other option is silently ignored
         options['pizza'] = True
-        assert r.save_options(options) == True
+        assert r.save_options(options) == {"status": 0}
         del options['pizza']
         assert r.get_options() == options
 

@@ -118,12 +118,13 @@ def cancel_download():
     stat = reflash.cancel_download()
     return {"success": stat}
 
-@app.route('/api/get_local_images')
-def get_local_images():
+@app.route('/api/get_info')
+def get_info():
     return {
-        "locals": reflash.get_local_releases(),
+        "local_images": reflash.get_local_releases(),
         "reflash_version": reflash.get_version(),
         "emmc_version": reflash.get_emmc_version(),
+        "recore_revision": reflash.get_recore_revision(),
     }
 
 @app.route('/api/get_download_progress')
@@ -132,31 +133,26 @@ def get_download_progress():
 
 @app.route('/api/reboot_board', methods = ['PUT'])
 def reboot_board():
-    stat = reflash.reboot()
-    return {"success": stat}
+    return reflash.reboot()
 
 @app.route('/api/shutdown_board', methods = ['PUT'])
 def shutdown_board():
-    stat = reflash.shutdown()
-    return {"success": stat}
+    return reflash.shutdown()
 
 @app.route('/api/set_ssh_enabled', methods = ['PUT'])
 def set_ssh_enabled():
     is_enabled = flask.request.json.get("is_enabled")
-    stat = reflash.set_ssh_enabled(is_enabled)
-    return {"success": stat}
+    return reflash.set_ssh_enabled(is_enabled)
 
 @app.route('/api/rotate_screen', methods = ['PUT'])
 def rotate_screen():
     rotation = flask.request.json.get("rotation")
-    stat = reflash.rotate_screen(rotation, "FBCON")
-    return {"success": stat}
+    return reflash.rotate_screen(rotation, "FBCON")
 
 @app.route('/api/set_boot_media', methods = ['PUT'])
 def set_boot_media():
     media = flask.request.json.get("media")
-    ret = reflash.set_boot_media(media)
-    return { "success": ret}
+    return reflash.set_boot_media(media)
 
 @app.route('/api/get_boot_media', methods = ['GET'])
 def get_boot_media():
@@ -170,13 +166,7 @@ def get_options():
 @app.route('/api/save_options',methods = ['POST'])
 def save_options():
     options = flask.request.json
-    ret = reflash.save_options(options)
-    return { "success": ret}
-
-@app.route('/api/get_log',methods = ['GET'])
-def get_log():
-    ret = reflash.get_log()
-    return { "success": ret}
+    return reflash.save_options(options)
 
 @app.route('/api/stream_log',methods = ['GET'])
 def stream_log():
@@ -190,6 +180,10 @@ def stream_log():
             yield log.get()
 
     return flask.Response(stream(), mimetype='text/event-stream')
+
+@app.route('/api/clear_log', methods=['PUT'])
+def clear_log():
+    return reflash.clear_log()
 
 @app.route('/favicon.ico')
 def favicon():

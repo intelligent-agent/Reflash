@@ -1,3 +1,8 @@
 #!/bin/bash
 
-echo "shutdown" | systemd-cat -t reflash -p info
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+info "shutdown"

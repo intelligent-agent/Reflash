@@ -17,4 +17,5 @@ mkdir -p /mnt/config
 if ! grep -qs '/mnt/config ' /proc/mounts; then
     mount -r "/dev/${DEV}boot0p1" /mnt/config/
 fi
-cat /mnt/config/serial_number
+CONFIG=`ls /mnt/config/*.json`
+cat "$CONFIG" | jq -r ".Revision" | tr '[:upper:]' '[:lower:]'

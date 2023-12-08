@@ -12,7 +12,8 @@ PLACES=(FBCON XORG CMDLINE WESTON)
 EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 
 info() {
-    echo "$1" | tee >(systemd-cat -t reflash -p info)
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
 }
 
 usage(){
@@ -127,7 +128,6 @@ info "Setting rotation to ${ROTATION} for place ${PLACE}"
 case "${PLACE}" in 
     FBCON)
         echo $ROT_FBCON > /sys/devices/virtual/graphics/fbcon/rotate
-        systemctl restart reflash-curses
         ;;
     XORG)
         update_xorg

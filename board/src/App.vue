@@ -30,7 +30,7 @@
           </div>
         </div>
         <div class="xs5 pa4">
-          <TheInfo :open="openInfo" :version="version" />
+          <TheInfo :open="openInfo" :version="reflash_version" :revision="recore_revision"/>
         </div>
         <div class="xs5">Boot media</div>
         <div class="xs2 pa1 align-self-center">USB drive</div>
@@ -41,6 +41,7 @@
           <img style="width: 30%" :src="computeSVG('USB')" />
         </div>
         <div class="xs1 pa1 align-self-center">
+          <div>{{ bootMedia }}</div>
           <img style="width: 50%" :src="computeSVG('Arrow-left-right')" />
         </div>
         <div class="xs2 pa1 align-self-center">
@@ -148,8 +149,9 @@ export default {
     openOptions: false,
     showOverlay: false,
     imageColor: "white",
-    version: "Unknown",
-    emmc_version: "Unknown version",
+    reflash_version: "Unknown",
+    recore_revision: "Unknown",
+    emmc_version: "Unknown",
     theLog: "",
     bootMedia: "unknown",
     radioItems: [
@@ -194,7 +196,7 @@ export default {
       axios.put(`/api/set_ssh_enabled`, { is_enabled: ssh_is_enabled, media: "emmc"});
     },
     rotateScreen(rot) {
-      axios.put(`/api/rotate_screen`, { rotation: rot });
+      axios.put(`/api/rotate_screen`, { rotation: rot, where: "FBCON" });
     },
     async changeBootMedia(value) {
       var self = this;
@@ -233,6 +235,10 @@ export default {
     var self = this;
     axios.get(`/api/get_boot_media`, ).then(function(response){
       self.bootMedia = response.data.boot_media;
+    });
+    axios.get(`/api/get_info`, ).then(function(response){
+      self.recore_revision = response.data.recore_revision;
+      self.reflash_version = response.data.reflash_version;
     });
   }
 };

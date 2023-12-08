@@ -9,6 +9,7 @@ install_bins:
 	chmod +x /usr/local/bin/get-boot-media
 	chmod +x /usr/local/bin/get-emmc-version
 	chmod +x /usr/local/bin/get-recore-serial-number
+	chmod +x /usr/local/bin/get-recore-revision
 	chmod +x /usr/local/bin/rotate-screen
 	chmod +x /usr/local/bin/create-recore-config
 
@@ -63,11 +64,30 @@ package:
 	cp bin/prod/* zip/reflash/bin
 	cp -r systemd zip/reflash
 	cp -r scripts zip/reflash
-	cp -r u-boot zip/reflash
 	cp -r curses zip/reflash
 
+tar-board: package-board
+	cd zip; tar -zcvf reflash.tar.gz reflash/
+	mv zip/reflash.tar.gz ./reflash-board.tar.gz
+	rm -rf zip
+
+package-board:
+	mkdir -p zip/reflash/bin
+	mkdir -p zip/reflash/reflash
+	cp reflash/*.py zip/reflash/reflash
+	mkdir -p zip/reflash/server
+	cp -r server/*.py zip/reflash/server
+	cp -r board/dist zip/reflash/server
+	cp bin/prod/* zip/reflash/bin
+	cp -r systemd zip/reflash
+	cp -r scripts zip/reflash
+	echo "v0.2.0" > zip/reflash/reflash.version
+	
 upload-tar:
 	scp reflash.tar.gz root@recore.local:/usr/src/
+
+upload-tar-board:
+	scp reflash-board.tar.gz debian@recore.local:/home/debian
 
 tests:
 	python3 -m pytest tests

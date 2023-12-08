@@ -4,7 +4,7 @@
 EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 PATH_EMMC="/dev/${EMMC}p2"
 PATH_USB="/dev/sda2"
-UUID_EMMC=`lsblk -o UUID -n /dev/mmcblk0p2 2>/dev/null`
+UUID_EMMC=`lsblk -o UUID -n /dev/${EMMC}p2 2>/dev/null`
 UUID_USB=`lsblk -o UUID -n /dev/sda2 2>/dev/null`
 
 DEV=`grep "^rootdev=" /boot/armbianEnv.txt | sed 's:rootdev=::' | sed 's:UUID=::'`

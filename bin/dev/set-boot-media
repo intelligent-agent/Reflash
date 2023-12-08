@@ -2,6 +2,11 @@
 
 NEW_MEDIA=$1
 
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
 if [ "x${NEW_MEDIA}" == "xusb" ]; then
   NEW_DEV="usb"
 elif [ "x${NEW_MEDIA}" == "xemmc" ]; then
@@ -12,4 +17,4 @@ else
 fi
 
 echo "${NEW_MEDIA}" > /opt/reflash/media
-echo "Setting boot media to ${NEW_MEDIA}" | systemd-cat -t reflash -p info
+info "Setting boot media to ${NEW_MEDIA}"

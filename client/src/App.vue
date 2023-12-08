@@ -25,7 +25,7 @@
           </div>
         </div>
         <div class="xs5 pa4">
-          <TheInfo :open="openInfo" :version="version" />
+          <TheInfo :open="openInfo" :version="reflash_version" :revision="recore_revision" />
         </div>
         <div class="xs1 pa1 align-self-center">
           <w-select
@@ -177,8 +177,9 @@ export default {
     imageColor: "white",
     files: [],
     backupFile: "",
-    version: "",
-    emmc_version: "Unknown version",
+    reflash_version: "Unknown",
+    emmc_version: "Unknown",
+    recore_revision: "Unknown"
   }),
   computed: mapGetters(['options', 'progress', 'flash']),
   methods: {
@@ -565,11 +566,11 @@ export default {
       }
     },
     async getLocalImages(){
-      const response = await axios.get(`/api/get_local_images`);
-      let data = response.data
-      this.localImages = data.locals;
-      this.version = response.data.reflash_version;
+      const response = await axios.get(`/api/get_info`);
+      this.localImages = response.data.local_images;
+      this.reflash_version = response.data.reflash_version;
       this.emmc_version = response.data.emmc_version;
+      this.recore_revision = response.data.recore_revision
     },
     async getGithubImages(){
       fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")

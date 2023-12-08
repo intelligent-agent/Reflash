@@ -1,5 +1,5 @@
 #/bin/bash
-set -e
+set -e -x
 
 mkdir -p /opt/reflash/settings
 mkdir -p /opt/reflash/images
@@ -11,9 +11,7 @@ cp -r server /var/www/html/
 cp -r reflash /usr/local/lib/python3.9/dist-packages/
 cp reflash.version /etc
 cp systemd/reflash.service /etc/systemd/system
-cp systemd/reflash-curses.service /etc/systemd/system
 cp curses/client.py /usr/local/bin/reflash-curses.py
-chmod +x /usr/local/bin/reflash-curses.py
 
 FILES="./bin/*"
 for f in $FILES
@@ -26,7 +24,7 @@ done
 
 cat << EOF > /etc/nginx/sites-available/reflash
 server {
-    listen 80;
+    listen 8080;
     server_name _;
     client_max_body_size 10M;
 
@@ -44,4 +42,3 @@ ln -sf /etc/nginx/sites-available/reflash /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 
 systemctl enable reflash
-systemctl enable reflash-curses

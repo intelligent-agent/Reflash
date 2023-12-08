@@ -104,9 +104,10 @@ class State(object):
                 self.cur.execute(ins)
             self.db.commit()
         except sqlite3.OperationalError:
-            pass
+            return 1
         finally:
             self.lock.release()
+        return 0
 
 class Reflash:
     def __init__(self, settings):
@@ -121,12 +122,6 @@ class Reflash:
         self.state.load()
         self.listeners = []
 
-    def get_version(self):
-        return self._run_system_command(f"cat {self.reflash_version_file}")
-
-    def get_emmc_version(self):
-        return self._run_system_command(f"{self.sudo} /usr/local/bin/get-emmc-version")
-
     def get_state(self):
         self.state.load()
         if self.state.install_state == "INSTALLING":
@@ -137,12 +132,12 @@ class Reflash:
             return "BACKING_UP"
         if self.state.upload_state == "UPLOADING":
             return "UPLOADING"
-        return"IDLE"
+        return "IDLE"
 
     def check_file_integrity(self, filename):
         path = self.images_folder + "/"+filename +".img.xz"
         ret = os.system(f"xz -l {path}")
-        self.log(f"File check intergity: {'OK' if (ret == 0) else 'Not OK'}")
+        self._log(f"File check intergity: {'OK' if (ret == 0) else 'Not OK'}")
         return {
             "is_file_ok": (ret == 0)
         }
@@ -166,7 +161,7 @@ class Reflash:
         self.state.download_bytes_total = size
         self.state.download_filename = filename
         self.state.save()
-        self.log(f"starting download of {filename} width size {size}")
+        self._log(f"starting download of {filename} width size {size}")
         self.executor.submit(self._ex_download_refactor, url, filename)
         return True
 
@@ -209,9 +204,9 @@ class Reflash:
         }
         if self.state.download_state in ["FINISHED", "CANCELLED"]:
             if self.state.download_state == "FINISHED":
-                self.log("Download finished")
+                self._log("Download finished")
             if self.state.download_state == "CANCELLED":
-                self.log("Download cancelled")
+                self._log("Download cancelled")
             self.state.download_state = "IDLE"
             self.state.save()
         return ret
@@ -224,7 +219,7 @@ class Reflash:
         path = self.images_folder+"/"+filename
         open(path, 'w').close()
         self.state.upload_state = "UPLOADING"
-        self.log(f"Starting upload of {filename}, size {size}")
+        self._log(f"Starting upload of {filename}, size {size}")
         self.state.upload_filename = filename
         self.state.upload_bytes_total = size
         self.state.upload_bytes_now = 0
@@ -234,13 +229,13 @@ class Reflash:
 
     def upload_finish(self):
         self.state.upload_state = "FINISHED"
-        self.log("File upload finished")
+        self._log("File upload finished")
         self.state.save()
         return True
 
     def upload_cancel(self):
         self.state.upload_state = "CANCELLED"
-        self.log("File upload cancelled")
+        self._log("File upload cancelled")
         self.state.save()
         return True
 
@@ -285,14 +280,14 @@ class Reflash:
 
     def _ex_install_refactor(self, filename):
         cmd = " ".join([self.sudo, "/usr/local/bin/flash-recore", filename])
-        self._run_system_command(cmd)
+        self._system_command_status(cmd)
         if self.state.install_state != "CANCELLED":
             self.state.install_state = "FINISHED"
             self.state.save()
             self._run_install_finished_commands()
 
     def get_install_progress(self):
-        tr = self._run_system_command("tail -1 /tmp/recore-flash-progress")
+        tr = self._system_command_text("tail -1 /tmp/recore-flash-progress")
         self.state.install_progress = self._parse_float(tr)
         self.state.save('install_progress')
 
@@ -309,7 +304,7 @@ class Reflash:
         return ret
 
     def cancel_installation(self):
-        self._run_system_command(self.sudo+" pkill -f xz -9")
+        self._system_command_text(self.sudo+" pkill -f xz -9")
         self.state.install_state = "CANCELLED"
         self.state.save()
         return True
@@ -326,10 +321,12 @@ class Reflash:
 
     def _ex_backup_refactor(self, filename):
         cmd = " ".join([self.sudo, "/usr/local/bin/backup-emmc", filename])
-        self._run_system_command(cmd)
+        result = self._system_command_status(cmd)
         if self.state.backup_state != "CANCELLED":
             self.state.backup_state = "FINISHED"
-            self.state.save()
+        if result.status != 0:
+            self.state.backup_state == "ERROR"            
+        self.state.save('backup_state')
 
     def _parse_float(self, val):
         try:
@@ -339,7 +336,7 @@ class Reflash:
         return val
 
     def get_backup_progress(self):
-        tr = self._run_system_command("tail -1 /tmp/recore-flash-progress")
+        tr = self._system_command_text("tail -1 /tmp/recore-flash-progress")
         self.state.backup_progress = self._parse_float(tr)
         self.state.save('backup_progress')
 
@@ -355,10 +352,9 @@ class Reflash:
         return ret
 
     def cancel_backup(self):
-        self._run_system_command(self.sudo+" pkill -f backup-emmc -9")
+        self._system_command_text(self.sudo+" pkill -f backup-emmc -9")
         self.state.backup_state = "CANCELLED"
-        self.state.save()
-        return True
+        return self.state.save()
 
     def save_options(self, options):
         if 'darkmode' in options:
@@ -369,9 +365,8 @@ class Reflash:
             self.state.settings_enable_ssh = options['enableSsh']
         if 'screenRotation' in options:
             self.state.settings_screen_rotation = options['screenRotation']
-            self.rotate_screen(options['screenRotation'], "FBCON")
-        self.state.save()
-        return True
+        res = self.state.save()
+        return {"status": res}
 
     def get_options(self):
         options = {
@@ -379,6 +374,7 @@ class Reflash:
             'rebootWhenDone': self.state.settings_reboot_when_done,
             'enableSsh': self.state.settings_enable_ssh,
             'screenRotation': self.state.settings_screen_rotation,
+            'bootFromEmmc': self.get_boot_media() == "emmc"
         }
         return options
 
@@ -390,45 +386,58 @@ class Reflash:
         if(self.state.settings_enable_ssh):
             self.set_ssh_enabled("true")
 
-    def _run_system_command(self, command):
+    def _system_command_text(self, command):
         return subprocess.run(command.split(),
                               capture_output=True,
                               text=True).stdout.strip()
 
+    def _system_command_status(self, command):
+        res = subprocess.run(command.split(), capture_output=True, text=True)
+        return {
+            "status": res.returncode,
+            "result": res.stdout
+        }
+
     def set_ssh_enabled(self, is_enabled):
-        return self._run_system_command(f"{self.sudo} /usr/local/bin/set-ssh-enabled {self.platform} {'true' if is_enabled else 'false'} ")
+        return self._system_command_status(f"{self.sudo} /usr/local/bin/set-ssh-enabled {self.platform} {'true' if is_enabled else 'false'} ")
 
     def rotate_screen(self, rotation, place):
-        return self._run_system_command(f"{self.sudo} /usr/local/bin/rotate-screen {rotation} {place}")
+        return self._system_command_status(f"{self.sudo} /usr/local/bin/rotate-screen {rotation} {place}")
 
     def set_boot_media(self, media):
-        return self._run_system_command(f"{self.sudo} /usr/local/bin/set-boot-media {media}")
+        if media not in ["emmc", "usb"]:
+            return {"status": 1, "result": f"Unknown media '{media}'"}
+        return self._system_command_status(f"{self.sudo} /usr/local/bin/set-boot-media {media}")
 
     def get_boot_media(self):
-        return self._run_system_command(f"{self.sudo} /usr/local/bin/get-boot-media")
+        return self._system_command_text(f"{self.sudo} /usr/local/bin/get-boot-media")
 
-    def log(self, msg):
-        self._run_system_command(f"systemd-cat -t reflash -p info echo {msg}")
+    def clear_log(self):
+        stat = os.system("echo '-- Log start --' > /var/log/reflash.log")
+        return {"status": stat}
+
+    def _log(self, msg):
+        os.system(f"echo '[info] {msg}' >> /var/log/reflash.log")
 
     def get_log(self):
-        return self._run_system_command("journalctl -t reflash --output cat -a -n 100")
+        return self._system_command_text("cat /var/log/reflash.log")
 
     def start_log_worker(self):
         self.executor.submit(self._ex_log_worker)
 
     def _ex_log_worker(self):
-        cmd = ['journalctl', '-f', '-t','reflash', '--output', 'cat', '-a', '-n', '0']
+        cmd = ['tail', '-f', '-n','0', '/var/log/reflash.log']
         p = subprocess.Popen(cmd,  stdout=subprocess.PIPE)
         while True: 
             line = p.stdout.readline().strip().decode("utf-8") 
-            self.add_log(line)
+            self._add_log(line)
 
     def log_listen(self):
         q = queue.Queue(maxsize=100)
         self.listeners.append(q)
         return q
 
-    def add_log(self, msg):
+    def _add_log(self, msg):
         for i in reversed(range(len(self.listeners))):
             try:
                 self.listeners[i].put_nowait(f'data: {msg}\n\n')
@@ -437,7 +446,16 @@ class Reflash:
                 del self.listeners[i]
 
     def reboot(self):
-        return self._run_system_command(self.sudo+" /usr/local/bin/reboot-board")
+        return self._system_command_text(self.sudo+" /usr/local/bin/reboot-board")
 
     def shutdown(self):
-        return self._run_system_command(self.sudo+" /usr/local/bin/shutdown-board")
+        return self._system_command_text(self.sudo+" /usr/local/bin/shutdown-board")
+
+    def get_version(self):
+        return self._system_command_text(f"cat {self.reflash_version_file}")
+
+    def get_emmc_version(self):
+        return self._system_command_text(f"{self.sudo} /usr/local/bin/get-emmc-version")
+
+    def get_recore_revision(self):
+        return self._system_command_text(f"{self.sudo} /usr/local/bin/get-recore-revision")

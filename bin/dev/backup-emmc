@@ -2,12 +2,13 @@
 set -o pipefail
 
 handle_error() {
-    echo "Error $1 occurred on line $2" | tee >(systemd-cat -t reflash -p err)
+    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
     exit $1
 }
 
 info() {
-    echo "$1" | tee >(systemd-cat -t reflash -p info)
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
 }
 
 trap 'handle_error $? $LINENO' ERR
