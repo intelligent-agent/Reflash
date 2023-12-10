@@ -40,7 +40,7 @@ jobs:
       run: |
         make tests
 
-    - name: install and build
+    - name: install and build usb version
       working-directory: ./client
       run: |
         npm ci
@@ -52,40 +52,8 @@ jobs:
         echo ${VERSION} > zip/reflash/reflash.version
         make tar
 
-    - name: Release if tagged
-      uses: ncipollo/release-action@v1
-      if: startsWith(github.ref, 'refs/tags/')
-      with:
-        allowUpdates: true
-        artifacts: reflash.tar.gz
-        token: ${{ secrets.GITHUB_TOKEN }}
-        prerelease: true
-
-  package-board:
-    runs-on: self-hosted
-    steps:
-    - name: Make filename
-      run: echo "VERSION=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
-
-    - name: Use tag if tagged
-      if: startsWith(github.ref, 'refs/tags/')
-      run: echo "VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
-
-    - uses: actions/checkout@v3
-      with:
-        path: 'Reflash'
-    - name: Use Node.js '18'
-      uses: actions/setup-node@v3
-      with:
-        node-version: 18
-
-    - name: Run tests
-      working-directory: ./Reflash
-      run: |
-        make tests
-
-    - name: install and build board
-      working-directory: ./Reflash/board
+    - name: install and build emmc version
+      working-directory: ./board
       run: |
         npm ci
         npm run build
@@ -95,71 +63,12 @@ jobs:
         make package-board
         echo ${VERSION} > zip/reflash/reflash.version
         make tar-board
-        cp reflash-board.tar.gz ../
-      working-directory: ./Reflash
+
     - name: Release if tagged
       uses: ncipollo/release-action@v1
       if: startsWith(github.ref, 'refs/tags/')
       with:
         allowUpdates: true
-        artifacts: reflash-board.tar.gz
+        artifacts: "reflash.tar.gz,reflash-board.tar.gz"
         token: ${{ secrets.GITHUB_TOKEN }}
         prerelease: true
-
-  # build:
-  #   needs: package
-  #   runs-on: self-hosted
-  #   steps:
-  #   - uses: actions/checkout@v3
-  #     with:
-  #       repository: 'armbian/build'
-  #       path: 'build'
-  #       ref: 'v23.05.2'
-  #       clean: false
-  #   - uses: actions/checkout@v3
-  #     with:
-  #       path: 'Reflash'
-
-  #   - name: 'Copy files'
-  #     run: |
-  #       mkdir -p build/userpatches/overlay
-  #       mkdir -p build/userpatches/kernel/archive/sunxi-5.15
-  #       mkdir -p build/userpatches/u-boot/u-boot-sunxi
-  #       cp reflash.tar.gz build/userpatches/overlay
-  #       cp Reflash/armbian/customize-image.sh build/userpatches
-  #       cp Reflash/armbian/0001-Add-support-for-Recore-dtbs.patch build/userpatches/kernel/archive/sunxi-5.15
-  #       cp Reflash/armbian/0002-Add-support-for-Recore.patch build/userpatches/u-boot/u-boot-sunxi
-  #       cp Reflash/armbian/config-reflash.conf build/userpatches/
-  #       cp Reflash/armbian/recore.csc build/config/boards/
-  #       cp Reflash/armbian/autohotspot build/userpatches/overlay
-  #       cp Reflash/armbian/autohotspot.service build/userpatches/overlay
-  #       cp Reflash/armbian/watermark.png build/packages/plymouth-theme-armbian
-
-  #   - name: Run build
-  #     working-directory: ./build
-  #     run: DOCKER_EXTRA_ARGS="--cpus=12" ./compile.sh reflash
-
-  #   - name: Make filename
-  #     run: echo "VERSION=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
-
-  #   - name: Use tag if tagged
-  #     if: startsWith(github.ref, 'refs/tags/')
-  #     run: echo "VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
-
-  #   - name: Delete all old images
-  #     run: rm -f *.img.xz
-
-  #   - name: Get filename of build
-  #     run: echo "IMG=`ls -1 build/output/images/ | grep "img.xz$"`" >> $GITHUB_ENV
-
-  #   - name: Move and rename file
-  #     run: cp build/output/images/${IMG} ./Reflash-${VERSION}.img.xz
-
-  #   - name: Release if tagged
-  #     uses: ncipollo/release-action@v1
-  #     if: startsWith(github.ref, 'refs/tags/')
-  #     with:
-  #       allowUpdates: true
-  #       artifacts: Reflash-v*.img.xz
-  #       token: ${{ secrets.GITHUB_TOKEN }}
-  #       prerelease: true
