@@ -65,12 +65,4 @@ case $STATE in
         ;;
 esac
 
-if [ $PLATFORM == "prod" ]
-then
-    mount_emmc
-    /usr/bin/systemctl $STATE ssh --root=/mnt/emmc    
-else
-    echo $STATE > .tmp/is-ssh-enabled
-fi
-
 info "ssh access is ${STATE_MSG} for emmc"

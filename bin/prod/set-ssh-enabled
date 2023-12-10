@@ -19,18 +19,8 @@ usage() {
 mount_emmc() {
     EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
     mkdir -p /mnt/emmc
-    umont -q /mnt/emmc || true
+    umount -q /mnt/emmc || true
     mount "/dev/${EMMC}p2" /mnt/emmc
-}
-
-set_ssh_state() {
-    if [ $MEDIA == "emmc" ]
-    then
-        mount_emmc
-        umount /mnt/emmc
-    else
-        /usr/bin/systemctl $STATE ssh
-    fi
 }
 
 trap 'handle_error $? $LINENO' ERR
@@ -59,9 +49,11 @@ STATE=$1
 case $STATE in
     true)
         STATE_MSG="enabled"
+        STATE_VERB="enable"
         ;;
     false)
         STATE_MSG="disabled"
+        STATE_VERB="disable"
         ;;
     *)
         usage
@@ -69,12 +61,17 @@ case $STATE in
         ;;
 esac
 
-if [ $PLATFORM == "prod" ]
-then
-    mount_emmc
-    /usr/bin/systemctl $STATE ssh --root=/mnt/emmc    
+if df / | grep -q mmcblk ; then
+    /usr/bin/systemctl $STATE_VERB ssh
+    if [ $STATE_VERB == "enable" ]; then
+        /usr/bin/systemctl start ssh
+    else
+        /usr/bin/systemctl stop ssh
+    fi
 else
-    echo $STATE > .tmp/is-ssh-enabled
+    mount_emmc
+    /usr/bin/systemctl $STATE_VERB ssh --root=/mnt/emmc
+    umount /mnt/emmc
 fi
 
 info "ssh access is ${STATE_MSG} for emmc"

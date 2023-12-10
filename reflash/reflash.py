@@ -457,5 +457,11 @@ class Reflash:
     def get_emmc_version(self):
         return self._system_command_text(f"{self.sudo} /usr/local/bin/get-emmc-version")
 
+    def get_usb_version(self):
+        return self._system_command_text(f"{self.sudo} /usr/local/bin/get-usb-version")
+
     def get_recore_revision(self):
         return self._system_command_text(f"{self.sudo} /usr/local/bin/get-recore-revision")
+
+    def is_usb_present(self):
+        return True if self._system_command_text(f"{self.sudo} /usr/local/bin/is-usb-present") == "true" else False

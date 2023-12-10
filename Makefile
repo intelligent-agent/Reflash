@@ -12,6 +12,7 @@ install_bins:
 	chmod +x /usr/local/bin/get-recore-revision
 	chmod +x /usr/local/bin/rotate-screen
 	chmod +x /usr/local/bin/create-recore-config
+	chmod +x /usr/local/bin/is-usb-present
 
 dev-server:
 	FLASK_RUN_PORT=8081 \
@@ -80,9 +81,10 @@ package-board:
 	cp -r board/dist zip/reflash/server
 	cp bin/prod/* zip/reflash/bin
 	cp -r systemd zip/reflash
-	cp -r scripts zip/reflash
+	mkdir zip/reflash/scripts
+	cp scripts/install_reflash_board.sh zip/reflash/scripts
 	echo "v0.2.0" > zip/reflash/reflash.version
-	
+
 upload-tar:
 	scp reflash.tar.gz root@recore.local:/usr/src/
 

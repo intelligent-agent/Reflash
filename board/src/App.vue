@@ -30,15 +30,15 @@
           </div>
         </div>
         <div class="xs5 pa4">
-          <TheInfo :open="openInfo" :version="reflash_version" :revision="recore_revision"/>
+          <TheInfo :open="openInfo" :version="reflash_version" :revision="recore_revision" :emmc_version="emmc_version"/>
         </div>
         <div class="xs5">Boot media</div>
-        <div class="xs2 pa1 align-self-center">USB drive</div>
+        <div class="xs2 pa1 align-self-center">USB drive ({{ this.USBpresent }})</div>
         <div class="xs1 pa1 align-self-center"></div>
         <div class="xs2 pa1 align-self-center">eMMC</div>
 
         <div class="xs2 pa1 align-self-center">
-          <img style="width: 30%" :src="computeSVG('USB')" />
+          <img style="width: 30%" :src="computeSVG('USB-'+this.USBpresent)" />
         </div>
         <div class="xs1 pa1 align-self-center">
           <div>{{ bootMedia }}</div>
@@ -53,7 +53,7 @@
             xl
             outline
             @click="changeBootMedia('usb')"
-            :disabled="isBootFromUSBEnabled()"
+            :disabled="isBootFromUSBDisabled()"
           >
             <span>Boot from USB</span>
           </w-button>
@@ -64,7 +64,7 @@
             xl
             outline
             @click="changeBootMedia('emmc')"
-            :disabled="isBootFromEMMCEnabled()"
+            :disabled="isBootFromEMMCDisabled()"
           >
             <span>Boot from eMMC</span>
           </w-button>
@@ -154,6 +154,7 @@ export default {
     emmc_version: "Unknown",
     theLog: "",
     bootMedia: "unknown",
+    USBpresent: "missing",
     radioItems: [
       { label: "Normal", value: 0 },
       { label: "90 degrees", value: 90 },
@@ -192,8 +193,11 @@ export default {
     returnToApp() {
       window.location.href = "http://" + window.location.hostname + ":80";
     },
-    enableSsh(ssh_is_enabled) {
-      axios.put(`/api/set_ssh_enabled`, { is_enabled: ssh_is_enabled, media: "emmc"});
+    async enableSsh(ssh_is_enabled) {
+      const result = await axios.put(`/api/set_ssh_enabled`, { is_enabled: ssh_is_enabled, media: "emmc"});
+      if(result.data.status != 0){
+        this.$waveui.notify("Error setting ssh state.", "error", 0);
+      }
     },
     rotateScreen(rot) {
       axios.put(`/api/rotate_screen`, { rotation: rot, where: "FBCON" });
@@ -206,11 +210,14 @@ export default {
         })
       });
     },
-    isBootFromUSBEnabled() {
-      return this.bootMedia == "usb";
+    isBootFromUSBDisabled() {
+      return !(this.bootMedia == "emmc" && this.USBpresent == "present");
     },
-    isBootFromEMMCEnabled() {
-      return this.bootMedia == "emmc";
+    isBootFromEMMCDisabled() {
+      return !(this.bootMedia == "usb");
+    },
+    isUSBpresent() {
+      return this.USBpresent;
     },
     isServerUp() {
       fetch(`/favicon.ico`).then((response) => {
@@ -239,6 +246,8 @@ export default {
     axios.get(`/api/get_info`, ).then(function(response){
       self.recore_revision = response.data.recore_revision;
       self.reflash_version = response.data.reflash_version;
+      self.emmc_version = response.data.emmc_version;
+      self.USBpresent = response.data.usb_present ? "present" : "missing";
     });
   }
 };

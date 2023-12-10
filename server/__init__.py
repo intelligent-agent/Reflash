@@ -125,6 +125,7 @@ def get_info():
         "reflash_version": reflash.get_version(),
         "emmc_version": reflash.get_emmc_version(),
         "recore_revision": reflash.get_recore_revision(),
+        "usb_present": reflash.is_usb_present()
     }
 
 @app.route('/api/get_download_progress')
