@@ -42,6 +42,7 @@ server {
         proxy_set_header Connection "";
         chunked_transfer_encoding off;
         proxy_buffering off;
+        proxy_read_timeout 24h;
     }
 }
 EOF
