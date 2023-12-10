@@ -401,8 +401,14 @@ class Reflash:
     def set_ssh_enabled(self, is_enabled):
         return self._system_command_status(f"{self.sudo} /usr/local/bin/set-ssh-enabled {self.platform} {'true' if is_enabled else 'false'} ")
 
-    def rotate_screen(self, rotation, place):
-        return self._system_command_status(f"{self.sudo} /usr/local/bin/rotate-screen {rotation} {place}")
+    def rotate_screen(self, rotation, place, restart_app):
+        if rotation not in [0, 90, 180, 270]:
+            return {"status": 1, "result": f"Unknown rotation '{rotation}'"}
+        if place not in ["FBCON", "CMDLINE", "XORG", "WESTON"]:
+            return {"status": 1, "result": f"Unknown app '{place}'"}
+        if restart_app not in ["TRUE", "FALSE"]:
+            return {"status": 1, "result": f"Unknown restart command '{restart_app}'"}
+        return self._system_command_status(f"{self.sudo} /usr/local/bin/rotate-screen {rotation} {place} {restart_app}")
 
     def set_boot_media(self, media):
         if media not in ["emmc", "usb"]:
@@ -465,3 +471,6 @@ class Reflash:
 
     def is_usb_present(self):
         return True if self._system_command_text(f"{self.sudo} /usr/local/bin/is-usb-present") == "true" else False
+
+    def is_ssh_enabled(self):
+        return True if self._system_command_text(f"{self.sudo} /usr/local/bin/is-ssh-enabled") == "true" else False

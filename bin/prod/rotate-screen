@@ -9,6 +9,9 @@ ROTATIONS=(0 90 180 270)
 # Valid places to update
 PLACES=(FBCON XORG CMDLINE WESTON)
 
+# Restart relevant app
+RESTART_APP=(TRUE FALSE)
+
 EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 
 info() {
@@ -17,9 +20,10 @@ info() {
 }
 
 usage(){
-    echo "Usage: $0 <rotation> <place>"
+    echo "Usage: $0 <rotation> <place> <restart>"
     echo "Valid  rotations: '${ROTATIONS[@]}'"
     echo "Valid  places: '${PLACES[@]}'"
+    echo "Restart app: '${RESTART_APP[@]}'"
 }
 
 update_xorg(){
@@ -30,7 +34,7 @@ update_xorg(){
     XORG_DIR="/mnt/emmc/usr/share/X11/xorg.conf.d"
     if [ ! -d ${XORG_DIR} ]; then
         echo "Misssig directory: ${XORG_DIR}"
-        exit 1
+        exit 0
     fi
 
     cat <<EOF > "${XORG_DIR}/90-monitor.conf"
@@ -40,6 +44,10 @@ update_xorg(){
     EndSection
 EOF
     umount /mnt/emmc
+
+    if [ $RESTART_APP == "TRUE" ]; then
+        systemctl restart KlipperScreen
+    fi
 }
 
 update_weston(){
@@ -59,9 +67,14 @@ update_weston(){
             ;;
         *)
             echo "Unknown debian release: '${RELEASE}'"
-            exit 1
+            exit 0
             ;;
     esac
+
+    if [ $RESTART_APP == "TRUE" ]; then
+        systemctl restart KlipperScreen
+    fi
+
 }
 
 update_cmdline(){
@@ -78,6 +91,14 @@ update_cmdline(){
     umount /mnt/emmc
 }
 
+update_fbcon() {
+    echo $ROT_FBCON > /sys/devices/virtual/graphics/fbcon/rotate
+
+    if [ $RESTART_APP == "TRUE" ]; then
+        systemctl restart reflash-curses
+    fi
+}
+
 if [ "x$ROTATION" == "x" ]; then
     usage 
     exit 1
@@ -87,6 +108,21 @@ if [ "x$PLACE" == "x" ]; then
     usage
     exit 1
 fi
+
+if [ "x$RESTART_APP" == "x" ]; then
+    usage
+    exit 1
+fi
+
+case "${RESTART_APP}" in 
+    TRUE | FALSE)        
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac
+
 
 case "${ROTATION}" in 
     0)
@@ -127,7 +163,7 @@ info "Setting rotation to ${ROTATION} for place ${PLACE}"
 
 case "${PLACE}" in 
     FBCON)
-        echo $ROT_FBCON > /sys/devices/virtual/graphics/fbcon/rotate
+        update_fbcon
         ;;
     XORG)
         update_xorg

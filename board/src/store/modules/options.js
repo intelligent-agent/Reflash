@@ -21,18 +21,6 @@ const actions = {
   },
   setBootMedia({ commit }, payload){
     commit('setBootMedia', payload);
-  },
-  setProgress({ commit }, payload){
-    commit('setProgress', payload);
-  },
-  setTimeStarted({ commit }, payload){
-    commit('setTimeStarted', payload);
-  },
-  setTimeFinished({ commit }, payload){
-    commit('setTimeFinished', payload);
-  },
-  setFlashMethod({commit}, payload){
-    commit('setFlashMethod', payload);
   }
 };
 const mutations = {

@@ -15,6 +15,8 @@ cp systemd/reflash-curses.service /etc/systemd/system
 cp curses/client.py /usr/local/bin/reflash-curses.py
 chmod +x /usr/local/bin/reflash-curses.py
 
+touch /var/log/reflash.log
+
 FILES="./bin/*"
 for f in $FILES
 do
@@ -36,6 +38,11 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header X-Forwarded-Host \$host;
         proxy_set_header X-Forwarded-Prefix /;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        chunked_transfer_encoding off;
+        proxy_buffering off;
+        proxy_read_timeout 24h;
     }
 }
 EOF

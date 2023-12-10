@@ -125,7 +125,8 @@ def get_info():
         "reflash_version": reflash.get_version(),
         "emmc_version": reflash.get_emmc_version(),
         "recore_revision": reflash.get_recore_revision(),
-        "usb_present": reflash.is_usb_present()
+        "usb_present": reflash.is_usb_present(),
+        "is_ssh_enabled": reflash.is_ssh_enabled(),
     }
 
 @app.route('/api/get_download_progress')
@@ -148,7 +149,9 @@ def set_ssh_enabled():
 @app.route('/api/rotate_screen', methods = ['PUT'])
 def rotate_screen():
     rotation = flask.request.json.get("rotation")
-    return reflash.rotate_screen(rotation, "FBCON")
+    where = flask.request.json.get("where")
+    restart_app = flask.request.json.get("restart_app")    
+    return reflash.rotate_screen(rotation, where, "TRUE" if restart_app else "FALSE")
 
 @app.route('/api/set_boot_media', methods = ['PUT'])
 def set_boot_media():

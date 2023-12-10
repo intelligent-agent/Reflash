@@ -76,8 +76,8 @@
         <div class="xs5">
           Disabled
           <w-switch
-            @change="enableSsh(options.enableSsh)"
-            v-model="options.enableSsh"
+            @change="enableSsh(SSHenabled)"
+            v-model="SSHenabled"
             class="mx6"
           >
           </w-switch>
@@ -155,6 +155,7 @@ export default {
     theLog: "",
     bootMedia: "unknown",
     USBpresent: "missing",
+    SSHenabled: false,
     radioItems: [
       { label: "Normal", value: 0 },
       { label: "90 degrees", value: 90 },
@@ -200,7 +201,9 @@ export default {
       }
     },
     rotateScreen(rot) {
-      axios.put(`/api/rotate_screen`, { rotation: rot, where: "FBCON" });
+      axios.put(`/api/rotate_screen`, { rotation: rot, where: "CMDLINE", restart_app: false });
+      axios.put(`/api/rotate_screen`, { rotation: rot, where: "XORG", restart_app: true });
+      axios.put(`/api/rotate_screen`, { rotation: rot, where: "WESTON", restart_app: true });
     },
     async changeBootMedia(value) {
       var self = this;
@@ -248,6 +251,7 @@ export default {
       self.reflash_version = response.data.reflash_version;
       self.emmc_version = response.data.emmc_version;
       self.USBpresent = response.data.usb_present ? "present" : "missing";
+      self.SSHenabled = response.data.is_ssh_enabled;
     });
   }
 };

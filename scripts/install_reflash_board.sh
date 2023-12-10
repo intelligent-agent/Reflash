@@ -9,13 +9,13 @@ mkdir -p /opt/reflash/images
 mkdir -p /opt/reflash/curses
 chown -R www-data:www-data /opt/reflash
 
-touch /var/log/reflash.log
-
 mkdir -p /var/www/html
 cp -r $SROOT/server /var/www/html/
 cp -r $SROOT/reflash /usr/local/lib/python3.9/dist-packages/
 cp $SROOT/reflash.version /etc
 cp $SROOT/systemd/reflash.service /etc/systemd/system
+
+touch /var/log/reflash.log
 
 FILES="$SROOT/bin/*"
 for f in $FILES

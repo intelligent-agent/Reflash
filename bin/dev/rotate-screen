@@ -9,6 +9,9 @@ ROTATIONS=(0 90 180 270)
 # Valid places to update
 PLACES=(FBCON XORG CMDLINE WESTON)
 
+# Restart relevant app
+RESTART_APP=(TRUE FALSE)
+
 info() {
     echo "[info] $1" >> /var/log/reflash.log
     echo "$1"
@@ -72,8 +75,6 @@ if [ "x$PLACE" == "x" ]; then
     exit 1
 fi
 
-info "Setting rotation to ${ROTATION} for place ${PLACE}"
-
 case "${ROTATION}" in 
     0)
         ROT_XORG="normal"
@@ -112,19 +113,19 @@ esac
 case "${PLACE}" in 
     FBCON)
         echo "rotation = ${ROT_XORG}" > /opt/reflash/fbcon
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" tee -a /var/log/reflash.log
+        info "Setting rotation to ${ROTATION} for place ${PLACE}"
         ;;
     XORG)
         echo "rotation = ${ROT_XORG}" > /opt/reflash/xorg
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" tee -a /var/log/reflash.log
+        info "Setting rotation to ${ROTATION} for place ${PLACE}"
         ;;
     CMDLINE)
         echo "rotation = ${ROT_FBCON}" > /opt/reflash/cmdline
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" tee -a /var/log/reflash.log
+        info "Setting rotation to ${ROTATION} for place ${PLACE}"
         ;;
      WESTON)
-        echo "rotation = ${ROT_FBCON}" > /opt/reflash/cmdline
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" tee -a /var/log/reflash.log
+        echo "rotation = ${ROT_WESTON_10}" > /opt/reflash/cmdline
+        info "Setting rotation to ${ROTATION} for place ${PLACE}"
         ;;
     *)
         echo "$PLACE not in '${PLACES[@]}'"

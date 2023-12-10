@@ -13,6 +13,7 @@ install_bins:
 	chmod +x /usr/local/bin/rotate-screen
 	chmod +x /usr/local/bin/create-recore-config
 	chmod +x /usr/local/bin/is-usb-present
+	chmod +x /usr/local/bin/is-ssh-enabled
 
 dev-server:
 	FLASK_RUN_PORT=8081 \
@@ -56,6 +57,7 @@ tar: package
 	rm -rf zip
 
 package:
+	rm -rf zip
 	mkdir -p zip/reflash/bin
 	mkdir -p zip/reflash/reflash
 	cp reflash/*.py zip/reflash/reflash
@@ -73,6 +75,7 @@ tar-board: package-board
 	rm -rf zip
 
 package-board:
+	rm -rf zip
 	mkdir -p zip/reflash/bin
 	mkdir -p zip/reflash/reflash
 	cp reflash/*.py zip/reflash/reflash
