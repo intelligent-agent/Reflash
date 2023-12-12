@@ -37,7 +37,7 @@ def r():
 
 @pytest.fixture()
 def p():
-    progress = {'filename': 'hamburger.img.xz', 'progress': 0.0, 'start_time': 666, 'state': 'DOWNLOADING'}
+    progress = {'filename': 'hamburger.img.xz', 'progress': 0.0, 'start_time': 666, 'state': 'DOWNLOADING', 'bytes_now': 0, 'bytes_total': 5}
     yield(progress)
 
 class TestReflash:
@@ -76,7 +76,7 @@ class TestReflash:
         assert r.get_state() == "UPLOADING"
         assert r.upload_chunk(bytes("hamburger", 'utf-8')) == True
         assert r.upload_finish() == True
-        assert r.get_state() == "IDLE"
+        assert r.get_state() == "FINISHED"
         assert r.get_local_releases() == [{'id': 0, 'name': 'pizza', 'size': len("hamburger")}]
 
     def test_download_refactor_ok(self, r, p):
@@ -91,6 +91,7 @@ class TestReflash:
             time.sleep(0.1)
             p['state'] = 'FINISHED'
             p['progress'] = 100.0
+            p['bytes_now'] = 5
             assert r.get_download_progress() == p
             p['state'] = 'IDLE'
             assert r.get_download_progress() == p

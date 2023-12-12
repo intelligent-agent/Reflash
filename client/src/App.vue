@@ -487,7 +487,7 @@ export default {
     async checkBackupProgress(){
       const response = await axios.get(`/api/get_backup_progress`);
       let data = response.data
-      if(data.state == "INSTALLING"){
+      if(data.state == "BACKUPING"){
         this.isInstalling = true;
         this.setVisible({name: 'install', visible: true});
         this.setTimeStarted({name: 'install', time: data.start_time}); 

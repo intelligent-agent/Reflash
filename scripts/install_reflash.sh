@@ -1,5 +1,8 @@
 #/bin/bash
-set -e
+set -e -x
+
+SCRIPT=$(realpath "$0")
+SROOT=$(dirname "$SCRIPT")/..
 
 mkdir -p /opt/reflash/settings
 mkdir -p /opt/reflash/images
@@ -7,17 +10,17 @@ mkdir -p /opt/reflash/curses
 chown -R www-data:www-data /opt/reflash
 
 mkdir -p /var/www/html
-cp -r server /var/www/html/
-cp -r reflash /usr/local/lib/python3.9/dist-packages/
-cp reflash.version /etc
-cp systemd/reflash.service /etc/systemd/system
-cp systemd/reflash-curses.service /etc/systemd/system
-cp curses/client.py /usr/local/bin/reflash-curses.py
+cp -r $SROOT/server /var/www/html/
+cp -r $SROOT/reflash /usr/local/lib/python3.9/dist-packages/
+cp $SROOT/reflash.version /etc
+cp $SROOT/systemd/reflash.service /etc/systemd/system
+cp $SROOT/systemd/reflash-curses.service /etc/systemd/system
+cp $SROOT/curses/client.py /usr/local/bin/reflash-curses.py
 chmod +x /usr/local/bin/reflash-curses.py
 
 touch /var/log/reflash.log
 
-FILES="./bin/*"
+FILES="$SROOT/bin/*"
 for f in $FILES
 do
   cp $f /usr/local/bin

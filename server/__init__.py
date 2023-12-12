@@ -3,6 +3,7 @@
 import os
 import flask
 import reflash as ref
+import signal
 
 
 app = flask.Flask(__name__,
@@ -31,9 +32,20 @@ else:
         "platform": "prod",
     }
 
-with app.app_context():
-    reflash = ref.Reflash(settings)
+reflash = ref.Reflash(settings)
+
+if not (app.debug or os.environ.get('FLASK_ENV') == 'development') or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
     reflash.start_log_worker()
+    original_handler = signal.getsignal(signal.SIGINT)
+
+    def sigint_handler(signum, frame):
+        reflash.stop_log_worker()
+        original_handler(signum, frame)
+
+    try:
+        signal.signal(signal.SIGINT, sigint_handler)
+    except ValueError as e:
+        print(f'{e}. Continuing execution...')
 
 @app.route('/api/upload_start',methods = ['PUT'])
 def upload_start():
@@ -127,6 +139,7 @@ def get_info():
         "recore_revision": reflash.get_recore_revision(),
         "usb_present": reflash.is_usb_present(),
         "is_ssh_enabled": reflash.is_ssh_enabled(),
+        "bytes_available": reflash.get_available_bytes(),
     }
 
 @app.route('/api/get_download_progress')
@@ -205,8 +218,7 @@ def main():
 
 @app.teardown_appcontext
 def close_connection(exception):
+    print("teardown app context")
     db = getattr(flask.g, '_database', None)
     if db is not None:
         db.close()
-
-

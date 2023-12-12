@@ -70,10 +70,13 @@ export default {
       this.setOption(data);
       this.$emit("set-option", name, value);
       if (name == "rotateScreen") {
-        const result = await axios.put(`/api/rotate_screen`, { rotation: value });
+        const result = await axios.put(`/api/rotate_screen`, { rotation: value, where: "FBCON", restart_app: true });
         if (result.data.status != 0) {
           this.$waveui.notify(result.data.result, "error", 0);
         }
+        axios.put(`/api/rotate_screen`, { rotation: value, where: "CMDLINE", restart_app: false });
+        axios.put(`/api/rotate_screen`, { rotation: value, where: "XORG", restart_app: false });
+        axios.put(`/api/rotate_screen`, { rotation: value, where: "WESTON", restart_app: false });
       }
       if (name == "enableSsh") {
         axios.put(`/api/set_ssh_enabled`, { is_enabled: value });

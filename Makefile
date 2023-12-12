@@ -20,7 +20,7 @@ dev-server:
 	FLASK_ENV=development \
 	FLASK_DEBUG=1 \
 	FLASK_APP=server/__init__.py \
-	flask run
+	flask run --with-threads
 
 dev-clean:
 	rm -rf .tmp
