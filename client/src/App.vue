@@ -49,6 +49,7 @@
         <div class="xs1 pa1 therow">Choose image to {{selectedMethod.id == 0 ? "Download" : "Upload"}}</div>
         <div class="xs1 pa1">
           <ProgressBar ref="transferprogressbar" name="transfer"/>
+          <span class="red">{{this.computeSizeCheckText()}}</span>
         </div>
         <div class="xs1 pa1">Choose image to install</div>
         <div class="xs1 pa1">
@@ -65,7 +66,8 @@
             return-object
             :items="githubImages"
             item-label-key="name"
-            placeholder="Please select one">
+            placeholder="Please select one"
+            :item-click="onDownloadFileChanged()">
           </w-select>
           <w-input
             v-if="selectedMethod.id == 1"
@@ -93,7 +95,7 @@
           <IntegrityChecker ref="integritychecker"/>
         </w-flex>
         <div class="xs1 align-self-center">
-          <w-button xl outline  @click="onInstallButtonClick()" v-if="isInstallButtonVisibile()">
+          <w-button xl outline @click="onInstallButtonClick()" v-if="isInstallButtonVisibile()">
             <span>
               {{this.installButtonText()}}
             </span>
@@ -159,9 +161,9 @@ export default {
     transferProgress: 0,
     isInstalling: false,
     installProgress: 0,
-    selectedGithubImage: null,
+    selectedGithubImage: undefined,
     selectedUploadImage: [],
-    selectedLocalImage: null,
+    selectedLocalImage: undefined,
     githubImages: [],
     localImages: [],
     uploadError: false,
@@ -179,7 +181,9 @@ export default {
     backupFile: "",
     reflash_version: "Unknown",
     emmc_version: "Unknown",
-    recore_revision: "Unknown"
+    recore_revision: "Unknown",
+    bytesAvailable: -1,
+    sizeWarning: ""
   }),
   computed: mapGetters(['options', 'progress', 'flash']),
   methods: {
@@ -231,7 +235,7 @@ export default {
         return this.selectedGithubImage;
       }
       else if(this.selectedMethod.id == 1){
-        return this.selectedUploadImage.length > 0;
+        return this.selectedUploadImage.file;
       }
       return "";
     },    
@@ -248,14 +252,28 @@ export default {
         }
       }
     },
+    onDownloadFileChanged(){
+      
+    },
+    computeSizeCheckText(){
+      if(this.selectedMethod.id == 0 && this.selectedGithubImage && this.bytesAvailable > 0 && this.bytesAvailable < this.selectedGithubImage.size){
+          return "Not enough free space on USB";
+      }
+      else if(this.selectedMethod.id == 1 && this.selectedUploadImage.file && this.bytesAvailable > 0 && this.bytesAvailable < this.selectedUploadImage.size){
+        return "Not enough free space on USB"
+      }
+      else{
+        return ""
+      }
+    },
     onSelectedFileChanged(){
-      if(this.$refs.integritychecker){
+      if(this.$refs.integritychecker && this.selectedLocalImage != []){
         this.$refs.integritychecker.fileSelected(this.selectedLocalImage);
       }
     },
     onFileInput(files){
       this.files = files
-      this.file = files[0].file;
+      this.file = files.file;
     },
     async uploadFinish(){
       await axios.put(`/api/upload_finish`
@@ -392,7 +410,7 @@ export default {
         this.isTransferring = false;
         this.setVisible({name: 'transfer', visible: false});
         if(data.state == "ERROR"){
-          console.log(data.error);
+          this.$waveui.notify(data.error, "error", 0);
         }
         else if(data.state == "FINISHED"){
           this.selectedGithubImage = null;
@@ -571,6 +589,7 @@ export default {
       this.reflash_version = response.data.reflash_version;
       this.emmc_version = response.data.emmc_version;
       this.recore_revision = response.data.recore_revision
+      this.bytesAvailable = response.data.bytes_available
     },
     async getGithubImages(){
       fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
@@ -618,8 +637,8 @@ body {
 }
 .w-select--no-padding .w-select__selection {
   text-align: center;
-  font-size:  16px;
   color: #444;
+  display: block;
 }
 
 .card {

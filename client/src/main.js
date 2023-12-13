@@ -10,9 +10,10 @@ import 'font-awesome/css/font-awesome.min.css'
 const app = createApp(App)
 app.use(store)
 
-new WaveUI(app, {
+app.use(WaveUI, {
   css: {
     grid: 5
-  }
+  } 
 })
+
 app.mount('#app')

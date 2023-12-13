@@ -384,8 +384,5 @@ class Reflash:
         return True if self._system_command_text(f"{self.sudo} /usr/local/bin/is-ssh-enabled") == "true" else False
 
     def get_available_bytes(self):
-        if self.settings.get("platform") == "dev":
-            return self._system_command_text(f"{self.sudo} df /dev/nvme0n1p2 --output=avail").split("\n")[1]
-        else:
-            return self._system_command_text(f"{self.sudo} df /dev/sda2 --output=avail").split("\n")[1]
+        return self._system_command_text(f"{self.sudo} /usr/local/bin/get-free-space")
         

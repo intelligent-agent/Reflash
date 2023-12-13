@@ -18,7 +18,7 @@ export default {
   methods: {
     async fileSelected(filename){
       let self = this;
-      if(filename){
+      if(filename && filename.length > 0){
         this.icon = "fa-spinner";
         this.visible = true;
         await axios.put(`/api/check_file_integrity`, {

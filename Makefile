@@ -14,6 +14,7 @@ install_bins:
 	chmod +x /usr/local/bin/create-recore-config
 	chmod +x /usr/local/bin/is-usb-present
 	chmod +x /usr/local/bin/is-ssh-enabled
+	chmod +x /usr/local/bin/get-free-space
 
 dev-server:
 	FLASK_RUN_PORT=8081 \
