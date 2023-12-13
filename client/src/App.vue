@@ -339,7 +339,7 @@ export default {
         this.isTransferring = false;
         this.setVisible({name: 'transfer', visible: false});
         if(data.state == "ERROR"){
-          console.log(data.error);
+          this.$waveui.notify(data.error, "error", 0);
         }
         else if(data.state == "FINISHED"){
           this.selectedUploadImage = [];
@@ -456,7 +456,7 @@ export default {
         this.isInstalling = false;
         this.setVisible({name: 'install', visible: false});
         if(data.state == "ERROR"){
-          console.log(data.error);
+          this.$waveui.notify(data.error, "error", 0);
         }
         else if(data.state == "FINISHED"){
           if(this.options.rebootWhenDone){
@@ -508,7 +508,7 @@ export default {
           this.getLocalImages();
         }
         if(data.state == "ERROR"){
-          console.log(data.error)
+          this.$waveui.notify(data.error, "error", 0);
         }
       }
     },

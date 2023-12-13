@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=/var/www/html
-ExecStart=/usr/bin/gunicorn server:app --worker-class gevent --workers=1
+ExecStart=/usr/bin/gunicorn server:app --worker-class gevent --workers=1 --timeout 10000
 
 [Install]
 WantedBy=multi-user.target

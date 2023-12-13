@@ -89,7 +89,7 @@ package-board:
 	echo "v0.2.0" > zip/reflash/reflash.version
 
 upload-tar:
-	scp reflash.tar.gz root@recore.local:/usr/src/
+	scp reflash.tar.gz debian@recore.local:/usr/src/
 
 upload-tar-board:
 	scp reflash-board.tar.gz debian@recore.local:/home/debian

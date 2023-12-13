@@ -2,9 +2,8 @@ import os.path
 import os
 import concurrent.futures
 import subprocess
-import sqlite3
-import threading
 import queue
+import copy
 from sqlitedict import SqliteDict
 
 class State(object):
@@ -24,7 +23,8 @@ class State(object):
             "progress": 0.0,
             "start_time": 0,
             "bytes_now": 0,
-            "bytes_total": 0
+            "bytes_total": 0, 
+            "error": "No error"
         }       
         self.db.commit()
 
@@ -35,13 +35,21 @@ class State(object):
             "start_time": start_time,
             "progress": 0,
             "bytes_now": 0,
-            "bytes_total": bytes_total
+            "bytes_total": bytes_total,
+            "error": "No error"
         }
         self.db.commit()
 
     def update(self, state):
         process = self.db["process"]
         process["state"] = state
+        self.db["process"] = process
+        self.db.commit()
+
+    def set_error(self, error_msg):
+        process = self.db["process"]
+        process["state"] = "ERROR"
+        process["error"] = error_msg
         self.db["process"] = process
         self.db.commit()
 
@@ -108,7 +116,7 @@ class Reflash:
                 if chunk:
                     f.write(chunk)
                     self.state.add_bytes(len(chunk))
-                    if self.state.db["process"]["state"] == "CANCELLED":
+                    if self.get_state() == "CANCELLED":
                         return
         self.state.update("FINISHED")
 
@@ -116,14 +124,14 @@ class Reflash:
         if self.get_state() != "DOWNLOADING":
             return False
         try:
-            os.remove(self.images_folder + "/" + self.state.download_filename)
+            os.remove(self.images_folder + "/" + self.state.db["process"]["filename"])
         except FileNotFoundError:
             pass
         self.state.update("CANCELLED")
         return True
     
     def get_download_progress(self):
-        state = self.state.db["process"]
+        state = copy.copy(self.state.db["process"])
         if self.get_state() == "FINISHED":
             self._log("Download finished")
             self.state.update("IDLE")
@@ -159,7 +167,8 @@ class Reflash:
         return True
 
     def get_upload_progress(self):
-        process = self.state.db["process"]
+        process = copy.copy(self.state.db["process"])
+        print(self.get_state())
         if self.get_state() == "FINISHED":
             self._log("Upload finished")
             self.state.update("IDLE")
@@ -172,7 +181,7 @@ class Reflash:
         infile = self.images_folder + "/" + filename+".img.xz"
         if not os.path.isfile(infile):
             self._log_error("Files does not exist")
-            self.state.update("ERROR")
+            self.state.set_error("File does not exist")
             return False
         self.state.set("INSTALLING", filename, start_time, 0)
         self.executor.submit(self._ex_install_refactor, infile)
@@ -182,7 +191,7 @@ class Reflash:
         cmd = " ".join([self.sudo, "/usr/local/bin/flash-recore", filename])
         result = self._system_command_code(cmd)
         if result != 0:
-            self.state.update("ERROR")
+            self.state.set_error("There was an error during install. Check the log for details.")
             return
         if self.get_state() == "INSTALLING":
             self.state.update("FINISHED")
@@ -191,7 +200,7 @@ class Reflash:
     def get_install_progress(self):
         tr = self._system_command_text("tail -1 /tmp/recore-flash-progress")
         self.state.set_progress(self._parse_float(tr))
-        state = self.state.db["process"]
+        state = copy.copy(self.state.db["process"])
         if self.get_state() in ["FINISHED", "ERROR", "CANCELLED"]:
             self.state.update("IDLE")
         return state
@@ -213,7 +222,7 @@ class Reflash:
         if self.get_state() != "CANCELLED":
             self.state.update("FINISHED")
         if result != 0:
-            self.state.update("ERROR")
+            self.state.set_error("There was an error during backup. Check the log for details.")
 
     def _parse_float(self, val):
         try:
@@ -225,7 +234,7 @@ class Reflash:
     def get_backup_progress(self):
         tr = self._system_command_text("tail -1 /tmp/recore-flash-progress")
         self.state.set_progress(self._parse_float(tr))
-        state = self.state.db["process"]
+        state = copy.copy(self.state.db["process"])
         if self.get_state() == "FINISHED":
             self.state.update("IDLE")
         return state
