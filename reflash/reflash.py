@@ -9,14 +9,9 @@ from sqlitedict import SqliteDict
 
 class State(object):
     def __init__(self, db_file):
-        print("db init")
         self.db = SqliteDict(db_file)
-
-    def load(self):
-        pass
     
     def create_default(self):
-        print("create db")
         self.db["settings"] = {
             "darkmode": True,
             "rebootWhenDone": False,
@@ -90,7 +85,6 @@ class Reflash:
         self.log_worker_active = False
 
     def teardown(self):
-        print("db close")
         self.state.db.close()
 
     def get_state(self):
@@ -328,17 +322,13 @@ class Reflash:
         return self._system_command_text("cat /var/log/reflash.log")
 
     def start_log_worker(self):
-        print("Start log worker")
         self.log_worker_active = True
         self.futures = self.executor.submit(self._ex_log_worker)
-        self._log("--- Starting log worker ---")
 
     def stop_log_worker(self):
-        print("stop log worker")
         self.log_worker_active = False
         self.executor.shutdown(wait=False)
         self.teardown()
-        print("stopped log worker")
 
     def _ex_log_worker(self):
         cmd = ['tail', '-f', '-n','0', '/var/log/reflash.log']
@@ -346,7 +336,6 @@ class Reflash:
         while self.log_worker_active:
             line = p.stdout.readline().strip().decode("utf-8") 
             self._add_log(line)
-        print("log worker done")
 
     def log_listen(self):
         q = queue.Queue(maxsize=100)

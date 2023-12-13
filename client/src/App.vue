@@ -40,11 +40,11 @@
         <div class="xs1 pa1 align-self-center"><FlashSelector ref="flashSelector"/></div>
         <div class="xs1 pa1 align-self-center">eMMC</div>
 
-        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG(selectedMethod.image)" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('Arrow-right')" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('USB')" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('Arrow-'+flashDirection())" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('eMMC')" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG(selectedMethod.image)" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('Arrow-right')" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('USB')" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('Arrow-'+flashDirection())" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('eMMC')" /></div>
 
         <div class="xs1 pa1 therow">Choose image to {{selectedMethod.id == 0 ? "Download" : "Upload"}}</div>
         <div class="xs1 pa1">

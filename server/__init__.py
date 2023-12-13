@@ -35,7 +35,6 @@ else:
 
 with app.app_context():
     reflash = ref.Reflash(settings)
-    print("get reflash")
 
 @app.teardown_appcontext
 def teardown_reflash(exception):
