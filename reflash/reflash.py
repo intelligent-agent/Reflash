@@ -9,12 +9,14 @@ from sqlitedict import SqliteDict
 
 class State(object):
     def __init__(self, db_file):
+        print("db init")
         self.db = SqliteDict(db_file)
 
     def load(self):
         pass
     
     def create_default(self):
+        print("create db")
         self.db["settings"] = {
             "darkmode": True,
             "rebootWhenDone": False,
@@ -40,6 +42,7 @@ class State(object):
             "bytes_now": 0,
             "bytes_total": bytes_total
         }
+        self.db.commit()
 
     def update(self, state):
         process = self.db["process"]
@@ -76,13 +79,19 @@ class Reflash:
         self.reflash_version_file = settings.get("version_file")
         self.images_folder = settings.get("images_folder")
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        self.futures = None
         self.sudo = "sudo" if settings.get("use_sudo") else ""
         self.state = State(settings.get("db_file"))
         self.platform = "-d dev" if settings.get("platform") == "dev" else ""
+        self.settings = settings
         if not self.state.db_exists():
             self.state.create_default()
         self.listeners = []
         self.log_worker_active = False
+
+    def teardown(self):
+        print("db close")
+        self.state.db.close()
 
     def get_state(self):
         return self.state.db["process"]["state"]
@@ -90,7 +99,7 @@ class Reflash:
     def download_refactor(self, url, size, filename, start_time):
         self.state.set("DOWNLOADING", filename, start_time, size)
         self._log(f"starting download of {filename} width size {size}")
-        self.executor.submit(self._ex_download_refactor, url, filename)
+        self.futures = self.executor.submit(self._ex_download_refactor, url, filename)
         return True
 
     def _ex_download_refactor(self, url, filename):
@@ -262,11 +271,11 @@ class Reflash:
         return options
 
     def _run_install_finished_commands(self):
-        self.rotate_screen(self.state.settings_screen_rotation, "CMDLINE")
-        self.rotate_screen(self.state.settings_screen_rotation, "XORG")
-        self.rotate_screen(self.state.settings_screen_rotation, "WESTON")
+        self.rotate_screen(self.state.db["settings"]["screenRotation"], "CMDLINE", "TRUE")
+        self.rotate_screen(self.state.db["settings"]["screenRotation"], "XORG", "TRUE")
+        self.rotate_screen(self.state.db["settings"]["screenRotation"], "WESTON", "TRUE")
 
-        if(self.state.settings_enable_ssh):
+        if(self.state.db["settings"]["enableSsh"]):
             self.set_ssh_enabled("true")
 
     def _system_command_text(self, command):
@@ -321,13 +330,15 @@ class Reflash:
     def start_log_worker(self):
         print("Start log worker")
         self.log_worker_active = True
-        self.executor.submit(self._ex_log_worker)
+        self.futures = self.executor.submit(self._ex_log_worker)
         self._log("--- Starting log worker ---")
 
     def stop_log_worker(self):
         print("stop log worker")
         self.log_worker_active = False
-        self._log("--- Stopping log worker ---")
+        self.executor.shutdown(wait=False)
+        self.teardown()
+        print("stopped log worker")
 
     def _ex_log_worker(self):
         cmd = ['tail', '-f', '-n','0', '/var/log/reflash.log']
@@ -375,5 +386,8 @@ class Reflash:
         return True if self._system_command_text(f"{self.sudo} /usr/local/bin/is-ssh-enabled") == "true" else False
 
     def get_available_bytes(self):
-        return self._system_command_text(f"{self.sudo} df /dev/nvme0n1p2 --output=avail").split("\n")[1]
+        if self.settings.get("platform") == "dev":
+            return self._system_command_text(f"{self.sudo} df /dev/nvme0n1p2 --output=avail").split("\n")[1]
+        else:
+            return self._system_command_text(f"{self.sudo} df /dev/sda2 --output=avail").split("\n")[1]
         
