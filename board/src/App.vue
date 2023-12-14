@@ -201,6 +201,7 @@ export default {
       }
     },
     rotateScreen(rot) {
+      axios.put(`/api/rotate_screen`, { rotation: rot, where: "FBCON", restart_app: false });
       axios.put(`/api/rotate_screen`, { rotation: rot, where: "CMDLINE", restart_app: false });
       axios.put(`/api/rotate_screen`, { rotation: rot, where: "XORG", restart_app: true });
       axios.put(`/api/rotate_screen`, { rotation: rot, where: "WESTON", restart_app: true });

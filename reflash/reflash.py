@@ -195,7 +195,6 @@ class Reflash:
             return
         if self.get_state() == "INSTALLING":
             self.state.update("FINISHED")
-            self._run_install_finished_commands()
 
     def get_install_progress(self):
         tr = self._system_command_text("tail -1 /tmp/recore-flash-progress")
@@ -273,13 +272,14 @@ class Reflash:
         options['bootFromEmmc'] = self.get_boot_media() == "emmc"
         return options
 
-    def _run_install_finished_commands(self):
+    def run_install_finished_commands(self):
         self.rotate_screen(self.state.db["settings"]["screenRotation"], "CMDLINE", "TRUE")
         self.rotate_screen(self.state.db["settings"]["screenRotation"], "XORG", "TRUE")
         self.rotate_screen(self.state.db["settings"]["screenRotation"], "WESTON", "TRUE")
 
         if(self.state.db["settings"]["enableSsh"]):
-            self.set_ssh_enabled("true")
+            self.set_ssh_enabled(True)
+        return True
 
     def _system_command_text(self, command):
         return subprocess.run(command.split(),

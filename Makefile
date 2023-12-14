@@ -71,7 +71,7 @@ package:
 	cp -r curses zip/reflash
 	echo "Unknown version" > zip/reflash/reflash.version
 
-tar-board: package-board
+tar-board:
 	cd zip; tar -zcvf reflash.tar.gz reflash/
 	mv zip/reflash.tar.gz ./reflash-board.tar.gz
 	rm -rf zip

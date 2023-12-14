@@ -66,8 +66,7 @@
             return-object
             :items="githubImages"
             item-label-key="name"
-            placeholder="Please select one"
-            :item-click="onDownloadFileChanged()">
+            placeholder="Please select one">
           </w-select>
           <w-input
             v-if="selectedMethod.id == 1"
@@ -251,9 +250,6 @@ export default {
           document.head.removeChild(this.dark);
         }
       }
-    },
-    onDownloadFileChanged(){
-      
     },
     computeSizeCheckText(){
       if(this.selectedMethod.id == 0 && this.selectedGithubImage && this.bytesAvailable > 0 && this.bytesAvailable < this.selectedGithubImage.size){
@@ -477,6 +473,7 @@ export default {
           this.$waveui.notify(data.error, "error", 0);
         }
         else if(data.state == "FINISHED"){
+          await axios.get(`/api/run_install_finished_commands`);
           if(this.options.rebootWhenDone){
             this.rebootBoard();
           }

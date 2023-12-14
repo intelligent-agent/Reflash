@@ -2,6 +2,7 @@
 
 ROTATION=$1
 PLACE=$2
+RESTART=$3
 
 # Valid rotation options are normal,inverted,left,right
 ROTATIONS=(0 90 180 270)
@@ -10,7 +11,7 @@ ROTATIONS=(0 90 180 270)
 PLACES=(FBCON XORG CMDLINE WESTON)
 
 # Restart relevant app
-RESTART_APP=(TRUE FALSE)
+RESTARTS=(TRUE FALSE)
 
 EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 
@@ -23,7 +24,7 @@ usage(){
     echo "Usage: $0 <rotation> <place> <restart>"
     echo "Valid  rotations: '${ROTATIONS[@]}'"
     echo "Valid  places: '${PLACES[@]}'"
-    echo "Restart app: '${RESTART_APP[@]}'"
+    echo "Restart app: '${RESTARTS[@]}'"
 }
 
 update_xorg(){
@@ -45,7 +46,7 @@ update_xorg(){
 EOF
     umount /mnt/emmc
 
-    if [ $RESTART_APP == "TRUE" ]; then
+    if [ $RESTART == "TRUE" ]; then
         systemctl restart KlipperScreen
     fi
 }
@@ -71,7 +72,7 @@ update_weston(){
             ;;
     esac
 
-    if [ $RESTART_APP == "TRUE" ]; then
+    if [ $RESTART == "TRUE" ]; then
         systemctl restart KlipperScreen
     fi
 
@@ -94,7 +95,7 @@ update_cmdline(){
 update_fbcon() {
     echo $ROT_FBCON > /sys/devices/virtual/graphics/fbcon/rotate
 
-    if [ $RESTART_APP == "TRUE" ]; then
+    if [ $RESTART == "TRUE" ]; then
         systemctl restart reflash-curses
     fi
 }
@@ -109,12 +110,7 @@ if [ "x$PLACE" == "x" ]; then
     exit 1
 fi
 
-if [ "x$RESTART_APP" == "x" ]; then
-    usage
-    exit 1
-fi
-
-case "${RESTART_APP}" in 
+case "${RESTART}" in
     TRUE | FALSE)        
         ;;
     *)

@@ -133,6 +133,13 @@ def get_install_progress():
     reflash = ref.Reflash(settings)
     return reflash.get_install_progress()
 
+@app.route('/api/run_install_finished_commands')
+def run_install_finished_commands():
+    reflash = ref.Reflash(settings)
+    stat = reflash.run_install_finished_commands()
+    return {"success": stat}
+
+
 @app.route('/api/download_refactor', methods = ['PUT'])
 def download_refactor():
     reflash = ref.Reflash(settings)
