@@ -52,7 +52,7 @@ upload:
 	scp reflash/*.py root@recore.local:/usr/local/lib/python3.9/dist-packages/reflash
 	scp systemd/*.service root@recore.local:/etc/systemd/system/
 
-tar: package
+tar:
 	cd zip; tar -zcvf reflash.tar.gz reflash/
 	mv zip/reflash.tar.gz .
 	rm -rf zip
@@ -69,6 +69,7 @@ package:
 	cp -r systemd zip/reflash
 	cp -r scripts zip/reflash
 	cp -r curses zip/reflash
+	echo "Unknown version" > zip/reflash/reflash.version
 
 tar-board: package-board
 	cd zip; tar -zcvf reflash.tar.gz reflash/
