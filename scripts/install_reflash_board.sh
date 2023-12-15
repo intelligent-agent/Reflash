@@ -44,6 +44,15 @@ server {
         proxy_buffering off;
         proxy_read_timeout 24h;
     }
+
+    allow 10.0.0.0/8;
+    allow 127.0.0.0/8;
+    allow 169.254.0.0/16;
+    allow 172.16.0.0/12;
+    allow 192.168.0.0/16;
+    allow FE80::/10;
+    allow ::1/128;
+    deny all;
 }
 EOF
 
