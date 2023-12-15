@@ -155,7 +155,7 @@ while (k != ord('q')):
         progress = reflash.get_install_progress()
         status.set_text("Installing")
         progress_bar.set_progress(progress['progress'])
-    elif global_state == 'BACKING_UP':
+    elif global_state == 'BACKUPING':
         progress = reflash.get_backup_progress()
         status.set_text("Backing up")
         progress_bar.set_progress(progress['progress'])

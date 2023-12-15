@@ -1,5 +1,14 @@
 #!/bin/bash
 
+set -o pipefail
+
+handle_error() {
+    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
+    exit $1
+}
+
+trap 'handle_error $? $LINENO' ERR
+
 partprobe
 
 DEV=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`

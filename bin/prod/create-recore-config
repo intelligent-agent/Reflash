@@ -3,6 +3,11 @@
 HW_REV=$1
 SERIAL_NR=$2
 
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
 usage(){
   echo "Usage: $0 <hardware revision> <serial number>"
   echo "This scipt is for adding a serial number and"
@@ -32,13 +37,13 @@ if [[ ! `wget -NS --spider $URL 2>&1 | grep 'HTTP/1.1 200 OK'` ]]; then
   exit 2
 fi
 
-echo "Calibration file valid"
+info "Calibration file valid"
 
 DEV=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 
 echo 0 > "/sys/block/${DEV}boot0/force_ro"
 
-echo "Creating boot partition"
+info "Creating boot partition"
 dd if=/dev/zero of=/dev/${DEV}boot0
 partprobe
 printf "g\nn\n\n\n\nw\n" | fdisk /dev/${DEV}boot0
@@ -51,10 +56,10 @@ if ! grep -qs '/mnt/config ' /proc/mounts; then
 fi
 echo "$SERIAL_NR" > /mnt/config/serial_number
 
-echo "Downloading calibration file ${FILE}"
+info "Downloading calibration file ${FILE}"
 wget $URL
 mv ${FILE} /mnt/config
 
 umount -q /mnt/config/
 echo 1 > "/sys/block/${DEV}boot0/force_ro"
-echo "Done"
+info "Done"

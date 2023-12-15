@@ -1,3 +1,8 @@
 #!/bin/bash
 
-echo "dummy shutdown" | systemd-cat -t reflash -p warning
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+info "reboot"

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="50" height="50" version="1.1" viewBox="0 0 13.229 13.229" xmlns="http://www.w3.org/2000/svg" xmlns:cc="http://creativecommons.org/ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+ <metadata>
+  <rdf:RDF>
+   <cc:Work rdf:about="">
+    <dc:format>image/svg+xml</dc:format>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:title/>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <g transform="matrix(.10955 0 0 .10954 -37.924 -72.998)" fill="none" stroke="#f1f1f1" stroke-width="2.7386">
+  <path d="m431.08 667.74v84.44"/>
+  <path d="m347.61 751.2h84.44"/>
+  <path d="m347.64 668.74h84.44"/>
+  <path d="m379.24 699.34h84.44"/>
+  <path d="m348.65 669 31.69 30.351"/>
+  <path d="m348.58 667.75v84.44"/>
+  <path d="m348.33 751.71 31.69 30.351"/>
+  <path d="m379.27 781.77h84.44"/>
+  <path d="m462.7 698.29v84.44"/>
+  <path d="m431.3 668.66 31.69 30.351"/>
+  <path d="m380.27 698.33v84.44"/>
+  <path d="m430.85 751.42 31.69 30.351"/>
+ </g>
+</svg>

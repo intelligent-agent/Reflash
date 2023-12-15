@@ -7,7 +7,15 @@ PLACE=$2
 ROTATIONS=(0 90 180 270)
 
 # Valid places to update
-PLACES=(FBCON XORG CMDLINE)
+PLACES=(FBCON XORG CMDLINE WESTON)
+
+# Restart relevant app
+RESTART_APP=(TRUE FALSE)
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
 
 usage(){
     echo "Usage: $0 <rotation> <place>"
@@ -67,28 +75,34 @@ if [ "x$PLACE" == "x" ]; then
     exit 1
 fi
 
-echo "Setting rotation to ${ROTATION} for place ${PLACE}"
-
 case "${ROTATION}" in 
     0)
         ROT_XORG="normal"
         ROT_FBCON="0"
         ROT_PLYMOUTH=""
+        ROT_WESTON_10="0"
+        ROT_WESTON_11="normal"
         ;;
     90)
         ROT_XORG="right"
         ROT_FBCON="1"
         ROT_PLYMOUTH=""
+        ROT_WESTON_10="90"
+        ROT_WESTON_11="rotate-90"
         ;;
     180)
         ROT_XORG="inverted"
         ROT_FBCON="2"
         ROT_PLYMOUTH=""
+        ROT_WESTON_10="180"
+        ROT_WESTON_11="rotate-180"
         ;;
     270)
         ROT_XORG="left"
         ROT_FBCON="3"
         ROT_PLYMOUTH=""
+        ROT_WESTON_10="270"
+        ROT_WESTON_11="rotate-270"
         ;;
     *)
         echo "$ROTATION not in '${ROTATIONS[@]}'"
@@ -99,15 +113,19 @@ esac
 case "${PLACE}" in 
     FBCON)
         echo "rotation = ${ROT_XORG}" > /opt/reflash/fbcon
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p warning
+        info "Setting rotation to ${ROTATION} for place ${PLACE}"
         ;;
     XORG)
         echo "rotation = ${ROT_XORG}" > /opt/reflash/xorg
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p warning
+        info "Setting rotation to ${ROTATION} for place ${PLACE}"
         ;;
     CMDLINE)
         echo "rotation = ${ROT_FBCON}" > /opt/reflash/cmdline
-        echo "Setting rotation to ${ROTATION} for place ${PLACE}" | systemd-cat -t reflash -p warning
+        info "Setting rotation to ${ROTATION} for place ${PLACE}"
+        ;;
+     WESTON)
+        echo "rotation = ${ROT_WESTON_10}" > /opt/reflash/cmdline
+        info "Setting rotation to ${ROTATION} for place ${PLACE}"
         ;;
     *)
         echo "$PLACE not in '${PLACES[@]}'"

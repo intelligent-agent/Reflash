@@ -1,21 +1,33 @@
 #!/bin/bash
-set -e
-set -x
+set -o pipefail
 
-echo "Recore eMMC backup" >  /tmp/recore-flash-log
-echo "------------------" >> /tmp/recore-flash-log
+handle_error() {
+    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
+    exit $1
+}
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+trap 'handle_error $? $LINENO' ERR
+
+info "Starting Recore eMMC backup script"
+info "----------------------------------"
 
 OUTFILE=$1
 INFILE="/dev/"`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 OUTIMG=${OUTFILE}.img.xz
 SIZE=`lsblk -n -d -o SIZE --bytes $INFILE`
 
-echo "Copying block device $INFILE" >> /tmp/recore-flash-log
-echo "Resulting image name $OUTIMG" >> /tmp/recore-flash-log
-echo "Uncompressed file size $SIZE bytes" >> /tmp/recore-flash-log
+info "Copying block device $INFILE"
+info "Resulting image name $OUTIMG"
+info "Uncompressed file size is $SIZE bytes"
 
 mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount
-echo "Starting copy" >> /tmp/recore-flash-log
+info "Starting copy"
 (dd if=${INFILE} | pv -f -n -b | xz -0 -T 0 -f > ${OUTIMG}) 2>&1 > /dev/null | unbuffer -p awk '{printf "%.2f\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
-echo "Backup complete" >> /tmp/recore-flash-log
+info "Syncing drives"
 sync
+info "Backup script complete"

@@ -15,7 +15,7 @@
     "font-awesome": "^4.7.0",
     "vue": "^3.2.13",
     "vuex": "^4.0.2",
-    "wave-ui": "^2.40.2"
+    "wave-ui": "^3.8.1"
   },
   "devDependencies": {
     "@babel/core": "^7.12.16",

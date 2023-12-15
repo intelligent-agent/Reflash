@@ -37,7 +37,7 @@ def r():
 
 @pytest.fixture()
 def p():
-    progress = {'filename': 'hamburger.img.xz', 'progress': 0.0, 'start_time': 666, 'state': 'DOWNLOADING', 'log': 'Starting download\nFilename: hamburger.img.xz\nFilesize: 5\n'}
+    progress = {'filename': 'hamburger.img.xz', 'progress': 0.0, 'start_time': 666, 'state': 'DOWNLOADING', 'bytes_now': 0, 'bytes_total': 5, 'error': 'No error'}
     yield(progress)
 
 class TestReflash:
@@ -76,6 +76,8 @@ class TestReflash:
         assert r.get_state() == "UPLOADING"
         assert r.upload_chunk(bytes("hamburger", 'utf-8')) == True
         assert r.upload_finish() == True
+        assert r.get_state() == "FINISHED"
+        r.get_upload_progress()
         assert r.get_state() == "IDLE"
         assert r.get_local_releases() == [{'id': 0, 'name': 'pizza', 'size': len("hamburger")}]
 
@@ -90,8 +92,8 @@ class TestReflash:
             assert r.get_download_progress() == p
             time.sleep(0.1)
             p['state'] = 'FINISHED'
-            p['log'] = 'Starting download\nFilename: hamburger.img.xz\nFilesize: 5\nDownload finished\n'
             p['progress'] = 100.0
+            p['bytes_now'] = 5
             assert r.get_download_progress() == p
             p['state'] = 'IDLE'
             assert r.get_download_progress() == p
@@ -115,13 +117,14 @@ class TestReflash:
             "darkmode": True,
             "enableSsh": True,
             "rebootWhenDone": False,
-            "screenRotation": 0
+            "screenRotation": 0,
+            "bootFromEmmc": False
         }
-        assert r.save_options(options) == True
+        assert r.save_options(options) == {"status": 0}
 
         # adding other option is silently ignored
         options['pizza'] = True
-        assert r.save_options(options) == True
+        assert r.save_options(options) == {"status": 0}
         del options['pizza']
         assert r.get_options() == options
 

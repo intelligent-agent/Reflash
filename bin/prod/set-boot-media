@@ -1,5 +1,19 @@
 #!/bin/bash
 
+set -o pipefail
+
+handle_error() {
+    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
+    exit $1
+}
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+trap 'handle_error $? $LINENO' ERR
+
 NEW_MEDIA=$1
 EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 
@@ -20,15 +34,14 @@ fi
 KEY="^rootdev=.*$"
 
 mkdir -p /mnt/emmc
-if ! mountpoint -q /mnt/emmc
-then
-  mount "/dev/${EMMC}p1" /mnt/emmc
-else
-  mount -o remount -rw "/dev/${EMMC}p1" /mnt/emmc
-fi
+umount -q /mnt/emmc || true
+mount "/dev/${EMMC}p1" /mnt/emmc
+mount -o remount,rw /mnt/emmc
 
 sed -i "s:${KEY}::g" /mnt/emmc/armbianEnv.txt
 sed -i '/^$/d' /mnt/emmc/armbianEnv.txt
 echo "rootdev=${NEW_DEV}" >> /mnt/emmc/armbianEnv.txt
 sync
 umount /mnt/emmc
+
+info "Updated rootdev to ${NEW_DEV}"

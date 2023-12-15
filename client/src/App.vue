@@ -1,6 +1,6 @@
 <template>
   <w-app>
-    <TheLogger :log="theLog" :open="openLog"  @close="openLog=false"/>
+    <TheLogger :open="openLog"  @close="openLog=false"/>
     <TheOptions 
       :open="openOptions"
       @set-option="setOption"
@@ -25,7 +25,7 @@
           </div>
         </div>
         <div class="xs5 pa4">
-          <TheInfo :open="openInfo" :version="version" />
+          <TheInfo :open="openInfo" :version="reflash_version" :revision="recore_revision" />
         </div>
         <div class="xs1 pa1 align-self-center">
           <w-select
@@ -40,15 +40,16 @@
         <div class="xs1 pa1 align-self-center"><FlashSelector ref="flashSelector"/></div>
         <div class="xs1 pa1 align-self-center">eMMC</div>
 
-        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG(selectedMethod.image)" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('Arrow-right')" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('USB')" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('Arrow-'+flashDirection())" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 170px;" :src="computeSVG('eMMC')" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG(selectedMethod.image)" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('Arrow-right')" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('USB')" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('Arrow-'+flashDirection())" /></div>
+        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('eMMC')" /></div>
 
         <div class="xs1 pa1 therow">Choose image to {{selectedMethod.id == 0 ? "Download" : "Upload"}}</div>
         <div class="xs1 pa1">
           <ProgressBar ref="transferprogressbar" name="transfer"/>
+          <span class="red">{{this.computeSizeCheckText()}}</span>
         </div>
         <div class="xs1 pa1">Choose image to install</div>
         <div class="xs1 pa1">
@@ -93,7 +94,7 @@
           <IntegrityChecker ref="integritychecker"/>
         </w-flex>
         <div class="xs1 align-self-center">
-          <w-button xl outline  @click="onInstallButtonClick()" v-if="isInstallButtonVisibile()">
+          <w-button xl outline @click="onInstallButtonClick()" v-if="isInstallButtonVisibile()">
             <span>
               {{this.installButtonText()}}
             </span>
@@ -159,9 +160,9 @@ export default {
     transferProgress: 0,
     isInstalling: false,
     installProgress: 0,
-    selectedGithubImage: null,
+    selectedGithubImage: undefined,
     selectedUploadImage: [],
-    selectedLocalImage: null,
+    selectedLocalImage: undefined,
     githubImages: [],
     localImages: [],
     uploadError: false,
@@ -177,9 +178,11 @@ export default {
     imageColor: "white",
     files: [],
     backupFile: "",
-    version: "",
-    emmc_version: "Unknown version",
-    theLog: ""
+    reflash_version: "Unknown",
+    emmc_version: "Unknown",
+    recore_revision: "Unknown",
+    bytesAvailable: -1,
+    sizeWarning: ""
   }),
   computed: mapGetters(['options', 'progress', 'flash']),
   methods: {
@@ -231,7 +234,7 @@ export default {
         return this.selectedGithubImage;
       }
       else if(this.selectedMethod.id == 1){
-        return this.selectedUploadImage.length > 0;
+        return this.selectedUploadImage.file;
       }
       return "";
     },    
@@ -248,14 +251,25 @@ export default {
         }
       }
     },
+    computeSizeCheckText(){
+      if(this.selectedMethod.id == 0 && this.selectedGithubImage && this.bytesAvailable > 0 && this.bytesAvailable < this.selectedGithubImage.size){
+          return "Not enough free space on USB";
+      }
+      else if(this.selectedMethod.id == 1 && this.selectedUploadImage.file && this.bytesAvailable > 0 && this.bytesAvailable < this.selectedUploadImage.size){
+        return "Not enough free space on USB"
+      }
+      else{
+        return ""
+      }
+    },
     onSelectedFileChanged(){
-      if(this.$refs.integritychecker){
+      if(this.$refs.integritychecker && this.selectedLocalImage != []){
         this.$refs.integritychecker.fileSelected(this.selectedLocalImage);
       }
     },
     onFileInput(files){
       this.files = files
-      this.file = files[0].file;
+      this.file = files.file;
     },
     async uploadFinish(){
       await axios.put(`/api/upload_finish`
@@ -326,7 +340,6 @@ export default {
     async checkUploadProgress(){
       const response = await axios.get(`/api/get_upload_progress`);
       let data = response.data;
-      this.theLog = data.log;
       if(data.state == "UPLOADING"){
         this.isTransferring = true;
         this.setProgress({name: 'transfer', progress: data.progress});
@@ -340,7 +353,7 @@ export default {
         this.isTransferring = false;
         this.setVisible({name: 'transfer', visible: false});
         if(data.state == "ERROR"){
-          console.log(data.error);
+          this.$waveui.notify(data.error, "error", 0);
         }
         else if(data.state == "FINISHED"){
           this.selectedUploadImage = [];
@@ -380,7 +393,6 @@ export default {
     async checkDownloadProgress() {
       const response = await axios.get(`/api/get_download_progress`);
       let data = response.data;
-      this.theLog = data.log;
       if(data.state == "DOWNLOADING"){
         this.isTransferring = true;
         this.setProgress({name: 'transfer', progress: data.progress});
@@ -394,7 +406,7 @@ export default {
         this.isTransferring = false;
         this.setVisible({name: 'transfer', visible: false});
         if(data.state == "ERROR"){
-          console.log(data.error);
+          this.$waveui.notify(data.error, "error", 0);
         }
         else if(data.state == "FINISHED"){
           this.selectedGithubImage = null;
@@ -445,7 +457,6 @@ export default {
     async checkInstallProgress() {
       const response = await axios.get(`/api/get_install_progress`);
       let data = response.data
-      this.theLog = data.log
       if(data.state == "INSTALLING"){
         this.isInstalling = true;
         this.setVisible({name: 'install', visible: true});
@@ -459,9 +470,10 @@ export default {
         this.isInstalling = false;
         this.setVisible({name: 'install', visible: false});
         if(data.state == "ERROR"){
-          console.log(data.error);
+          this.$waveui.notify(data.error, "error", 0);
         }
         else if(data.state == "FINISHED"){
+          await axios.get(`/api/run_install_finished_commands`);
           if(this.options.rebootWhenDone){
             this.rebootBoard();
           }
@@ -490,8 +502,7 @@ export default {
     async checkBackupProgress(){
       const response = await axios.get(`/api/get_backup_progress`);
       let data = response.data
-      this.theLog = data.log
-      if(data.state == "INSTALLING"){
+      if(data.state == "BACKUPING"){
         this.isInstalling = true;
         this.setVisible({name: 'install', visible: true});
         this.setTimeStarted({name: 'install', time: data.start_time}); 
@@ -512,7 +523,7 @@ export default {
           this.getLocalImages();
         }
         if(data.state == "ERROR"){
-          this.theLog = data.log+"\n\n"+data.error
+          this.$waveui.notify(data.error, "error", 0);
         }
       }
     },
@@ -570,11 +581,12 @@ export default {
       }
     },
     async getLocalImages(){
-      const response = await axios.get(`/api/get_local_images`);
-      let data = response.data
-      this.localImages = data.locals;
-      this.version = response.data.reflash_version;
+      const response = await axios.get(`/api/get_info`);
+      this.localImages = response.data.local_images;
+      this.reflash_version = response.data.reflash_version;
       this.emmc_version = response.data.emmc_version;
+      this.recore_revision = response.data.recore_revision
+      this.bytesAvailable = response.data.bytes_available
     },
     async getGithubImages(){
       fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
@@ -622,8 +634,8 @@ body {
 }
 .w-select--no-padding .w-select__selection {
   text-align: center;
-  font-size:  16px;
   color: #444;
+  display: block;
 }
 
 .card {

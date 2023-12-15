@@ -50,3 +50,7 @@ body {
 .w-button.size--xl span{
   color: #F1F1F1;
 }
+
+.w-list__item-label {
+  color: #ddd;
+}

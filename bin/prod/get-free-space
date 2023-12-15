@@ -1,0 +1,3 @@
+#!/bin/bash
+
+df /dev/sda2 --output=avail -B 1 | tail -n 1
