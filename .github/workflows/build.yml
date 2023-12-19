@@ -1,4 +1,5 @@
-name: Build Reflash
+name: "Build Reflash"
+on:
   push:
     branches:
       - main

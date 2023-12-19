@@ -3,3 +3,4 @@
 */*.log
 reflash/dist
 .tmp*
+reflash-go/server
