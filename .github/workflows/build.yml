@@ -38,8 +38,8 @@ jobs:
         
     - name: Make image
       run: |
-        apt install debootstrap
-        ./mkimage.sh
+        sudo apt install debootstrap
+        sudo ./mkimage.sh
   
     - name: Release if tagged
       uses: ncipollo/release-action@v1
