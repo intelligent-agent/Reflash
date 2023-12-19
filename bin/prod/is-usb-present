@@ -1,3 +1,9 @@
 #!/bin/bash
 
-echo "true"
+set -e
+
+if [ -b /dev/sda1 ]; then
+    echo "true"
+else
+    echo "false"
+fi

@@ -1,5 +1,5 @@
 #!/bin/bash
-set -o pipefail
+set -euo pipefail
 
 handle_error() {
     echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
@@ -39,7 +39,7 @@ info "Uncompressed file size is $SIZE bytes"
 
 mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount
 info "Starting flashing..."
-(xz -T 0 -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE} status=none) 2>&1 | unbuffer -p awk '{printf "%f\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
+(xz -T 0 -d -c ${INFILE} | pv -f -n -b > ${OUTFILE}) 2>&1 | unbuffer -p awk '{printf "%f\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
 info "Flashing done"
 info "Syncing drives"
 sync
@@ -91,7 +91,7 @@ if test -d /mnt/emmc/home/debian; then
     fi
   fi
 fi
-cd
+cd /
 umount ${OUTFILE}p2
 
 mount ${OUTFILE}p1 /mnt/emmc
@@ -104,7 +104,7 @@ if test -f sun50i-a64-recore-$REVISION.dtb; then
   info "Symlinking device tree"
   ln -sf sun50i-a64-recore-$REVISION.dtb sun50i-a64-recore.dtb
 fi
-cd
+cd /
 umount ${OUTFILE}p1
 
 sync

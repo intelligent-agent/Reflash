@@ -16,6 +16,9 @@ install_bins:
 	chmod +x /usr/local/bin/is-ssh-enabled
 	chmod +x /usr/local/bin/get-free-space
 
+upload_bins:
+	scp bin/prod/* root@recore.local:/usr/local/bin
+
 dev-server:
 	FLASK_RUN_PORT=8081 \
 	FLASK_ENV=development \
@@ -51,6 +54,16 @@ upload:
 	scp server/*.py root@recore.local:/var/www/html/server/
 	scp reflash/*.py root@recore.local:/usr/local/lib/python3.9/dist-packages/reflash
 	scp systemd/*.service root@recore.local:/etc/systemd/system/
+
+dev-server-go:
+	cd reflash-go; APP_ENV=dev go run server.go
+
+build-go:
+	cd reflash-go; env GOOS=linux GOARCH=arm64 go build server.go
+
+upload-go:
+	scp -r client/dist root@recore.local:/var/www/html/reflash
+	scp reflash-go/server root@recore.local:/usr/local/bin
 
 tar:
 	cd zip; tar -zcvf reflash.tar.gz reflash/

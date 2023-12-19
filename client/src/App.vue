@@ -112,6 +112,7 @@
               </w-alert>
             </w-transition-expand>
             <w-button xl outline class="ma1 btn" @click="rebootBoard()"><span>Reboot Now</span></w-button>
+            <w-button xl outline class="ma1 btn" @click="checkUsbPresent()"><span>Check USB present</span></w-button>
           </div>
           <div v-if="showOverlay">
             <w-transition-expand y>
@@ -182,7 +183,8 @@ export default {
     emmc_version: "Unknown",
     recore_revision: "Unknown",
     bytesAvailable: -1,
-    sizeWarning: ""
+    sizeWarning: "",
+    isUsbPresent: false,
   }),
   computed: mapGetters(['options', 'progress', 'flash']),
   methods: {
@@ -338,7 +340,7 @@ export default {
       }
     },
     async checkUploadProgress(){
-      const response = await axios.get(`/api/get_upload_progress`);
+      const response = await axios.get(`/api/get_progress`);
       let data = response.data;
       if(data.state == "UPLOADING"){
         this.isTransferring = true;
@@ -378,7 +380,9 @@ export default {
       let self = this;
       if(this.isTransferring){
         await axios.put(`/api/download_refactor`, {
-          "filename": this.selectedGithubImage, 
+          "filename": this.selectedGithubImage["name"], 
+          "size": this.selectedGithubImage["size"],
+          "url": this.selectedGithubImage["url"],
           "start_time": Date.now(),
         }).then(() => {
           self.checkDownloadProgress();
@@ -391,7 +395,7 @@ export default {
       }
     },
     async checkDownloadProgress() {
-      const response = await axios.get(`/api/get_download_progress`);
+      const response = await axios.get(`/api/get_progress`);
       let data = response.data;
       if(data.state == "DOWNLOADING"){
         this.isTransferring = true;
@@ -455,7 +459,7 @@ export default {
       });
     },
     async checkInstallProgress() {
-      const response = await axios.get(`/api/get_install_progress`);
+      const response = await axios.get(`/api/get_progress`);
       let data = response.data
       if(data.state == "INSTALLING"){
         this.isInstalling = true;
@@ -500,7 +504,7 @@ export default {
       });
     },
     async checkBackupProgress(){
-      const response = await axios.get(`/api/get_backup_progress`);
+      const response = await axios.get(`/api/get_progress`);
       let data = response.data
       if(data.state == "BACKUPING"){
         this.isInstalling = true;
@@ -530,6 +534,10 @@ export default {
     rebootBoard(){
       this.showOverlay = true;
       axios.put(`/api/reboot_board`);
+    },
+    async checkUsbPresent(){
+      const response = await axios.get(`/api/is_usb_present`);
+      this.isUsbPresent = response.data.result
     },
     shutdownBoard(){
       axios.put(`/api/shutdown_board`);

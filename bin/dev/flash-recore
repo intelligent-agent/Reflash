@@ -20,6 +20,7 @@ INFILE=$1
 OUTFILE="/dev/zero"
 REVISION="A7"
 
+echo "" > /tmp/recore-flash-progress
 
 SIZE=`xz -lv $INFILE | grep Uncompressed | sed 's/[,(]//g' | awk '{ printf "%s\n", $5 }'`
 

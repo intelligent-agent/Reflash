@@ -33,7 +33,7 @@ export default {
     },
     async clearLog(){
       this.log = [];
-      const response = await axios.put(`/api/clear_log`)      
+      const response = await axios.put(`/api/clear_log`)
       if(response.data.status != 0)
         this.$waveui.notify("Unable to clear log", "error", 0);
     }

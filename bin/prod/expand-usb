@@ -1,0 +1,41 @@
+#!/bin/bash
+set -euo pipefail
+
+handle_error() {
+    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
+    exit $1
+}
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+trap 'handle_error $? $LINENO' ERR
+
+info "Starting recore expand USB script"
+info "------------------"
+
+umount -q /mnt/usb/ || true
+
+if [ -b /dev/sda2 ]; then
+    echo "Partition 2 exists, deleting"
+    printf "d\n2\nw\n" | fdisk /dev/sda2
+    echo "Zeroing partition"
+    dd if=/dev/zero of=/dev/sda2
+fi
+
+info "Creating partition on unused space"
+printf "n\n\n\n\nw\n" | fdisk /dev/sda
+
+info "Creating ext4 filesystem"
+mkfs.ext4 -F -E nodiscard /dev/sda2
+
+info "Mounting new partition"
+mkdir -p /mnt/usb
+mount /dev/sda2 /mnt/usb
+
+info "creating images folder"
+mkdir /mnt/usb/images
+
+systemctl daemon-reload

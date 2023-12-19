@@ -36,19 +36,18 @@ update_xorg(){
     if [ ! -d ${XORG_DIR} ]; then
         echo "Misssig directory: ${XORG_DIR}"
         exit 0
-    fi
-
-    cat <<EOF > "${XORG_DIR}/90-monitor.conf"
-    Section "Monitor"
-        Identifier "HDMI-1"
-        Option "Rotate" "$ROT_XORG"
-    EndSection
+    else
+        cat <<EOF > "${XORG_DIR}/90-monitor.conf"
+            Section "Monitor"
+                Identifier "HDMI-1"
+                Option "Rotate" "$ROT_XORG"
+            EndSection
 EOF
-    umount /mnt/emmc
-
-    if [ $RESTART == "TRUE" ]; then
-        systemctl restart KlipperScreen
+        if [ $RESTART == "TRUE" ]; then
+            systemctl restart KlipperScreen
+        fi
     fi
+    umount /mnt/emmc
 }
 
 update_weston(){
@@ -59,23 +58,27 @@ update_weston(){
     RELEASE=`cat /mnt/emmc/etc/debian_version | cut -d '.' -f 1`
     XDG_DIR="/mnt/emmc/etc/xdg/weston/weston.ini"
 
-    case "${RELEASE}" in
-        11)
-            sed -i "s/transform.*/transform=${ROT_WESTON_11}/" "${XDG_DIR}"
-            ;;
-        10)
-            sed -i "s/transform.*/transform=${ROT_WESTON_10}/" "${XDG_DIR}"
-            ;;
-        *)
-            echo "Unknown debian release: '${RELEASE}'"
-            exit 0
-            ;;
-    esac
+    if [ ! -d ${XDG_DIR} ]; then
+        echo "Misssig directory: ${XDG_DIR}"
+    else
+        case "${RELEASE}" in
+            11)
+                sed -i "s/transform.*/transform=${ROT_WESTON_11}/" "${XDG_DIR}"
+                ;;
+            10)
+                sed -i "s/transform.*/transform=${ROT_WESTON_10}/" "${XDG_DIR}"
+                ;;
+            *)
+                echo "Unknown debian release: '${RELEASE}'"
+                exit 0
+                ;;
+        esac
 
-    if [ $RESTART == "TRUE" ]; then
-        systemctl restart KlipperScreen
+        if [ $RESTART == "TRUE" ]; then
+            systemctl restart KlipperScreen
+        fi
     fi
-
+    umount /mnt/emmc
 }
 
 update_cmdline(){

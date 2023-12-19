@@ -36,15 +36,6 @@
         >
         </w-radios>
         <w-divider class="my6 mx-3"></w-divider>
-        <h4>Reboot to eMMC</h4>
-        <w-switch
-          @change="changeBootMedia(options.bootFromEmmc)"
-          v-model="options.bootFromEmmc"
-          class="ma2"
-          label="Set boot media to eMMC"
-        >
-        </w-switch>
-        <w-divider class="my6 mx-3"></w-divider>
         <w-button xl outline class="ma2" @click="$emit('reboot-board')">
           <span>Reboot</span>
         </w-button>
@@ -74,14 +65,6 @@ export default {
         if (result.data.status != 0) {
           this.$waveui.notify(result.data.result, "error", 0);
         }
-      }
-    },
-    async changeBootMedia(value) {
-      const result = await axios.put(`/api/set_boot_media`, {
-        media: value ? "emmc" : "usb",
-      });
-      if (result.data.status != 0) {
-        this.$waveui.notify(result.data.result, "error", 0);
       }
     },
   },
