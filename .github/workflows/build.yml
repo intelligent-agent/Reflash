@@ -38,7 +38,7 @@ jobs:
         
     - name: Make image
       run: |
-        sudo apt install debootstrap qemu-user-static
+        sudo apt install debootstrap qemu-user-static u-boot-tools
         sudo ./mkimage.sh
   
     - name: Release if tagged

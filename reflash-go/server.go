@@ -116,8 +116,6 @@ func main() {
 		images_folder = "/mnt/usb/images"
 		db_file = "/opt/reflash/reflash.db"
 		log_file = "/var/log/reflash.log"
-		//crt_file = "/opt/server.crt"
-		//key_file = "/opt/server.key"
 		port = ":80"
 	}
 	fs := http.FileServer(http.Dir(static_dir))
@@ -140,8 +138,6 @@ func main() {
 	http.HandleFunc("/api/upload_chunk", uploadChunk)
 	http.HandleFunc("/api/clear_log", clearLog)
 	http.HandleFunc("/api/rotate_screen", rotateScreen)
-
-	//log.Fatal(http.ListenAndServeTLS(port, "server.crt", "server.key", nil))
 	log.Fatal(http.ListenAndServe(port, nil))
 }
 
@@ -152,7 +148,6 @@ func getInfo(w http.ResponseWriter, r *http.Request) {
 		ReflashVersion: "Dummy 0.2.0",
 		RecoreRevision: "A7",
 		EmmcVersion:    "Fluidd v3.2.0",
-		UsbPresent:     true,
 		IsSshEnabled:   false,
 		BytesAvailable: getFreeSpace(),
 	}
@@ -197,6 +192,7 @@ func downloadRefactor(w http.ResponseWriter, r *http.Request) {
 		state.Filename = data.Filename
 		state.StartTime = data.StartTime
 		url := data.Url
+		state.BytesTotal = data.Size
 		state.State = DOWNLOADING
 
 		go _go_downloadRefactor(state.Filename, url)
@@ -238,6 +234,14 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 		}
 		state.Progress = i
 	}
+	if state.State == DOWNLOADING {
+		fi, err := os.Stat(images_folder + "/" + state.Filename)
+		if err == nil {
+			state.BytesNow = int(fi.Size())
+			state.Progress = (float64(state.BytesNow) / float64(state.BytesTotal)) * 100.0
+		}
+	}
+
 	json.NewEncoder(w).Encode(state)
 	if state.State == FINISHED {
 		state.State = IDLE
@@ -289,11 +293,11 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 
 func _go_installRefactor(filename string) {
 	path := images_folder + "/" + filename
-	fmt.Println("starting install of " + filename)
+	log_info("starting install of " + filename)
 
 	cmd := exec.Command("/usr/local/bin/flash-recore", path)
 	if err := cmd.Run(); err != nil {
-		log_error("Installation error: " + err.Error())
+		log_error("Error encountered during install: " + err.Error())
 	}
 	log_info("Installation done")
 

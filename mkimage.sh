@@ -90,7 +90,7 @@ sudo mv "${ROOTFSDIR}"/initrd/boot/ "${ROOTFSDIR}"
 sudo cp rootfs_files/files/* "${ROOTFSDIR}"/boot
 
 # Crate initramfs
-sudo bash -c "cd '${ROOTFSDIR}/initrd' && find . | cpio -ov --format=newc | gzip -9 >'../initrd.img.gz'"
+sudo bash -c "cd '${ROOTFSDIR}/initrd' && find . | cpio -ov --format=newc | gzip -9 >'../initrd.img.gz'" >/dev/null 2>&1
 
 #cd "${ROOTFSDIR}"/initrd; sudo bash -c "find . | cpio -ov --format=newc | gzip -9 >../initrd.img.gz";  cd ../..
 mkimage -A arm -T ramdisk -C gzip -n uInitrd -d "${ROOTFSDIR}"/initrd.img.gz "${ROOTFSDIR}"/uInitrd
