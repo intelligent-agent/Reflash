@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/grafana/tail"
 )
@@ -75,6 +76,7 @@ type State struct {
 	Filename   string  `json:"filename"`
 	StartTime  int64   `json:"start_time"`
 	Progress   float64 `json:"progress"`
+	Bandwidth  float32 `json:"bandwidth"`
 	BytesNow   int     `json:"bytes_now"`
 	BytesTotal int     `json:"bytes_total"`
 	Error      string  `json:"error"`
@@ -89,6 +91,8 @@ var db_file string
 var static_dir string
 var port string
 var log_file string
+var last_size_check time.Time
+var bytes_last int
 
 func main() {
 	options = &Options{
@@ -126,6 +130,7 @@ func main() {
 	http.HandleFunc("/api/options", getOptions)
 	http.HandleFunc("/api/save_options", setOptions)
 	http.HandleFunc("/api/download_refactor", downloadRefactor)
+	http.HandleFunc("/api/cancel_download", cancelDownload)
 	http.HandleFunc("/api/get_progress", getProgress)
 	http.HandleFunc("/api/check_file_integrity", checkFileIntegrity)
 	http.HandleFunc("/api/install_refactor", installRefactor)
@@ -194,7 +199,8 @@ func downloadRefactor(w http.ResponseWriter, r *http.Request) {
 		url := data.Url
 		state.BytesTotal = data.Size
 		state.State = DOWNLOADING
-
+		last_size_check = time.Now()
+		bytes_last = 0
 		go _go_downloadRefactor(state.Filename, url)
 	}
 
@@ -225,14 +231,19 @@ func _go_downloadRefactor(filename string, url string) {
 	state.State = FINISHED
 }
 
+func cancelDownload(w http.ResponseWriter, r *http.Request) {
+	state.State = CANCELLED
+}
+
 func getProgress(w http.ResponseWriter, r *http.Request) {
 	if state.State == INSTALLING {
-		progress := lastLine("/tmp/recore-flash-progress")
-		i, err := strconv.ParseFloat(progress, 64)
+		bytes := lastLine("/tmp/recore-flash-progress")
+		i, err := strconv.Atoi(bytes)
 		if err != nil {
 			i = 0
 		}
-		state.Progress = i
+		state.BytesNow = i
+		state.Progress = (float64(state.BytesNow) / float64(state.BytesTotal)) * 100.0
 	}
 	if state.State == DOWNLOADING {
 		fi, err := os.Stat(images_folder + "/" + state.Filename)
@@ -241,6 +252,12 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 			state.Progress = (float64(state.BytesNow) / float64(state.BytesTotal)) * 100.0
 		}
 	}
+
+	elapsed := time.Now().Sub(last_size_check).Seconds()
+	last_size_check = time.Now()
+	bytes_diff_mb := float32(state.BytesNow-bytes_last) / (1024 * 1024)
+	bytes_last = state.BytesNow
+	state.Bandwidth = bytes_diff_mb / float32(elapsed)
 
 	json.NewEncoder(w).Encode(state)
 	if state.State == FINISHED {
@@ -281,10 +298,12 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
 
+	mountUsb()
 	state.Filename = data.Filename
 	state.StartTime = data.StartTime
+	state.BytesTotal = getUncompressedSize(images_folder + "/" + data.Filename)
 	state.State = INSTALLING
-	mountUsb()
+
 	go _go_installRefactor(state.Filename)
 
 	response := map[string]int{"status": 0}
@@ -302,6 +321,20 @@ func _go_installRefactor(filename string) {
 	log_info("Installation done")
 
 	state.State = FINISHED
+}
+
+func getUncompressedSize(path string) int {
+	cmd := exec.Command("xz", "-l", path)
+	stdout, err := cmd.Output()
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			log_error(fmt.Sprintf("Command 'xz -l %s' returned exit code %v\n", path, exitError.ExitCode()))
+			return 1
+		}
+	}
+	strs := strings.Split(strings.ReplaceAll(string(stdout[:]), " ", ""), "MiB")
+	ret, err := strconv.ParseFloat(strs[1], 32)
+	return int(ret * 1024 * 1024)
 }
 
 func lastLine(file string) string {

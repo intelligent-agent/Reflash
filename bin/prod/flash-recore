@@ -39,7 +39,7 @@ info "Uncompressed file size is $SIZE bytes"
 
 mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount
 info "Starting flashing..."
-(xz -T 0 -d -c ${INFILE} | pv -f -n -b > ${OUTFILE}) 2>&1 | unbuffer -p awk '{printf "%f\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
+(xz -T 0 -d -c ${INFILE} | pv -f -n -b > ${OUTFILE}) 2> /tmp/recore-flash-progress
 info "Flashing done"
 info "Syncing drives"
 sync

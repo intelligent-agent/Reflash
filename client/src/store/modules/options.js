@@ -7,12 +7,14 @@ const state = {
     install: {
       visible: false,
       progress: 0,
+      bandwidth: 0,
       timeStarted: 0,
       timeFinished: 0
     },
     transfer: {
       visible: false,
       progress: 0,
+      bandwidth: 0,
       timePassed: 0,
       timeRemaining: 0
     }
@@ -41,6 +43,9 @@ const actions = {
   setProgress({ commit }, payload){
     commit('setProgress', payload);
   },
+  setBandwidth({ commit }, payload){
+    commit('setBandwidth', payload);
+  },
   setTimeStarted({ commit }, payload){
     commit('setTimeStarted', payload);
   },
@@ -55,6 +60,7 @@ const mutations = {
   getOptions: (state, options) => (state.options = options),
   setOption: (state, option) => (state.options = {...state.options, ...option }),
   setProgress: (state, { name, progress }) => (state.progress[name].progress = progress),
+  setBandwidth: (state, { name, bandwidth }) => (state.progress[name].bandwidth = bandwidth),
   setVisible: (state, {name, visible}) => (state.progress[name].visible = visible),
   setTimeStarted: (state, { name, time }) => (state.progress[name].timeStarted = time),
   setTimeFinished: (state, {name, time}) => (state.progress[name].timeFinished = time),

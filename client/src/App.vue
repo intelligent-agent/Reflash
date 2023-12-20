@@ -190,6 +190,7 @@ export default {
   methods: {
     ...mapActions([
       'setProgress',
+      'setBandwidth',
       'setVisible',
       'setFlashMethod',
       'setTimeStarted',
@@ -345,6 +346,7 @@ export default {
       if(data.state == "UPLOADING"){
         this.isTransferring = true;
         this.setProgress({name: 'transfer', progress: data.progress});
+        this.setBandwidth({name: 'transfer', bandwidth: data.bandwidth});
         this.setTimeStarted({name: 'transfer', time: data.start_time});
         this.setVisible({name: 'transfer', visible: true});
         this.$refs.transferprogressbar.update();
@@ -400,6 +402,7 @@ export default {
       if(data.state == "DOWNLOADING"){
         this.isTransferring = true;
         this.setProgress({name: 'transfer', progress: data.progress});
+        this.setBandwidth({name: 'transfer', bandwidth: data.bandwidth});
         this.setTimeStarted({name: 'transfer', time: data.start_time});
         this.setVisible({name: 'transfer', visible: true});
         this.selectedGithubImage = this.getGithubImageFromName(data.filename)
@@ -465,6 +468,7 @@ export default {
         this.isInstalling = true;
         this.setVisible({name: 'install', visible: true});
         this.setProgress({name: 'install', progress: data.progress});
+        this.setBandwidth({name: 'install', bandwidth: data.bandwidth});
         this.setTimeStarted({name: 'install', time: data.start_time});
         this.selectedLocalImage = data.filename
         this.$refs.installprogressbar.update();
