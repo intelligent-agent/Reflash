@@ -1,17 +1,10 @@
 #!/bin/bash
-set -o pipefail
-
-handle_error() {
-    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
-    exit $1
-}
+set -euo pipefail
 
 info() {
     echo "[info] $1" >> /var/log/reflash.log
     echo "$1"
 }
-
-trap 'handle_error $? $LINENO' ERR
 
 info "Starting Recore eMMC backup script"
 info "----------------------------------"

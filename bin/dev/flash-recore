@@ -30,6 +30,6 @@ info "Overwriting block device $OUTFILE"
 info "Uncompressed file size $SIZE bytes"
 
 info "Starting flashing"
-(xz -d -c ${INFILE} | pv -f -n -b | dd of=${OUTFILE} status=none) 2>&1 > /dev/null | unbuffer -p awk '{printf "%.2f\n", 100*($1/'$SIZE') }' > /tmp/recore-flash-progress
+(xz -d -c ${INFILE} | pv -f -n -b ${OUTFILE}) > /tmp/recore-flash-progress
 info "Flashing complete"
 info "Script done!"

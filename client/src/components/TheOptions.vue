@@ -62,8 +62,8 @@ export default {
       this.$emit("set-option", name, value);
       if (name == "rotateScreen") {
         const result = await axios.put(`/api/rotate_screen`, { rotation: value, where: "FBCON", restart_app: true });
-        if (result.data.status != 0) {
-          this.$waveui.notify(result.data.result, "error", 0);
+        if (result.data.status != "OK") {
+          this.$waveui.notify(result.data.error, "error", 0);
         }
       }
     },

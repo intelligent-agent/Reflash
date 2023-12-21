@@ -28,7 +28,7 @@ dpkg -i linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 
 echo 'root:temppwd' | chpasswd
 
-apt install -y systemd-resolved systemd openssh-server udev kmod fdisk parted ca-certificates jq xz-utils expect pv --no-install-recommends --no-install-suggests
+apt install -y systemd-resolved systemd openssh-server udev kmod fdisk parted ca-certificates jq xz-utils expect pv systemd-timesyncd --no-install-recommends --no-install-suggests
 systemctl enable systemd-networkd
 ln -s /lib/systemd/systemd /init
 
@@ -82,6 +82,10 @@ sudo cp -r client/dist "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo cp bin/prod/* "${ROOTFSDIR}"/initrd/usr/local/bin
 sudo mkdir -p "${ROOTFSDIR}"/initrd/mnt/usb
 
+TAG=$(git describe --always --tags)
+NAME="reflash-${TAG}"
+echo "$NAME" > "$ROOTFSDIR"/initrd/etc/reflash-version
+
 # Remove the boot folder outside the rootfs
 sudo rm -rf "${ROOTFSDIR}"/boot
 sudo mv "${ROOTFSDIR}"/initrd/boot/ "${ROOTFSDIR}"
@@ -114,4 +118,4 @@ sudo umount "${ROOTFSDIR}"/image
 sudo losetup -d "${LOOPDEV}"
 
 xz -f -T 0 -k -z "${ROOTFSDIR}"/reflash.img
-mv "${ROOTFSDIR}"/reflash.img.xz .
+mv "${ROOTFSDIR}"/reflash.img.xz ./${NAME}.img.xz

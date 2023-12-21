@@ -13,7 +13,7 @@ PLACES=(FBCON XORG CMDLINE WESTON)
 # Restart relevant app
 RESTARTS=(TRUE FALSE)
 
-EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+EMMC=/dev/mmcblk2
 
 info() {
     echo "[info] $1" >> /var/log/reflash.log
@@ -22,15 +22,15 @@ info() {
 
 usage(){
     echo "Usage: $0 <rotation> <place> <restart>"
-    echo "Valid  rotations: '${ROTATIONS[@]}'"
-    echo "Valid  places: '${PLACES[@]}'"
-    echo "Restart app: '${RESTARTS[@]}'"
+    echo "Valid  rotations: " "${ROTATIONS[@]}"
+    echo "Valid  places: " "${PLACES[@]}"
+    echo "Restart app:"  "${RESTARTS[@]}"
 }
 
 update_xorg(){
     mkdir -p /mnt/emmc
     umount -q /mnt/emmc/
-    mount "/dev/${EMMC}p2" /mnt/emmc
+    mount "${EMMC}p2" /mnt/emmc
 
     XORG_DIR="/mnt/emmc/usr/share/X11/xorg.conf.d"
     if [ ! -d ${XORG_DIR} ]; then
@@ -43,7 +43,7 @@ update_xorg(){
                 Option "Rotate" "$ROT_XORG"
             EndSection
 EOF
-        if [ $RESTART == "TRUE" ]; then
+        if [ "$RESTART" == "TRUE" ]; then
             systemctl restart KlipperScreen
         fi
     fi
@@ -53,15 +53,15 @@ EOF
 update_weston(){
     mkdir -p /mnt/emmc
     umount -q /mnt/emmc/
-    mount "/dev/${EMMC}p2" /mnt/emmc
+    mount "${EMMC}p2" /mnt/emmc
 
-    RELEASE=`cat /mnt/emmc/etc/debian_version | cut -d '.' -f 1`
+    RELEASE=$(cut -d '.' -f 1 /mnt/emmc/etc/debian_version)
     XDG_DIR="/mnt/emmc/etc/xdg/weston/weston.ini"
 
-    if [ ! -d ${XDG_DIR} ]; then
+    if [ ! -d "$XDG_DIR" ]; then
         echo "Misssig directory: ${XDG_DIR}"
     else
-        case "${RELEASE}" in
+        case "$RELEASE" in
             11)
                 sed -i "s/transform.*/transform=${ROT_WESTON_11}/" "${XDG_DIR}"
                 ;;
@@ -74,7 +74,7 @@ update_weston(){
                 ;;
         esac
 
-        if [ $RESTART == "TRUE" ]; then
+        if [ "$RESTART" == "TRUE" ]; then
             systemctl restart KlipperScreen
         fi
     fi
@@ -84,9 +84,9 @@ update_weston(){
 update_cmdline(){
     mkdir -p /mnt/emmc
     umount -q /mnt/emmc/
-    mount "/dev/${EMMC}p1" /mnt/emmc
+    mount "${EMMC}p1" /mnt/emmc
 
-    if [[ `grep 'fbcon=' /mnt/emmc/armbianEnv.txt` ]]; then
+    if [[ $(grep 'fbcon=' /mnt/emmc/armbianEnv.txt) ]]; then
         sed -i "s/\(fbcon=rotate:\)[0-3]/\1${ROT_FBCON}/" /mnt/emmc/armbianEnv.txt
     else
         sed -i "/extraargs=/ s/$/ fbcon=rotate:${ROT_FBCON}/" /mnt/emmc/armbianEnv.txt
@@ -98,17 +98,17 @@ update_cmdline(){
 update_fbcon() {
     echo $ROT_FBCON > /sys/devices/virtual/graphics/fbcon/rotate
 
-    if [ $RESTART == "TRUE" ]; then
+    if [ "$RESTART" == "TRUE" ]; then
         systemctl restart reflash-curses
     fi
 }
 
-if [ "x$ROTATION" == "x" ]; then
+if [ "$ROTATION" == "" ]; then
     usage 
     exit 1
 fi
 
-if [ "x$PLACE" == "x" ]; then
+if [ "$PLACE" == "" ]; then
     usage
     exit 1
 fi
@@ -153,7 +153,7 @@ case "${ROTATION}" in
         ROT_WESTON_11="rotate-270"
         ;;
     *)
-        echo "$ROTATION not in '${ROTATIONS[@]}'"
+        echo "$ROTATION not in " "${ROTATIONS[@]}"
         exit 1
         ;;
 esac
@@ -174,7 +174,7 @@ case "${PLACE}" in
         update_weston
         ;;
     *)
-        echo "$PLACE not in '${PLACES[@]}'"
+        echo "$PLACE not in " "${PLACES[@]}"
         exit 1
         ;;
 esac

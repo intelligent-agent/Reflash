@@ -196,7 +196,7 @@ export default {
     },
     async enableSsh(ssh_is_enabled) {
       const result = await axios.put(`/api/set_ssh_enabled`, { is_enabled: ssh_is_enabled, media: "emmc"});
-      if(result.data.status != 0){
+      if(result.data.status != "OK"){
         this.$waveui.notify("Error setting ssh state.", "error", 0);
       }
     },

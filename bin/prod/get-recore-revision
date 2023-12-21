@@ -2,20 +2,13 @@
 
 set -o pipefail
 
-handle_error() {
-    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
-    exit $1
-}
-
-trap 'handle_error $? $LINENO' ERR
-
 partprobe
 
-DEV=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
-
 mkdir -p /mnt/config
-if ! grep -qs '/mnt/config ' /proc/mounts; then
-    mount -r "/dev/${DEV}boot0p1" /mnt/config/
-fi
-CONFIG=`ls /mnt/config/*.json`
-cat "$CONFIG" | jq -r ".Revision" | tr '[:upper:]' '[:lower:]'
+umount -q /mnt/config/ || true
+mount -r "/dev/mmcblk2boot0p1" /mnt/config/
+
+CONFIG=$(ls /mnt/config/*.json)
+jq -r ".Revision" "$CONFIG" | tr '[:upper:]' '[:lower:]'
+
+umount -q /mnt/config/ || true

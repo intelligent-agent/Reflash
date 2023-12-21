@@ -30,12 +30,12 @@ const getters = {
 };
 const actions = {
   async getOptions({ commit }){
-    const response = await axios.get(`/api/options`)
+    const response = await axios.get(`/api/get_options`)
     commit('getOptions', response.data);
   },
   async setOption({ commit }, option){
     commit('setOption', option);
-    await axios.post(`/api/save_options`, state.options);
+    await axios.post(`/api/set_options`, state.options);
   },
   setVisible({ commit }, payload){
     commit('setVisible', payload);

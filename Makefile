@@ -9,12 +9,13 @@ install_bins:
 	chmod +x /usr/local/bin/get-boot-media
 	chmod +x /usr/local/bin/get-emmc-version
 	chmod +x /usr/local/bin/get-recore-serial-number
-	chmod +x /usr/local/bin/get-recore-revision
 	chmod +x /usr/local/bin/rotate-screen
 	chmod +x /usr/local/bin/create-recore-config
 	chmod +x /usr/local/bin/is-usb-present
 	chmod +x /usr/local/bin/is-ssh-enabled
 	chmod +x /usr/local/bin/get-free-space
+	chmod +x /usr/local/bin/mount-unmount-usb
+	chmod +x /usr/local/bin/get-reflash-version
 
 upload_bins:
 	scp bin/prod/* root@recore.local:/usr/local/bin

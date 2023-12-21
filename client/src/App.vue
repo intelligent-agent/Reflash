@@ -362,7 +362,8 @@ export default {
         else if(data.state == "FINISHED"){
           this.selectedUploadImage = [];
           await this.getLocalImages();
-          this.selectedLocalImage = data.filename.slice(0, -7);
+          this.selectedLocalImage = data.filename;
+          console.log(this.selectedLocalImage)
         }
         else if(data.state == "CANCELED"){
           this.getLocalImages();
@@ -381,7 +382,7 @@ export default {
     async downloadSelected(){
       let self = this;
       if(this.isTransferring){
-        await axios.put(`/api/download_refactor`, {
+        await axios.put(`/api/start_download`, {
           "filename": this.selectedGithubImage["name"], 
           "size": this.selectedGithubImage["size"],
           "url": this.selectedGithubImage["url"],
@@ -418,7 +419,7 @@ export default {
         else if(data.state == "FINISHED"){
           this.selectedGithubImage = null;
           await this.getLocalImages();
-          this.selectedLocalImage = data.filename.slice(0, -7);
+          this.selectedLocalImage = data.filename;
         }
         else if(data.state == "CANCELED"){
           this.getLocalImages();
@@ -446,7 +447,7 @@ export default {
     },
     async installSelected(){
       let self = this;
-      await axios.put(`/api/install_refactor`, {
+      await axios.put(`/api/start_installation`, {
           "filename": this.selectedLocalImage, 
           "start_time": Date.now(),
       }).then(() => {

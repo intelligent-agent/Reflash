@@ -1,25 +1,19 @@
 #!/bin/bash
 set -euo pipefail
 
-handle_error() {
-    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
-    exit $1
-}
-
 info() {
     echo "[info] $1" >> /var/log/reflash.log
     echo "$1"
 }
 
-trap 'handle_error $? $LINENO' ERR
-
 info "Starting recore flash script"
 info "------------------"
 
 INFILE=$1
-OUTFILE="/dev/"`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+OUTFILE="/dev/mmcblk2"
 
 if ! test -b ${OUTFILE}boot0p1; then
+    info "partx"
     partx -a ${OUTFILE}boot0
 fi
 
@@ -28,20 +22,22 @@ if ! grep -qs '/mnt/config ' /proc/mounts; then
     mount -r ${OUTFILE}boot0p1 /mnt/config/
 fi
 
-CONFIG=`ls /mnt/config/*.json`
-REVISION=`cat "$CONFIG" | jq -r ".Revision" | tr '[:upper:]' '[:lower:]'`
-SIZE=`xz -lv $INFILE | grep Uncompressed | sed 's/[,(]//g' | awk '{ printf "%s\n", $5 }'`
+CONFIG=$(ls /mnt/config/*.json)
+REVISION=$(jq -r ".Revision" "$CONFIG" | tr '[:upper:]' '[:lower:]')
+umount /mnt/config/
+
+SIZE=$(xz -lv "$INFILE" | grep Uncompressed | sed 's/[,(]//g' | awk '{ printf "%s\n", $5 }')
 
 info "Found Recore hardware revision $REVISION"
 info "Flashing file name $INFILE"
 info "Overwriting block device $OUTFILE"
 info "Uncompressed file size is $SIZE bytes"
 
-mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount
+info "Umounting /dev/mmcblk*"
+mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount || true
 info "Starting flashing..."
-(xz -T 0 -d -c ${INFILE} | pv -f -n -b > ${OUTFILE}) 2> /tmp/recore-flash-progress
+(xz -T 0 -d -c "$INFILE" | pv -f -n -b > "$OUTFILE") 2> /tmp/recore-flash-progress
 info "Flashing done"
-info "Syncing drives"
 sync
 
 # Re-read partition table
@@ -56,8 +52,8 @@ info "Creating new UUIDs"
 tune2fs -U random ${OUTFILE}p1
 tune2fs -U random ${OUTFILE}p2
 
-UUID1=`blkid -s UUID -o value ${OUTFILE}p1`
-UUID2=`blkid -s UUID -o value ${OUTFILE}p2`
+UUID1=$(blkid -s UUID -o value ${OUTFILE}p1)
+UUID2=$(blkid -s UUID -o value ${OUTFILE}p2)
 
 mkdir -p /mnt/emmc
 # mount and exchange UUID
@@ -68,11 +64,11 @@ sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" /mnt/emmc/etc/fstab
 
 # Copy config file, if one is not already present
 if test -d /mnt/emmc/home/debian; then
-  cd /mnt/emmc/home/debian/
+  cd /mnt/emmc/home/debian/ || exit
   if ! test -f printer_data/config/printer.cfg; then
-    if test -f klipper/config/generic-recore-$REVISION.cfg; then
+    if test -f klipper/config/generic-recore-"$REVISION".cfg; then
       info "Installing Klipper config file"
-      cp klipper/config/generic-recore-$REVISION.cfg printer_data/config/printer.cfg
+      cp klipper/config/generic-recore-"$REVISION".cfg printer_data/config/printer.cfg
       chown 1000:1000 printer_data/config/printer.cfg
     fi
     # Enable mainsail on mainsail distros
@@ -99,13 +95,13 @@ sed -i "/^rootdev=.*/d" /mnt/emmc/armbianEnv.txt
 sed -i '/^$/d' /mnt/emmc/armbianEnv.txt
 echo "rootdev=UUID=${UUID2}" >> /mnt/emmc/armbianEnv.txt
 
-cd /mnt/emmc/dtb/allwinner/
-if test -f sun50i-a64-recore-$REVISION.dtb; then
+cd /mnt/emmc/dtb/allwinner/ || exit
+if test -f sun50i-a64-recore-"$REVISION".dtb; then
   info "Symlinking device tree"
-  ln -sf sun50i-a64-recore-$REVISION.dtb sun50i-a64-recore.dtb
+  ln -sf sun50i-a64-recore-"$REVISION".dtb sun50i-a64-recore.dtb
 fi
 cd /
 umount ${OUTFILE}p1
 
 sync
-info "Script done!"
+info "Install script done!"
