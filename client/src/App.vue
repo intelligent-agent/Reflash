@@ -1,13 +1,14 @@
 <template>
   <w-app>
-    <TheLogger :open="openLog"  @close="openLog=false"/>
-    <TheOptions 
+    <TheLogger :open="openLog" @close="openLog = false" />
+    <TheOptions
       :open="openOptions"
       @set-option="setOption"
       @reboot-board="rebootBoard"
       @shutdown-board="shutdownBoard"
-      @close="openOptions=false"/>
-    <w-card  class="mxa pa3 card secondary" >
+      @close="openOptions = false"
+    />
+    <w-card class="mxa pa3 card secondary">
       <w-flex wrap class="text-center">
         <div class="xs5 pa1">
           <img style="width: 40px; height: 40px" :src="computeSVG('logo')" />
@@ -17,43 +18,73 @@
               <img style="width: 25px; height: 25px" :src="computeSVG('Log')" />
             </w-button>
             <w-button @click="openInfo = !openInfo" text>
-              <img style="width: 25px; height: 25px" :src="computeSVG('Info')" />
+              <img
+                style="width: 25px; height: 25px"
+                :src="computeSVG('Info')"
+              />
             </w-button>
             <w-button @click="openOptions = !openOptions" text>
-              <img style="width: 25px; height: 25px" :src="computeSVG('Options')" />
+              <img
+                style="width: 25px; height: 25px"
+                :src="computeSVG('Options')"
+              />
             </w-button>
           </div>
         </div>
         <div class="xs5 pa4">
-          <TheInfo :open="openInfo" :version="reflash_version" :revision="recore_revision" />
+          <TheInfo
+            :open="openInfo"
+            :version="reflash_version"
+            :revision="recore_revision"
+          />
         </div>
         <div class="xs1 pa1 align-self-center">
           <w-select
             v-model="selectedMethod"
             :items="availableMethods"
             no-unselect
-            return-object>
+            return-object
+          >
           </w-select>
         </div>
-        <div class="xs1 pa1 align-self-center">{{selectedMethod.id == 0 ? "Download" : "Upload"}}</div>
+        <div class="xs1 pa1 align-self-center">
+          {{ selectedMethod.id == 0 ? "Download" : "Upload" }}
+        </div>
         <div class="xs1 pa1 align-self-center">USB drive</div>
-        <div class="xs1 pa1 align-self-center"><FlashSelector ref="flashSelector"/></div>
+        <div class="xs1 pa1 align-self-center">
+          <FlashSelector ref="flashSelector" />
+        </div>
         <div class="xs1 pa1 align-self-center">eMMC</div>
 
-        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG(selectedMethod.image)" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('Arrow-right')" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('USB')" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('Arrow-'+flashDirection())" /></div>
-        <div class="xs1 pa1 align-self-center"><img style="width: 60%;" :src="computeSVG('eMMC')" /></div>
+        <div class="xs1 pa1 align-self-center">
+          <img style="width: 60%" :src="computeSVG(selectedMethod.image)" />
+        </div>
+        <div class="xs1 pa1 align-self-center">
+          <img style="width: 60%" :src="computeSVG('Arrow-right')" />
+        </div>
+        <div class="xs1 pa1 align-self-center">
+          <img style="width: 60%" :src="computeSVG('USB')" />
+        </div>
+        <div class="xs1 pa1 align-self-center">
+          <img
+            style="width: 60%"
+            :src="computeSVG('Arrow-' + flashDirection())"
+          />
+        </div>
+        <div class="xs1 pa1 align-self-center">
+          <img style="width: 60%" :src="computeSVG('eMMC')" />
+        </div>
 
-        <div class="xs1 pa1 therow">Choose image to {{selectedMethod.id == 0 ? "Download" : "Upload"}}</div>
+        <div class="xs1 pa1 therow">
+          Choose image to {{ selectedMethod.id == 0 ? "Download" : "Upload" }}
+        </div>
         <div class="xs1 pa1">
-          <ProgressBar ref="transferprogressbar" name="transfer"/>
-          <span class="red">{{this.computeSizeCheckText()}}</span>
+          <ProgressBar ref="transferprogressbar" name="transfer" />
+          <span class="red">{{ this.computeSizeCheckText() }}</span>
         </div>
         <div class="xs1 pa1">Choose image to install</div>
         <div class="xs1 pa1">
-          <ProgressBar ref="installprogressbar" name="install"/>
+          <ProgressBar ref="installprogressbar" name="install" />
         </div>
         <div class="xs1 pa1">
           <div v-if="flash.selectedMethod == 1">Backup Filename</div>
@@ -66,7 +97,8 @@
             return-object
             :items="githubImages"
             item-label-key="name"
-            placeholder="Please select one">
+            placeholder="Please select one"
+          >
           </w-select>
           <w-input
             v-if="selectedMethod.id == 1"
@@ -74,13 +106,19 @@
             ref="inputFile"
             v-model="selectedUploadImage"
             static-label
-            @input="onFileInput">
-              Select image file to upload
+            @input="onFileInput"
+          >
+            Select image file to upload
           </w-input>
         </div>
         <div class="xs1 align-self-center justify-space-between">
-          <w-button xl outline @click="onTransferButtonClick()" v-if="this.isTransferButtonVisible()">
-            <span>{{this.computeTransferButtonText()}}</span>
+          <w-button
+            xl
+            outline
+            @click="onTransferButtonClick()"
+            v-if="this.isTransferButtonVisible()"
+          >
+            <span>{{ this.computeTransferButtonText() }}</span>
           </w-button>
         </div>
         <w-flex class="xs1 align-self-center flex justify-start">
@@ -89,70 +127,64 @@
             :items="localImages"
             item-label-key="name"
             placeholder="Please select one"
-            :item-click="onSelectedFileChanged()">
+            :item-click="onSelectedFileChanged()"
+          >
           </w-select>
-          <IntegrityChecker ref="integritychecker"/>
+          <IntegrityChecker ref="integritychecker" />
         </w-flex>
         <div class="xs1 align-self-center">
-          <w-button xl outline @click="onInstallButtonClick()" v-if="isInstallButtonVisibile()">
+          <w-button
+            xl
+            outline
+            @click="onInstallButtonClick()"
+            v-if="isInstallButtonVisibile()"
+          >
             <span>
-              {{this.installButtonText()}}
+              {{ this.installButtonText() }}
             </span>
           </w-button>
         </div>
         <div class="xs1">
-          <w-input v-model="backupFile" v-if="flash.selectedMethod == 1">Label</w-input>
+          <w-input v-model="backupFile" v-if="flash.selectedMethod == 1"
+            >Label</w-input
+          >
         </div>
-
-        <div class="xs5">
-          <div v-if="installFinished && !showOverlay">
-            <w-transition-expand y>
-              <w-alert>
-                Install finished! Please press the reboot button.
-              </w-alert>
-            </w-transition-expand>
-            <w-button xl outline class="ma1 btn" @click="rebootBoard()"><span>Reboot Now</span></w-button>
-            <w-button xl outline class="ma1 btn" @click="checkUsbPresent()"><span>Check USB present</span></w-button>
-          </div>
-          <div v-if="showOverlay">
-            <w-transition-expand y>
-              <w-alert v-if="showOverlay">
-                Please wait while board is rebooting
-              </w-alert>
-            </w-transition-expand>
-            <w-progress class="ma1" circle></w-progress><br>
-            <w-button xl outline @click="isServerUp()" v-if="showOverlay"><span>Check server</span></w-button>
-          </div>
-        </div>
+        <TheUsbChecker
+          :open="installFinished"
+          ref="TheUsbChecker"
+          @reboot-board="rebootBoard"
+        />
       </w-flex>
     </w-card>
   </w-app>
 </template>
 
 <script>
-import TheOptions from './components/TheOptions'
-import TheLogger from './components/TheLogger'
-import TheInfo from './components/TheInfo'
-import ProgressBar from './components/ProgressBar'
-import FlashSelector from './components/FlashSelector'
-import IntegrityChecker from './components/IntegrityChecker'
-import WaveUI from 'wave-ui'
-import { mapGetters, mapActions } from 'vuex';
-import axios from 'axios';
+import TheOptions from "./components/TheOptions";
+import TheLogger from "./components/TheLogger";
+import TheInfo from "./components/TheInfo";
+import ProgressBar from "./components/ProgressBar";
+import FlashSelector from "./components/FlashSelector";
+import IntegrityChecker from "./components/IntegrityChecker";
+import TheUsbChecker from "./components/TheUsbChecker";
+import WaveUI from "wave-ui";
+import { mapGetters, mapActions } from "vuex";
+import axios from "axios";
 
 export default {
-  name: 'App',
+  name: "App",
   components: {
     TheOptions,
     TheLogger,
     TheInfo,
     ProgressBar,
     FlashSelector,
-    IntegrityChecker
+    IntegrityChecker,
+    TheUsbChecker,
   },
-  setup () {
-    const waveui = new WaveUI(this, {})
-    return { waveui }
+  setup() {
+    const waveui = new WaveUI(this, {});
+    return { waveui };
   },
   data: () => ({
     installFinished: false,
@@ -172,8 +204,8 @@ export default {
     openOptions: false,
     showOverlay: false,
     availableMethods: [
-      { id: 0, label: 'GitHub', value: 0, image: 'Cloud'},
-      { id: 1, label: 'File upload', value: 1, image: 'File'}
+      { id: 0, label: "GitHub", value: 0, image: "Cloud" },
+      { id: 1, label: "File upload", value: 1, image: "File" },
     ],
     selectedMethod: 0,
     imageColor: "white",
@@ -184,430 +216,403 @@ export default {
     recore_revision: "Unknown",
     bytesAvailable: -1,
     sizeWarning: "",
-    isUsbPresent: false,
   }),
-  computed: mapGetters(['options', 'progress', 'flash']),
+  computed: mapGetters(["options", "progress", "flash"]),
   methods: {
     ...mapActions([
-      'setProgress',
-      'setBandwidth',
-      'setVisible',
-      'setFlashMethod',
-      'setTimeStarted',
-      'setTimeFinished']),
-    computeImage(name){
-      return require('./assets/'+name+'-'+this.imageColor+'.png')
+      "setProgress",
+      "setBandwidth",
+      "setVisible",
+      "setFlashMethod",
+      "setTimeStarted",
+      "setTimeFinished",
+    ]),
+    computeImage(name) {
+      return require("./assets/" + name + "-" + this.imageColor + ".png");
     },
-    computeSVG(name){
-      return require('./assets/'+name+'-'+this.imageColor+'.svg')
+    computeSVG(name) {
+      return require("./assets/" + name + "-" + this.$waveui.theme + ".svg");
     },
-    computeTransferButtonText(){
-      if(this.selectedMethod.id == 0){
+    computeTransferButtonText() {
+      if (this.selectedMethod.id == 0) {
         return this.isTransferring ? "Cancel" : "Download";
-      }
-      else if(this.selectedMethod.id == 1){
+      } else if (this.selectedMethod.id == 1) {
         return this.isTransferring ? "Cancel" : "Upload";
       }
       return "";
     },
-    flashDirection(){
-      return this.flash.selectedMethod == 0 ? 'right' : 'left';
+    flashDirection() {
+      return this.flash.selectedMethod == 0 ? "right" : "left";
     },
-    installButtonText(){
-      if(this.isInstalling){
-        return "Cancel"
+    installButtonText() {
+      if (this.isInstalling) {
+        return "Cancel";
       }
-      if(this.flash.selectedMethod == 0){
+      if (this.flash.selectedMethod == 0) {
         return "Install";
-      }
-      else{
+      } else {
         return "Backup";
       }
     },
-    isInstallButtonVisibile(){
-      if(this.flash.selectedMethod == 0){
+    isInstallButtonVisibile() {
+      if (this.flash.selectedMethod == 0) {
         return this.selectedLocalImage;
-      }
-      else{
+      } else {
         return this.backupFile != "";
       }
     },
-    isTransferButtonVisible(){
-      if(this.selectedMethod.id == 0){
+    isTransferButtonVisible() {
+      if (this.selectedMethod.id == 0) {
         return this.selectedGithubImage;
-      }
-      else if(this.selectedMethod.id == 1){
+      } else if (this.selectedMethod.id == 1) {
         return this.selectedUploadImage.file;
       }
       return "";
-    },    
-    setTheme(darkmode){
+    },
+    setTheme(darkmode) {
       this.imageColor = darkmode ? "white" : "black";
-      if(darkmode){
-        if(this.dark.parentElement == null){
-            document.head.appendChild(this.dark)
-        }
-      }
-      else{
-        if(this.dark.parentElement === document.head){
-          document.head.removeChild(this.dark);
-        }
+      if (darkmode) {
+        this.$waveui.switchTheme("dark");
+      } else {
+        this.$waveui.switchTheme("light");
       }
     },
-    computeSizeCheckText(){
-      if(this.selectedMethod.id == 0 && this.selectedGithubImage && this.bytesAvailable > 0 && this.bytesAvailable < this.selectedGithubImage.size){
-          return "Not enough free space on USB";
-      }
-      else if(this.selectedMethod.id == 1 && this.selectedUploadImage.file && this.bytesAvailable > 0 && this.bytesAvailable < this.selectedUploadImage.size){
-        return "Not enough free space on USB"
-      }
-      else{
-        return ""
+    computeSizeCheckText() {
+      if (
+        this.selectedMethod.id == 0 &&
+        this.selectedGithubImage &&
+        this.bytesAvailable > 0 &&
+        this.bytesAvailable < this.selectedGithubImage.size
+      ) {
+        return "Not enough free space on USB";
+      } else if (
+        this.selectedMethod.id == 1 &&
+        this.selectedUploadImage.file &&
+        this.bytesAvailable > 0 &&
+        this.bytesAvailable < this.selectedUploadImage.size
+      ) {
+        return "Not enough free space on USB";
+      } else {
+        return "";
       }
     },
-    onSelectedFileChanged(){
-      if(this.$refs.integritychecker && this.selectedLocalImage != []){
+    onSelectedFileChanged() {
+      if (this.$refs.integritychecker && this.selectedLocalImage != []) {
         this.$refs.integritychecker.fileSelected(this.selectedLocalImage);
       }
     },
-    onFileInput(files){
-      this.files = files
+    onFileInput(files) {
+      this.files = files;
       this.file = files.file;
     },
-    async uploadFinish(){
-      await axios.put(`/api/upload_finish`
-      ).then(function(response) {
-            self.status = response.data["success"];
+    async uploadFinish() {
+      await axios.put(`/api/upload_finish`).then(function (response) {
+        self.status = response.data["success"];
       });
     },
-    async uploadCancel(){
-      await axios.put(`/api/upload_cancel`
-      ).then(function(response) {
-            self.status = response.data["success"];
-      });      
+    async uploadCancel() {
+      await axios.put(`/api/upload_cancel`).then(function (response) {
+        self.status = response.data["success"];
+      });
     },
-    async uploadSelected(){
+    async uploadSelected() {
       let self = this;
-      if(this.isTransferring){
-          await axios.put(`/api/upload_start`, {
-          "filename": self.file.name,
-          "size": self.file.size,
-          "start_time": Date.now(),
-        }).then(function(response) {
-              self.status = response.data["success"];
-              self.uploadLocalFile();
-              self.checkUploadProgress();
-        });
-      }
-      else{
+      if (this.isTransferring) {
+        await axios
+          .put(`/api/upload_start`, {
+            filename: self.file.name,
+            size: self.file.size,
+            start_time: Date.now(),
+          })
+          .then(function (response) {
+            self.status = response.data["success"];
+            self.uploadLocalFile();
+            self.checkUploadProgress();
+          });
+      } else {
         self.uploadCancel();
       }
     },
-    async uploadLocalFile(){
-      const CHUNK_SIZE = 3*1024*1024;
+    async uploadLocalFile() {
+      const CHUNK_SIZE = 3 * 1024 * 1024;
       let self = this;
       var reader = new FileReader();
       var offset = 0;
       var filesize = this.file.size;
 
-      reader.onload = function(){
-          var result = reader.result;
-          var chunk = result;
-          axios.post(`/api/upload_chunk`, {
-             "chunk": chunk
-           }).then(function(response) {
-            const status = response.data
-            if(status.success && self.isTransferring){
+      reader.onload = function () {
+        var result = reader.result;
+        var chunk = result;
+        axios
+          .post(`/api/upload_chunk`, {
+            chunk: chunk,
+          })
+          .then(function (response) {
+            const status = response.data;
+            if (status.success && self.isTransferring) {
               offset += CHUNK_SIZE;
-              if(offset <= filesize){
+              if (offset <= filesize) {
                 var slice = self.file.slice(offset, offset + CHUNK_SIZE);
                 reader.readAsDataURL(slice);
-              }
-              else{
+              } else {
                 offset = filesize;
                 self.uploadFinish();
               }
-            }
-            else{
+            } else {
               self.uploadCancel();
             }
           });
       };
 
-      if(this.file){
-          var slice = this.file.slice(offset, offset + CHUNK_SIZE);
-          reader.readAsDataURL(slice);
-          self.fileName = this.file.name;
+      if (this.file) {
+        var slice = this.file.slice(offset, offset + CHUNK_SIZE);
+        reader.readAsDataURL(slice);
+        self.fileName = this.file.name;
       }
     },
-    async checkUploadProgress(){
+    async checkUploadProgress() {
       const response = await axios.get(`/api/get_progress`);
       let data = response.data;
-      if(data.state == "UPLOADING"){
+      if (data.state == "UPLOADING") {
         this.isTransferring = true;
-        this.setProgress({name: 'transfer', progress: data.progress});
-        this.setBandwidth({name: 'transfer', bandwidth: data.bandwidth});
-        this.setTimeStarted({name: 'transfer', time: data.start_time});
-        this.setVisible({name: 'transfer', visible: true});
+        this.setProgress({ name: "transfer", progress: data.progress });
+        this.setBandwidth({ name: "transfer", bandwidth: data.bandwidth });
+        this.setTimeStarted({ name: "transfer", time: data.start_time });
+        this.setVisible({ name: "transfer", visible: true });
         this.$refs.transferprogressbar.update();
         this.selectedMethod = this.availableMethods[1];
         setTimeout(this.checkUploadProgress, 1000);
-      }
-      else{
+      } else {
         this.isTransferring = false;
-        this.setVisible({name: 'transfer', visible: false});
-        if(data.state == "ERROR"){
+        this.setVisible({ name: "transfer", visible: false });
+        if (data.state == "ERROR") {
           this.$waveui.notify(data.error, "error", 0);
-        }
-        else if(data.state == "FINISHED"){
+        } else if (data.state == "FINISHED") {
           this.selectedUploadImage = [];
           await this.getLocalImages();
           this.selectedLocalImage = data.filename;
-          console.log(this.selectedLocalImage)
-        }
-        else if(data.state == "CANCELED"){
+        } else if (data.state == "CANCELED") {
           this.getLocalImages();
         }
       }
     },
-    onTransferButtonClick(){
+    onTransferButtonClick() {
       this.isTransferring = !this.isTransferring;
-      if(this.selectedMethod.id == 0){
+      if (this.selectedMethod.id == 0) {
         this.downloadSelected();
-      }
-      else if(this.selectedMethod.id == 1){
+      } else if (this.selectedMethod.id == 1) {
         this.uploadSelected();
       }
     },
-    async downloadSelected(){
+    async downloadSelected() {
       let self = this;
-      if(this.isTransferring){
-        await axios.put(`/api/start_download`, {
-          "filename": this.selectedGithubImage["name"], 
-          "size": this.selectedGithubImage["size"],
-          "url": this.selectedGithubImage["url"],
-          "start_time": Date.now(),
-        }).then(() => {
-          self.checkDownloadProgress();
-        });
-      }
-      else{
+      if (this.isTransferring) {
+        await axios
+          .put(`/api/start_download`, {
+            filename: this.selectedGithubImage["name"],
+            size: this.selectedGithubImage["size"],
+            url: this.selectedGithubImage["url"],
+            start_time: Date.now(),
+          })
+          .then(() => {
+            self.checkDownloadProgress();
+          });
+      } else {
         await axios.put(`/api/cancel_download`).then(() => {
           self.checkDownloadProgress();
-        });        
+        });
       }
     },
     async checkDownloadProgress() {
       const response = await axios.get(`/api/get_progress`);
       let data = response.data;
-      if(data.state == "DOWNLOADING"){
+      if (data.state == "DOWNLOADING") {
         this.isTransferring = true;
-        this.setProgress({name: 'transfer', progress: data.progress});
-        this.setBandwidth({name: 'transfer', bandwidth: data.bandwidth});
-        this.setTimeStarted({name: 'transfer', time: data.start_time});
-        this.setVisible({name: 'transfer', visible: true});
-        this.selectedGithubImage = this.getGithubImageFromName(data.filename)
+        this.setProgress({ name: "transfer", progress: data.progress });
+        this.setBandwidth({ name: "transfer", bandwidth: data.bandwidth });
+        this.setTimeStarted({ name: "transfer", time: data.start_time });
+        this.setVisible({ name: "transfer", visible: true });
+        this.selectedGithubImage = this.getGithubImageFromName(data.filename);
         this.$refs.transferprogressbar.update();
         setTimeout(this.checkDownloadProgress, 1000);
-      }
-      else{
+      } else {
         this.isTransferring = false;
-        this.setVisible({name: 'transfer', visible: false});
-        if(data.state == "ERROR"){
+        this.setVisible({ name: "transfer", visible: false });
+        if (data.state == "ERROR") {
           this.$waveui.notify(data.error, "error", 0);
-        }
-        else if(data.state == "FINISHED"){
+        } else if (data.state == "FINISHED") {
           this.selectedGithubImage = null;
           await this.getLocalImages();
           this.selectedLocalImage = data.filename;
-        }
-        else if(data.state == "CANCELED"){
+        } else if (data.state == "CANCELED") {
           this.getLocalImages();
         }
       }
     },
-    onInstallButtonClick(){
+    onInstallButtonClick() {
       this.isInstalling = !this.isInstalling;
-      if(this.flash.selectedMethod == 0){
-        if(this.isInstalling){
+      if (this.flash.selectedMethod == 0) {
+        if (this.isInstalling) {
           this.installSelected();
-        }
-        else{
+        } else {
           this.cancelInstall();
         }
-      }
-      else{
-        if(this.isInstalling){
+      } else {
+        if (this.isInstalling) {
           this.backupSelected();
-        }
-        else{
+        } else {
           this.cancelBackup();
         }
       }
     },
-    async installSelected(){
+    async installSelected() {
       let self = this;
-      await axios.put(`/api/start_installation`, {
-          "filename": this.selectedLocalImage, 
-          "start_time": Date.now(),
-      }).then(() => {
-        self.checkInstallProgress();
-      });
+      await axios
+        .put(`/api/start_installation`, {
+          filename: this.selectedLocalImage,
+          start_time: Date.now(),
+        })
+        .then(() => {
+          self.checkInstallProgress();
+        });
     },
-    async cancelInstall(){
+    async cancelInstall() {
       let self = this;
-      await axios.put(`/api/cancel_installation`, {
-          "filename": this.selectedLocalImage
-      }).then(() => {
-        self.checkInstallProgress();
-      });
+      await axios
+        .put(`/api/cancel_installation`, {
+          filename: this.selectedLocalImage,
+        })
+        .then(() => {
+          self.checkInstallProgress();
+        });
     },
     async checkInstallProgress() {
       const response = await axios.get(`/api/get_progress`);
-      let data = response.data
-      if(data.state == "INSTALLING"){
+      let data = response.data;
+      if (data.state == "INSTALLING") {
         this.isInstalling = true;
-        this.setVisible({name: 'install', visible: true});
-        this.setProgress({name: 'install', progress: data.progress});
-        this.setBandwidth({name: 'install', bandwidth: data.bandwidth});
-        this.setTimeStarted({name: 'install', time: data.start_time});
-        this.selectedLocalImage = data.filename
+        this.setVisible({ name: "install", visible: true });
+        this.setProgress({ name: "install", progress: data.progress });
+        this.setBandwidth({ name: "install", bandwidth: data.bandwidth });
+        this.setTimeStarted({ name: "install", time: data.start_time });
+        this.selectedLocalImage = data.filename;
         this.$refs.installprogressbar.update();
         setTimeout(this.checkInstallProgress, 1000);
-      }
-      else{
+      } else {
         this.isInstalling = false;
-        this.setVisible({name: 'install', visible: false});
-        if(data.state == "ERROR"){
+        this.setVisible({ name: "install", visible: false });
+        if (data.state == "ERROR") {
           this.$waveui.notify(data.error, "error", 0);
-        }
-        else if(data.state == "FINISHED"){
+        } else if (data.state == "FINISHED") {
           await axios.get(`/api/run_install_finished_commands`);
-          if(this.options.rebootWhenDone){
-            this.rebootBoard();
-          }
-          else{
-            this.installFinished = true;
-          } 
+          this.installFinished = true;
         }
       }
     },
-    async cancelBackup(){
+    async cancelBackup() {
       await axios.put(`/api/cancel_backup`, {
-          "filename": this.backupFile
+        filename: this.backupFile,
       });
     },
-    async backupSelected(){
-      this.setProgress({name: 'install', progress: 0});
+    async backupSelected() {
+      this.setProgress({ name: "install", progress: 0 });
       this.$refs.installprogressbar.update();
       let self = this;
-      await axios.put(`/api/start_backup`, {
-          "filename": this.backupFile,
-          "start_time": Date.now()
-      }).then(() => {
-        self.checkBackupProgress()
-      });
+      await axios
+        .put(`/api/start_backup`, {
+          filename: this.backupFile,
+          start_time: Date.now(),
+        })
+        .then(() => {
+          self.checkBackupProgress();
+        });
     },
-    async checkBackupProgress(){
+    async checkBackupProgress() {
       const response = await axios.get(`/api/get_progress`);
-      let data = response.data
-      if(data.state == "BACKUPING"){
+      let data = response.data;
+      if (data.state == "BACKUPING") {
         this.isInstalling = true;
-        this.setVisible({name: 'install', visible: true});
-        this.setTimeStarted({name: 'install', time: data.start_time}); 
-        this.setProgress({name: 'install', progress: data.progress});
-        this.setBandwidth({name: 'install', bandwidth: data.bandwidth});
-        if(this.flash.selectedMethod != 1){
+        this.setVisible({ name: "install", visible: true });
+        this.setTimeStarted({ name: "install", time: data.start_time });
+        this.setProgress({ name: "install", progress: data.progress });
+        this.setBandwidth({ name: "install", bandwidth: data.bandwidth });
+        if (this.flash.selectedMethod != 1) {
           this.$refs.flashSelector.setSelection(1);
-          this.backupFile = data.filename
+          this.backupFile = data.filename;
         }
         this.$refs.installprogressbar.update();
         setTimeout(this.checkBackupProgress, 1000);
-      }
-      else{
+      } else {
         this.isInstalling = false;
-        this.setVisible({name: 'install', visible: false});
-        if(data.state == "FINISHED"){
+        this.setVisible({ name: "install", visible: false });
+        if (data.state == "FINISHED") {
           this.backupFile = "";
           this.getLocalImages();
         }
-        if(data.state == "ERROR"){
+        if (data.state == "ERROR") {
           this.$waveui.notify(data.error, "error", 0);
         }
       }
     },
-    rebootBoard(){
+    rebootBoard() {
       this.showOverlay = true;
       axios.put(`/api/reboot_board`);
     },
-    async checkUsbPresent(){
-      const response = await axios.get(`/api/is_usb_present`);
-      this.isUsbPresent = response.data.result
-    },
-    shutdownBoard(){
+    shutdownBoard() {
       axios.put(`/api/shutdown_board`);
     },
-    enableSsh(){
+    enableSsh() {
       axios.put(`/api/enable_ssh`);
     },
-    isServerUp(){
-      fetch(`/favicon.ico`)
-        .then(response => {
-          if(response.status == 200){
-            location.reload();
-          }
-          return response.status == 200;
-        });
-    },
-    setOption(opt, value){
-      if(opt == 'darkmode'){
-        if(!this.dark){
-          this.dark = document.createElement('link')
-          this.dark.rel = 'stylesheet'
-          this.dark.href = '/darkmode.css'
+    isServerUp() {
+      fetch(`/favicon.ico`).then((response) => {
+        if (response.status == 200) {
+          location.reload();
         }
+        return response.status == 200;
+      });
+    },
+    setOption(opt, value) {
+      if (opt == "darkmode") {        
         this.setTheme(value);
       }
-      if(opt == 'bootFromEmmc'){
-        axios.put(`/api/set_boot_media`, {'media': value ? 'emmc' : 'usb'});
-      }
     },
-    getGithubImageFromName(name){
-      for(const img of this.githubImages){
-        if(img.name == name){
-          return img
+    getGithubImageFromName(name) {
+      for (const img of this.githubImages) {
+        if (img.name == name) {
+          return img;
         }
       }
     },
-    populateImages(releases){
-      for(let release of releases){
-        for(let asset of release.assets){
-          if(asset.name.includes("Refactor-recore")){
+    populateImages(releases) {
+      for (let release of releases) {
+        for (let asset of release.assets) {
+          if (asset.name.includes("Refactor-recore")) {
             this.githubImages.push({
               name: asset.name,
               id: asset.id,
               url: asset.browser_download_url,
-              size: asset.size
-            })
+              size: asset.size,
+            });
           }
         }
       }
     },
-    async getLocalImages(){
+    async getLocalImages() {
       const response = await axios.get(`/api/get_info`);
       this.localImages = response.data.local_images;
       this.reflash_version = response.data.reflash_version;
       this.emmc_version = response.data.emmc_version;
-      this.recore_revision = response.data.recore_revision
-      this.bytesAvailable = response.data.bytes_available
+      this.recore_revision = response.data.recore_revision;
+      this.bytesAvailable = response.data.bytes_available;
     },
-    async getGithubImages(){
+    async getGithubImages() {
       fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
-      .then(response => response.json())
-      .then(data => (this.populateImages(data)));
-    }
+        .then((response) => response.json())
+        .then((data) => this.populateImages(data));
+    },
   },
-  created(){
+  created() {
     this.selectedMethod = this.availableMethods[0];
     this.getGithubImages();
     this.getLocalImages();
@@ -616,25 +621,45 @@ export default {
     this.checkBackupProgress();
     this.checkUploadProgress();
   },
-}
+};
 </script>
 
 <style>
+:root[data-theme="light"] {
+  --w-base-bg-color-rgb: #f1f1f1;
+  --w-base-color-rgb: 0, 0, 0; /* black */
+  --w-contrast-bg-color-rgb: 0, 0, 0; /* black */
+  --w-contrast-color-rgb: 255, 255, 255; /* white */
+  --w-disabled-color-rgb: 204, 204, 204; /* #ccc */
+  --w-secondary-color: #292a2c;
+  --w-primary-color: #292a2c;
+}
+
+:root[data-theme="dark"] {
+  --w-base-bg-color-rgb: #292a2c; /* #222 */
+  --w-base-color-rgb: 255, 255, 255; /* white */
+  --w-contrast-bg-color-rgb: 255, 255, 255; /* white */
+  --w-contrast-color-rgb: 0, 0, 0; /* black */
+  --w-disabled-color-rgb: 74, 74, 74; /* #4a4a4a */
+  --w-secondary-color: #c9c9c9;
+  --w-primary-color: #c9c9c9;
+}
+
 h3 {
-  font-family: 'Roboto';
+  font-family: "Roboto";
   font-style: normal;
   font-weight: 300;
   font-size: 2em;
   margin: 0.2em;
 }
 h4 {
-  font-family: 'Roboto';
+  font-family: "Roboto";
   font-style: normal;
   font-weight: 300;
 }
 body {
-  background-color: #F1F1F1;
-  font-family: 'Roboto';
+  background-color: var(--w-base-bg-color-rgb);
+  font-family: "Roboto";
   font-style: normal;
   font-weight: 300;
 }
@@ -643,11 +668,9 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-align: center;
-  color: #4D4D4D;
 }
 .w-select--no-padding .w-select__selection {
   text-align: center;
-  color: #444;
   display: block;
 }
 
@@ -656,27 +679,21 @@ body {
   margin-top: 60px;
 }
 
-.w-app .primary--bg {
-  color: #DDD;
-  background-color: #04A3E5;
+.w-app .primary--bg[data-theme="light"] {
+  color: #ddd;
+  background-color: #04a3e5;
 }
 
-.w-app .secondary {
-  color: #444;
+.w-app .primary--bg[data-theme="dark"] {
+  color: #292a2c;
+  background-color: #04a3e5;
 }
 
 .w-card {
   border: none;
 }
 
-.w-select__selection-wrap {
-  border-color: #4D4D4D;
-}
-
-.w-select__selection {
-  color: #4D4D4D;
-}
-.w-input--floating-label .w-input__input-wrap{
+.w-input--floating-label .w-input__input-wrap {
   margin: 0;
 }
 .w-button.size--md {
@@ -684,20 +701,24 @@ body {
   padding-right: 16px;
 }
 
-.w-app .pa3{
+.w-app .pa3 {
   border: none;
 }
 .therow {
   height: 45px;
 }
-.w-app .primary{
-  color: #292A2C;
+.w-app .primary[data-theme="light"] {
+  color: #292a2c;
 }
+.w-app .primary[data-theme="dark"] {
+  color: #9ea1a8;
+}
+
 .w-button.size--xl {
-  color: #04A3E5;
+  color: #04a3e5;
 }
-.w-button.size--xl span{
-  color: #4D4D4D;
+.w-button.size--xl span {
+  color: var(--w-primary-color);
 }
 
 </style>

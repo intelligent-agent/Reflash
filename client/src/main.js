@@ -12,8 +12,8 @@ app.use(store)
 
 app.use(WaveUI, {
   css: {
-    grid: 5
-  } 
+    grid: 5,
+  }
 })
 
 app.mount('#app')

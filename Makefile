@@ -57,6 +57,7 @@ upload:
 	scp systemd/*.service root@recore.local:/etc/systemd/system/
 
 dev-server-go:
+	git describe --always --tags > /etc/reflash-version
 	cd reflash-go; APP_ENV=dev go run server.go
 
 build-go:

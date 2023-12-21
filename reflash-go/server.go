@@ -116,7 +116,7 @@ func main() {
 	if env == "dev" {
 		static_dir = "../client/dist"
 		version_file = "../.tmp/etc/reflash.version"
-		images_folder = "../.tmp/opt/reflash/images"
+		images_folder = "/opt/reflash/images"
 		options_file = "../.tmp/opt/options.cfg"
 		log_file = "/var/log/reflash.log"
 		http_port = ":8080"
@@ -138,8 +138,10 @@ func main() {
 	mountUsb(MODE_RO)
 	loadOptions()
 
+	version := runCommandReturnString("get-reflash-version")
+
 	fs := http.FileServer(http.Dir(static_dir))
-	fmt.Println("Starting Reflash go server v0.2.0 env '" + env + "'")
+	fmt.Println("Starting Reflash go server " + version + " env '" + env + "'")
 	http.Handle("/", fs)
 	http.HandleFunc("/api/get_info", getInfo)
 	http.HandleFunc("/api/stream_log", streamLog)
@@ -381,16 +383,15 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 			i = 0
 		}
 		state.BytesNow = i
-		state.Progress = (float64(state.BytesNow) / float64(state.BytesTotal)) * 100.0
-	}
-	if state.State == DOWNLOADING {
+	} else if state.State == DOWNLOADING {
 		fi, err := os.Stat(images_folder + "/" + state.Filename)
 		if err == nil {
 			state.BytesNow = int(fi.Size())
-			state.Progress = (float64(state.BytesNow) / float64(state.BytesTotal)) * 100.0
+
 		}
 	}
 
+	state.Progress = (float64(state.BytesNow) / float64(state.BytesTotal)) * 100.0
 	elapsed := time.Now().Sub(last_size_check).Seconds()
 	last_size_check = time.Now()
 	bytes_diff_mb := float32(state.BytesNow-bytes_last) / (1024 * 1024)
@@ -442,7 +443,7 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 	state.State = INSTALLING
 
 	go goInstall(state.Filename)
-	time.Sleep(2 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	sendResponse(w, nil)
 }
@@ -475,7 +476,10 @@ func getUncompressedSize(path string) int {
 			return 1
 		}
 	}
-	strs := strings.Split(strings.ReplaceAll(string(stdout[:]), " ", ""), "MiB")
+	trimmed := string(stdout[:])
+	trimmed = strings.ReplaceAll(trimmed, " ", "")
+	trimmed = strings.ReplaceAll(trimmed, ",", "")
+	strs := strings.Split(trimmed, "MiB")
 	ret, err := strconv.ParseFloat(strs[1], 32)
 	return int(ret * 1024 * 1024)
 }
@@ -555,7 +559,6 @@ func runCommandReturnBool(cmd_str string) bool {
 			return false
 		}
 	}
-	fmt.Println(string(stdout[:]))
 	ret, err := strconv.ParseBool(strings.TrimSpace(string(stdout[:])))
 	return ret
 }
@@ -568,7 +571,7 @@ func runCommandReturnInt(cmds ...string) int {
 
 func runCommandReturnString(cmd_str string) string {
 	stdout, _, _ := runCommand2(cmd_str)
-	return stdout
+	return strings.TrimSpace(stdout)
 }
 
 func rebootBoard(w http.ResponseWriter, r *http.Request) {
