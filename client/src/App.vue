@@ -501,7 +501,7 @@ export default {
       this.setProgress({name: 'install', progress: 0});
       this.$refs.installprogressbar.update();
       let self = this;
-      await axios.put(`/api/backup_refactor`, {
+      await axios.put(`/api/start_backup`, {
           "filename": this.backupFile,
           "start_time": Date.now()
       }).then(() => {
@@ -516,7 +516,7 @@ export default {
         this.setVisible({name: 'install', visible: true});
         this.setTimeStarted({name: 'install', time: data.start_time}); 
         this.setProgress({name: 'install', progress: data.progress});
-
+        this.setBandwidth({name: 'install', bandwidth: data.bandwidth});
         if(this.flash.selectedMethod != 1){
           this.$refs.flashSelector.setSelection(1);
           this.backupFile = data.filename
