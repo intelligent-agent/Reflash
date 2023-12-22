@@ -564,14 +564,6 @@ export default {
     enableSsh() {
       axios.put(`/api/enable_ssh`);
     },
-    isServerUp() {
-      fetch(`/favicon.ico`).then((response) => {
-        if (response.status == 200) {
-          location.reload();
-        }
-        return response.status == 200;
-      });
-    },
     setOption(opt, value) {
       if (opt == "darkmode") {        
         this.setTheme(value);

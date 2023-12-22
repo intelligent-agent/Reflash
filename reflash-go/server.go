@@ -452,7 +452,8 @@ func goInstall(filename string) {
 	path := images_folder + "/" + filename
 
 	time_start = time.Now()
-	log_info(fmt.Sprintf("starting install of %s at time %s", filename, time_start.Format("15:04:05")))
+	log_info(fmt.Sprintf("starting install at %s", time_start.Format("15:04:05")))
+	log_info(fmt.Sprintf("Filename %s", filename))
 
 	stdout, _, err := runCommand2("/usr/local/bin/flash-recore", path)
 	if err != nil {
