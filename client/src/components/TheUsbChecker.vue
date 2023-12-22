@@ -1,11 +1,11 @@
 <template>
-  <w-dialog v-if="open" :width="dialog.width">
+  <w-dialog v-if="open" :width="dialog.width" persistent>
     <template #title>
       <span class="dialog_title">Installation finished</span>
     </template>
     <p v-if="rebootPressed == false">{{ computeText() }}</p>
     <p v-if="rebootPressed == true">
-      Board rebooting ({{ serverResponding ? "responding" : "not responding" }})
+      {{ serverResponding ? "New image ready!" : "Board rebooting" }}
     </p>
     <div class="pa5">
       <img
@@ -13,7 +13,11 @@
         style="width: 20%"
         :src="computeSVG('USB')"
       />
-      <w-progress v-if="rebootPressed == true" class="ma1" circle></w-progress>
+      <w-progress
+        v-if="rebootPressed == true && serverResponding == false"
+        class="ma1"
+        circle
+      ></w-progress>
     </div>
     <p v-if="this.options.rebootWhenDone && this.isUsbPresent">
       Board will automatically reboot once USB is removed
@@ -30,15 +34,6 @@
     <w-button xl outline @click="clickReload()" v-if="serverResponding">
       <span>Reload</span>
     </w-button>
-    <div v-if="installFinished && !showOverlay"></div>
-    <div v-if="showOverlay">
-      <w-transition-expand y>
-        <w-alert v-if="showOverlay">
-          Please wait while board is rebooting
-        </w-alert>
-      </w-transition-expand>
-      <w-progress class="ma1" circle></w-progress><br />
-    </div>
   </w-dialog>
 </template>
 <script>
@@ -92,29 +87,33 @@ export default {
       this.isUsbPresent = response.data.result;
       if (this.options.rebootWhenDone && this.isUsbPresent == false) {
         this.$emit("reboot-board");
-        this.checkServerResponse();
+        this.serverResponding = false;
+        setTimeout(this.checkServerResponse, 1000);
       } else if (!this.rebootPressed) {
         setTimeout(this.checkUsbPresent, 500);
       }
     },
     async checkServerResponse() {
-      await axios.get('/r=' + Math.random(), {timeout: 500}).then((response) => {
-        console.log(response);
-        this.serverResponding = true;
-        setTimeout(this.checkServerResponse, 500);
-      }).catch((error) => {
-        console.log(error);
-        this.serverResponding = false;
-        setTimeout(this.checkServerResponse, 500);
-      });
+      await axios
+        .get("/?r=" + Math.random(), { timeout: 500 })
+        .then(() => {
+          this.serverResponding = true;
+          setTimeout(this.checkServerResponse, 500);
+        })
+        .catch(() => {
+          this.serverResponding = false;
+          setTimeout(this.checkServerResponse, 500);
+        });
     },
     clickReboot() {
       this.$emit("reboot-board");
       this.rebootPressed = true;
-      this.checkServerResponse();
+      this.serverResponding = false;
+      setTimeout(this.checkServerResponse, 1000);
     },
     clickReload() {
-      window.location.href = "http://" + window.location.hostname + ":"+location.port;
+      window.location.href =
+        "http://" + window.location.hostname + ":" + location.port;
     },
   },
   watch: {
