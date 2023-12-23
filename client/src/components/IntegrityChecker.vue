@@ -1,7 +1,7 @@
 <template>
-  <div style="display: flex; align-items: center;">
-    <w-spinner xs v-if="spinner" />
-    <img v-if="visible" style="width: 20px" :src="computeSVG()" />
+  <div style="display: flex; align-items: center;" class="ml2">
+    <w-spinner sm bounce v-if="spinner_visible"  />
+    <img v-if="icon_visible" style="width: 20px" :src="computeSVG()" />
   </div>
 </template>
 
@@ -12,25 +12,26 @@ export default {
   name: 'IntegrityChecker',
   data: () => ({
     icon: "x",
-    visible: false,
-    spinner: false
+    icon_visible: false,
+    spinner_visible: false
   }),  
   methods: {
     async fileSelected(filename){
       let self = this;
       if(filename && filename.length > 0){
-        this.spinner = true;
-        this.visible = true;
+        this.icon_visible = false;
+        this.spinner_visible = true;
         await axios.put(`/api/check_file_integrity`, {
           filename: filename
         }).then(response => {
           self.icon = response.data.is_file_ok ? "check" : "x";
-          this.spinner = false;  
+          this.spinner_visible = false;
+          this.icon_visible = true;
         });
       }
       else{
-        this.visible = false;
-        this.spinner = false;
+        this.icon_visible = false;
+        this.spinner_visble = false;
       }
     },
     computeSVG() {      

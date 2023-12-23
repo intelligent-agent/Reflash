@@ -6,10 +6,10 @@ info() {
     echo "$1"
 }
 
-info "Starting recore flash script"
+info "Starting magic script"
 info "------------------"
 
-INFILE=$1
+URL=$1
 OUTFILE="/dev/mmcblk2"
 
 if ! test -b ${OUTFILE}boot0p1; then
@@ -26,17 +26,14 @@ CONFIG=$(ls /mnt/config/*.json)
 REVISION=$(grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]')
 umount /mnt/config/
 
-SIZE=$(xz -lv "$INFILE" | grep Uncompressed | sed 's/[,(]//g' | awk '{ printf "%s\n", $5 }')
-
 info "Found Recore hardware revision $REVISION"
-info "Flashing file name $INFILE"
+info "URL $URL"
 info "Overwriting block device $OUTFILE"
-info "Uncompressed file size is $SIZE bytes"
 
 info "Umounting /dev/mmcblk*"
 mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount || true
 info "Starting flashing..."
-(xz -T 0 -d -c "$INFILE" | pv -f -n -b > "$OUTFILE") 2> /tmp/recore-flash-progress
+(wget -q -O - "$URL" | pv -f -n -b | xz -T 0 -d -c > "$OUTFILE") 2> /tmp/recore-flash-progress
 info "Flashing done"
 sync
 
@@ -104,4 +101,4 @@ cd /
 umount ${OUTFILE}p1
 
 sync
-info "Install script done!"
+info "Magic script done!"

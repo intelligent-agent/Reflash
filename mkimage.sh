@@ -28,7 +28,7 @@ dpkg -i linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 
 echo 'root:temppwd' | chpasswd
 
-apt install -y systemd-resolved systemd openssh-server udev kmod fdisk parted ca-certificates jq xz-utils expect pv systemd-timesyncd --no-install-recommends --no-install-suggests
+apt install -y systemd-resolved systemd openssh-server udev kmod fdisk parted ca-certificates xz-utils pv systemd-timesyncd wget --no-install-recommends --no-install-suggests
 systemctl enable systemd-networkd
 ln -s /lib/systemd/systemd /init
 
@@ -64,9 +64,11 @@ cat <<EOL >"${ROOTFSDIR}"/initrd/etc/systemd/system/reflash.service
 [Unit]
 Description=Refactor flashing server
 After=network.target
+Conflicts=getty@tty1.service
+Before=getty.target
 
 [Service]
-ExecStart=/usr/local/bin/server
+ExecStart=/usr/local/bin/reflash
 
 [Install]
 WantedBy=multi-user.target
@@ -75,8 +77,10 @@ EOL
 systemctl enable reflash --root="${ROOTFSDIR}"/initrd
 
 # Install app
-sudo mkdir -p "${ROOTFSDIR}"/initrd/usr/local/bin/
-sudo cp reflash-go/server "${ROOTFSDIR}"/initrd/usr/local/bin/
+sudo mkdir -p "${ROOTFSDIR}"/initrd/usr/local/bin
+sudo cp reflash/reflash "${ROOTFSDIR}"/initrd/usr/local/bin/
+sudo mkdir -p "${ROOTFSDIR}"/initrd/usr/local/share/fonts
+sudo cp reflash/Roboto-Light.ttf "${ROOTFSDIR}"/initrd/usr/local/share/fonts/
 sudo mkdir -p "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo cp -r client/dist "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo cp bin/prod/* "${ROOTFSDIR}"/initrd/usr/local/bin

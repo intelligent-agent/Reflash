@@ -9,6 +9,6 @@ umount -q /mnt/config/ || true
 mount -r "/dev/mmcblk2boot0p1" /mnt/config/
 
 CONFIG=$(ls /mnt/config/*.json)
-jq -r ".Revision" "$CONFIG" | tr '[:upper:]' '[:lower:]'
+grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]'
 
 umount -q /mnt/config/ || true

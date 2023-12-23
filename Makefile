@@ -52,20 +52,16 @@ build-board:
 
 upload:
 	scp -r client/dist root@recore.local:/var/www/html/reflash
-	scp server/*.py root@recore.local:/var/www/html/server/
-	scp reflash/*.py root@recore.local:/usr/local/lib/python3.9/dist-packages/reflash
-	scp systemd/*.service root@recore.local:/etc/systemd/system/
-
-dev-server-go:
-	git describe --always --tags > /etc/reflash-version
-	cd reflash-go; APP_ENV=dev go run server.go
 
 build-go:
-	cd reflash-go; env GOOS=linux GOARCH=arm64 go build server.go
+	cd reflash; GOOS=linux GOARCH=arm64 go build -o reflash main.go server.go screen.go
+
+run-go:
+	git describe --always --tags > /etc/reflash-version
+	cd reflash; APP_ENV=dev go run main.go server.go screen.go
 
 upload-go:
-	scp -r client/dist root@recore.local:/var/www/html/reflash
-	scp reflash-go/server root@recore.local:/usr/local/bin
+	scp reflash/reflash root@recore.local:/usr/local/bin
 
 tar:
 	cd zip; tar -zcvf reflash.tar.gz reflash/

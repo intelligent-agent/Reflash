@@ -1,9 +1,8 @@
-//go:build ignore
-
 package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/grafana/tail"
@@ -40,6 +40,7 @@ type Options struct {
 	Darkmode       bool `json:"darkmode"`
 	RebootWhenDone bool `json:"rebootWhenDone"`
 	EnableSsh      bool `json:"enableSsh"`
+	Magicmode      bool `json:"magicmode"`
 	ScreenRotation int  `json:"screenRotation"`
 }
 
@@ -81,12 +82,16 @@ type Chunk struct {
 	Encoded string `json:"chunk"`
 }
 
+type Settings struct {
+}
+
 const (
 	IDLE        = "IDLE"
 	DOWNLOADING = "DOWNLOADING"
 	UPLOADING   = "UPLOADING"
 	INSTALLING  = "INSTALLING"
 	BACKUPING   = "BACKUPING"
+	MAGIC       = "MAGIC"
 	FINISHED    = "FINISHED"
 	CANCELLED   = "CANCELLED"
 	ERROR       = "ERROR"
@@ -100,6 +105,9 @@ const (
 var options *Options
 var state *State
 
+var oldState *State
+var oldRotation int
+
 var static_dir string
 var version_file string
 var images_folder string
@@ -109,20 +117,22 @@ var http_port string
 
 var last_size_check time.Time
 var bytes_last int
-var time_start time.Time
+var timeStart time.Time
 
-func main() {
+var cancelFunc context.CancelFunc
+
+var stateMutex sync.Mutex
+
+func ServerInit() {
 	env := os.Getenv("APP_ENV")
 	if env == "dev" {
 		static_dir = "../client/dist"
-		version_file = "../.tmp/etc/reflash.version"
 		images_folder = "/opt/reflash/images"
 		options_file = "../.tmp/opt/options.cfg"
 		log_file = "/var/log/reflash.log"
 		http_port = ":8080"
 	} else {
 		static_dir = "/var/www/html/reflash/dist"
-		version_file = "/etc/reflash.version"
 		images_folder = "/mnt/usb/images"
 		options_file = "/mnt/usb/options.cfg"
 		log_file = "/var/log/reflash.log"
@@ -130,10 +140,16 @@ func main() {
 	}
 
 	state = &State{
-		State: IDLE,
+		State:      IDLE,
+		BytesTotal: 1,
 	}
 
-	log_info("-- Server started at " + time.Now().Format("15:04:05") + " --")
+	oldState = &State{
+		State:      IDLE,
+		BytesTotal: 1,
+	}
+
+	logInfo("-- Server started at " + time.Now().Format("15:04:05") + " --")
 	expandUsb()
 	mountUsb(MODE_RO)
 	loadOptions()
@@ -159,6 +175,8 @@ func main() {
 	http.HandleFunc("/api/is_usb_present", isUsbPresent)
 	http.HandleFunc("/api/start_backup", startBackup)
 	http.HandleFunc("/api/cancel_backup", cancelBackup)
+	http.HandleFunc("/api/start_magic", startMagic)
+	http.HandleFunc("/api/cancel_magic", cancelMagic)
 	http.HandleFunc("/api/get_progress", getProgress)
 	http.HandleFunc("/api/check_file_integrity", checkFileIntegrity)
 	http.HandleFunc("/api/run_install_finished_commands", runInstallFinishedCommands)
@@ -187,7 +205,19 @@ func setOptions(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &options)
 	saveOptions()
+	updateDisplay()
 	json.NewEncoder(w).Encode(options)
+}
+
+func updateDisplay() {
+	stateMutex.Lock()
+	if oldState.State != state.State || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation {
+		Draw(float32(state.Progress)/100, state.State, options.ScreenRotation)
+		oldState.State = state.State
+		oldState.Progress = state.Progress
+		oldRotation = options.ScreenRotation
+	}
+	stateMutex.Unlock()
 }
 
 func streamLog(w http.ResponseWriter, r *http.Request) {
@@ -220,12 +250,16 @@ func startDownload(w http.ResponseWriter, r *http.Request) {
 	last_size_check = time.Now()
 	bytes_last = 0
 	mountUsb(MODE_RW)
-	go goDownload(state.Filename, url)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelFunc = cancel
+
+	go goDownload(ctx, state.Filename, url)
 
 	sendResponse(w, nil)
 }
 
-func goDownload(filename string, url string) {
+func goDownload(ctx context.Context, filename string, url string) {
 	out, err := os.Create(images_folder + "/" + filename)
 	if err != nil {
 		panic(err)
@@ -236,23 +270,36 @@ func goDownload(filename string, url string) {
 		panic(err)
 	}
 
-	time_start = time.Now()
-	log_info(fmt.Sprintf("Starting download at %s", time_start.Format("15:04:05")))
+	timeStart = time.Now()
+	logInfo(fmt.Sprintf("Starting download at %s", timeStart.Format("15:04:05")))
 
-	bytes_now, err := io.Copy(out, resp.Body)
-	state.BytesNow = int(bytes_now)
-	resp.Body.Close()
-	out.Close()
+	done := make(chan bool)
+	go func() {
+		io.Copy(out, resp.Body)
+		resp.Body.Close()
+		out.Close()
+		done <- true
+	}()
 
-	duration := time.Since(time_start)
-	log_info(fmt.Sprintf("Download finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	select {
+	case <-ctx.Done():
+		logInfo("Download cancelled.")
+		os.Remove(images_folder + "/" + filename)
+		state.State = CANCELLED
+		mountUsb(MODE_RO)
+		return
+	case <-done:
+		duration := time.Since(timeStart)
+		logInfo(fmt.Sprintf("Download finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	}
+
 	mountUsb(MODE_RO)
 
 	state.State = FINISHED
 }
 
 func cancelDownload(w http.ResponseWriter, r *http.Request) {
-	state.State = CANCELLED
+	cancelFunc()
 	sendResponse(w, nil)
 }
 
@@ -268,9 +315,9 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	state.State = UPLOADING
 	mountUsb(MODE_RW)
 
-	time_start := time.Now()
-	log_info("Starting upload at " + time_start.Format("15:04:05"))
-	log_info("Filename: " + state.Filename)
+	timeStart := time.Now()
+	logInfo("Starting upload at " + timeStart.Format("15:04:05"))
+	logInfo("Filename: " + state.Filename)
 	os.Create(images_folder + "/" + state.Filename)
 
 	sendResponse(w, nil)
@@ -304,16 +351,62 @@ func uploadChunk(w http.ResponseWriter, r *http.Request) {
 
 func uploadFinish(w http.ResponseWriter, r *http.Request) {
 	mountUsb(MODE_RO)
-	duration := time.Since(time_start)
-	log_info(fmt.Sprintf("Upload finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	duration := time.Since(timeStart)
+	logInfo(fmt.Sprintf("Upload finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	state.State = FINISHED
 }
 
 func uploadCancel(w http.ResponseWriter, r *http.Request) {
 	mountUsb(MODE_RO)
-	duration := time.Since(time_start)
-	log_info(fmt.Sprintf("Upload cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	duration := time.Since(timeStart)
+	logInfo(fmt.Sprintf("Upload cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	state.State = CANCELLED
+}
+
+func startMagic(w http.ResponseWriter, r *http.Request) {
+	var data *Download = &Download{}
+	reqBody, _ := io.ReadAll(r.Body)
+	json.Unmarshal(reqBody, &data)
+
+	state.StartTime = data.StartTime
+	url := data.Url
+	state.BytesTotal = data.Size
+	state.Filename = data.Filename
+	state.State = MAGIC
+	last_size_check = time.Now()
+	bytes_last = 0
+	go goMagic(url)
+	time.Sleep(1 * time.Second)
+
+	sendResponse(w, nil)
+}
+
+func goMagic(url string) {
+	timeStart = time.Now()
+	logInfo(fmt.Sprintf("Starting magic at %s", timeStart.Format("15:04:05")))
+	logInfo(fmt.Sprintf("Url %s", url))
+
+	stdout, _, err := runCommand2("/usr/local/bin/flash-direct", url)
+	if err != nil {
+		logError("Error encountered during magic: \n" + stdout)
+		state.State = ERROR
+		state.Error = "An error was encountered during magic. Check log for details"
+		return
+	}
+
+	duration := time.Since(timeStart)
+	logInfo(fmt.Sprintf("Magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+
+	state.State = FINISHED
+}
+
+func cancelMagic(w http.ResponseWriter, r *http.Request) {
+	duration := time.Since(timeStart)
+
+	_, _, err := runCommand2("pkill", "-f", "xz", "-9")
+	logInfo(fmt.Sprintf("Magic cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	state.State = CANCELLED
+	sendResponse(w, err)
 }
 
 func startBackup(w http.ResponseWriter, r *http.Request) {
@@ -337,32 +430,33 @@ func startBackup(w http.ResponseWriter, r *http.Request) {
 func goBackup() {
 	path := images_folder + "/" + state.Filename
 
-	time_start = time.Now()
-	log_info(fmt.Sprintf("starting backup of %s at time %s", state.Filename, time_start.Format("15:04:05")))
+	timeStart = time.Now()
+	logInfo(fmt.Sprintf("starting backup of %s at time %s", state.Filename, timeStart.Format("15:04:05")))
 
 	stdout, _, err := runCommand2("/usr/local/bin/backup-emmc", path)
 	if err != nil {
-		log_error("Error encountered during backup: \n" + stdout)
+		logError("Error encountered during backup: \n" + stdout)
 		mountUsb(MODE_RO)
 		state.State = ERROR
+		state.Error = "An error was encountered during backup. Check log for details"
 		return
 	}
 
-	duration := time.Since(time_start)
-	log_info(fmt.Sprintf("Backup finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	duration := time.Since(timeStart)
+	logInfo(fmt.Sprintf("Backup finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	mountUsb(MODE_RO)
 	state.State = FINISHED
 }
 
 func cancelBackup(w http.ResponseWriter, r *http.Request) {
-	duration := time.Since(time_start)
-	log_info(fmt.Sprintf("Backup cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	duration := time.Since(timeStart)
+	logInfo(fmt.Sprintf("Backup cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 
 	cmd := exec.Command("pkill", "-f", "xz", "-9")
 	err := cmd.Run()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
-			log_error(fmt.Sprintf("Command 'pkill -f xz -9' returned exit code %v\n", exitError.ExitCode()))
+			logError(fmt.Sprintf("Command 'pkill -f xz -9' returned exit code %v\n", exitError.ExitCode()))
 		}
 	}
 
@@ -376,7 +470,7 @@ func getBlockSize(file string) int {
 }
 
 func getProgress(w http.ResponseWriter, r *http.Request) {
-	if state.State == INSTALLING || state.State == BACKUPING {
+	if state.State == INSTALLING || state.State == BACKUPING || state.State == MAGIC {
 		bytes := lastLine("/tmp/recore-flash-progress")
 		i, err := strconv.Atoi(bytes)
 		if err != nil {
@@ -397,6 +491,8 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 	bytes_diff_mb := float32(state.BytesNow-bytes_last) / (1024 * 1024)
 	bytes_last = state.BytesNow
 	state.Bandwidth = bytes_diff_mb / float32(elapsed)
+
+	updateDisplay()
 
 	json.NewEncoder(w).Encode(state)
 	if state.State == FINISHED {
@@ -428,7 +524,15 @@ func getLocalImages() []Image {
 }
 
 func checkFileIntegrity(w http.ResponseWriter, r *http.Request) {
-	response := map[string]bool{"is_file_ok": true}
+	var data *Download = &Download{}
+	reqBody, _ := io.ReadAll(r.Body)
+	json.Unmarshal(reqBody, &data)
+
+	filename := data.Filename
+	path := images_folder + "/" + filename
+	_, _, err := runCommand2("xz", "-l", path)
+	ret := err == nil
+	response := map[string]bool{"is_file_ok": ret}
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -451,19 +555,20 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 func goInstall(filename string) {
 	path := images_folder + "/" + filename
 
-	time_start = time.Now()
-	log_info(fmt.Sprintf("starting install at %s", time_start.Format("15:04:05")))
-	log_info(fmt.Sprintf("Filename %s", filename))
+	timeStart = time.Now()
+	logInfo(fmt.Sprintf("starting install at %s", timeStart.Format("15:04:05")))
+	logInfo(fmt.Sprintf("Filename %s", filename))
 
 	stdout, _, err := runCommand2("/usr/local/bin/flash-recore", path)
 	if err != nil {
-		log_error("Error encountered during install: \n" + stdout)
+		logError("Error encountered during install: \n" + stdout)
 		state.State = ERROR
+		state.Error = "An error was encountered during install. Check log for details"
 		return
 	}
 
-	duration := time.Since(time_start)
-	log_info(fmt.Sprintf("Installation finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	duration := time.Since(timeStart)
+	logInfo(fmt.Sprintf("Installation finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 
 	state.State = FINISHED
 }
@@ -473,7 +578,7 @@ func getUncompressedSize(path string) int {
 	stdout, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
-			log_error(fmt.Sprintf("Command 'xz -l %s' returned exit code %v\n", path, exitError.ExitCode()))
+			logError(fmt.Sprintf("Command 'xz -l %s' returned exit code %v\n", path, exitError.ExitCode()))
 			return 1
 		}
 	}
@@ -498,7 +603,7 @@ func cancelInstallation(w http.ResponseWriter, r *http.Request) {
 	err := cmd.Run()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
-			log_error(fmt.Sprintf("Command 'pkill -f xz -9' returned exit code %v\n", exitError.ExitCode()))
+			logError(fmt.Sprintf("Command 'pkill -f xz -9' returned exit code %v\n", exitError.ExitCode()))
 		}
 	}
 	sendResponse(w, err)
@@ -544,7 +649,7 @@ func runCommand(cmd_str string) int {
 	cmd := exec.Command(cmd_str)
 	if err := cmd.Run(); err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
-			log_error(fmt.Sprintf("Command '%s' returned exit code %v\n", cmd_str, exitError.ExitCode()))
+			logError(fmt.Sprintf("Command '%s' returned exit code %v\n", cmd_str, exitError.ExitCode()))
 			return exitError.ExitCode()
 		}
 	}
@@ -556,7 +661,7 @@ func runCommandReturnBool(cmd_str string) bool {
 	stdout, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
-			log_error(fmt.Sprintf("Command '%s' returned exit code %v\n", cmd_str, exitError.ExitCode()))
+			logError(fmt.Sprintf("Command '%s' returned exit code %v\n", cmd_str, exitError.ExitCode()))
 			return false
 		}
 	}
@@ -585,18 +690,12 @@ func rotateScreen(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
 
-	err := cmdRotateScreen(data.Rotation, data.Where, data.RestartApp)
-	sendResponse(w, err)
+	//err := cmdRotateScreen(data.Rotation, data.Where, data.RestartApp)
+	sendResponse(w, nil)
 }
 
 func cmdRotateScreen(rotation int, place string, restart bool) error {
-	cmd := exec.Command("/usr/local/bin/rotate-screen", strconv.Itoa(rotation), place, strings.ToUpper(strconv.FormatBool(restart)))
-	var err error
-	if err = cmd.Run(); err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			log_error(fmt.Sprintf("Command '%s' returned exit code %v\n", "rotate-screen", exitError.ExitCode()))
-		}
-	}
+	_, _, err := runCommand2("/usr/local/bin/rotate-screen", strconv.Itoa(rotation), place, strings.ToUpper(strconv.FormatBool(restart)))
 	return err
 }
 
@@ -619,10 +718,10 @@ func isUsbPresent(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func log_info(msg string) {
-	log_msg("[info]  " + msg)
+func logInfo(msg string) {
+	log_msg("[info] " + msg)
 }
-func log_error(msg string) {
+func logError(msg string) {
 	log_msg("[error] " + msg)
 }
 
@@ -660,7 +759,7 @@ func expandUSB() error {
 	cmd := exec.Command("expand-usb")
 	err := cmd.Run()
 	if err == nil {
-		log_info("expand-usb returned error")
+		logInfo("expand-usb returned error")
 	}
 	return err
 }
@@ -673,7 +772,7 @@ func runCommand2(cmds ...string) (string, string, error) {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err != nil {
-		log_error(fmt.Sprintf("%s", cmds) + ": " + fmt.Sprint(err) + ": " + stderr.String())
+		logError(fmt.Sprintf("%s", cmds) + ": " + fmt.Sprint(err) + ": " + strings.TrimSpace(stderr.String()))
 	}
 	return out.String(), stderr.String(), err
 }
@@ -708,7 +807,7 @@ func saveOptions() error {
 func loadOptions() {
 	content, err := os.ReadFile(options_file)
 	if err != nil {
-		log_info("No options file found, creating default")
+		logInfo("No options file found, creating default")
 		options = &Options{
 			Darkmode:       true,
 			RebootWhenDone: false,

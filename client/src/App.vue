@@ -50,7 +50,9 @@
         <div class="xs1 pa1 align-self-center">
           {{ selectedMethod.id == 0 ? "Download" : "Upload" }}
         </div>
-        <div class="xs1 pa1 align-self-center">USB drive</div>
+        <div class="xs1 pa1 align-self-center">
+          {{ this.options.magicmode ? "Magic" : "USB drive" }}
+        </div>
         <div class="xs1 pa1 align-self-center">
           <FlashSelector ref="flashSelector" />
         </div>
@@ -63,7 +65,10 @@
           <img style="width: 60%" :src="computeSVG('Arrow-right')" />
         </div>
         <div class="xs1 pa1 align-self-center">
-          <img style="width: 60%" :src="computeSVG('USB')" />
+          <img
+            style="width: 60%"
+            :src="computeSVG(this.options.magicmode ? 'magic' : 'USB')"
+          />
         </div>
         <div class="xs1 pa1 align-self-center">
           <img
@@ -79,12 +84,21 @@
           Choose image to {{ selectedMethod.id == 0 ? "Download" : "Upload" }}
         </div>
         <div class="xs1 pa1">
-          <ProgressBar ref="transferprogressbar" name="transfer" />
+          <ProgressBar
+            ref="transferprogressbar"
+            v-show="state == 'DOWNLOADING' || state == 'UPLOADING'"
+          />
           <span class="red">{{ this.computeSizeCheckText() }}</span>
         </div>
-        <div class="xs1 pa1">Choose image to install</div>
         <div class="xs1 pa1">
-          <ProgressBar ref="installprogressbar" name="install" />
+          <ProgressBar ref="magicprogressbar" v-show="state === 'MAGIC'" />
+          {{ this.options.magicmode ? "" : "Choose image to install" }}
+        </div>
+        <div class="xs1 pa1">
+          <ProgressBar
+            ref="installprogressbar"
+            v-show="state == 'INSTALLING' || state == 'BACKUPING'"
+          />
         </div>
         <div class="xs1 pa1">
           <div v-if="flash.selectedMethod == 1">Backup Filename</div>
@@ -123,6 +137,7 @@
         </div>
         <w-flex class="xs1 align-self-center flex justify-start">
           <w-select
+            v-if="this.options.magicmode == false"
             v-model="selectedLocalImage"
             :items="localImages"
             item-label-key="name"
@@ -130,6 +145,15 @@
             :item-click="onSelectedFileChanged()"
           >
           </w-select>
+          <w-button
+            style="margin: auto"
+            xl
+            outline
+            @click="onMagicButtonClick()"
+            v-if="isMagicButtonVisible()"
+          >
+            <span> {{ this.computeMagicButtonText() }} </span>
+          </w-button>
           <IntegrityChecker ref="integritychecker" />
         </w-flex>
         <div class="xs1 align-self-center">
@@ -187,9 +211,11 @@ export default {
     return { waveui };
   },
   data: () => ({
+    state: "IDLE",
     installFinished: false,
     isDownloading: false,
     isTransferring: false,
+    isMagicing: false,
     transferProgress: 0,
     isInstalling: false,
     installProgress: 0,
@@ -222,7 +248,6 @@ export default {
     ...mapActions([
       "setProgress",
       "setBandwidth",
-      "setVisible",
       "setFlashMethod",
       "setTimeStarted",
       "setTimeFinished",
@@ -241,6 +266,9 @@ export default {
       }
       return "";
     },
+    computeMagicButtonText() {
+      return this.isTransferring ? "Cancel" : "Magic";
+    },
     flashDirection() {
       return this.flash.selectedMethod == 0 ? "right" : "left";
     },
@@ -255,13 +283,24 @@ export default {
       }
     },
     isInstallButtonVisibile() {
+      if (this.options.magicmode) return false;
       if (this.flash.selectedMethod == 0) {
         return this.selectedLocalImage;
       } else {
         return this.backupFile != "";
       }
     },
+    isMagicButtonVisible() {
+      if (
+        this.options.magicmode &&
+        this.selectedMethod.id == 0 &&
+        this.selectedGithubImage
+      )
+        return true;
+      return false;
+    },
     isTransferButtonVisible() {
+      if (this.options.magicmode) return false;
       if (this.selectedMethod.id == 0) {
         return this.selectedGithubImage;
       } else if (this.selectedMethod.id == 1) {
@@ -373,18 +412,17 @@ export default {
     async checkUploadProgress() {
       const response = await axios.get(`/api/get_progress`);
       let data = response.data;
+      this.state = data.state;
       if (data.state == "UPLOADING") {
         this.isTransferring = true;
-        this.setProgress({ name: "transfer", progress: data.progress });
-        this.setBandwidth({ name: "transfer", bandwidth: data.bandwidth });
-        this.setTimeStarted({ name: "transfer", time: data.start_time });
-        this.setVisible({ name: "transfer", visible: true });
+        this.setProgress({ progress: data.progress });
+        this.setBandwidth({ bandwidth: data.bandwidth });
+        this.setTimeStarted({ time: data.start_time });
         this.$refs.transferprogressbar.update();
         this.selectedMethod = this.availableMethods[1];
         setTimeout(this.checkUploadProgress, 1000);
       } else {
         this.isTransferring = false;
-        this.setVisible({ name: "transfer", visible: false });
         if (data.state == "ERROR") {
           this.$waveui.notify(data.error, "error", 0);
         } else if (data.state == "FINISHED") {
@@ -393,6 +431,51 @@ export default {
           this.selectedLocalImage = data.filename;
         } else if (data.state == "CANCELED") {
           this.getLocalImages();
+        }
+      }
+    },
+    onMagicButtonClick() {
+      this.isTransferring = !this.isTransferring;
+      this.startMagic();
+    },
+    async startMagic() {
+      let self = this;
+      if (this.isTransferring) {
+        await axios
+          .put(`/api/start_magic`, {
+            filename: this.selectedGithubImage["name"],
+            size: this.selectedGithubImage["size"],
+            url: this.selectedGithubImage["url"],
+            start_time: Date.now(),
+          })
+          .then(() => {
+            self.checkProgress();
+          });
+      } else {
+        axios.put(`/api/cancel_magic`);
+      }
+    },
+    async checkProgress() {
+      const response = await axios.get(`/api/get_progress`);
+      let data = response.data;
+      this.state = data.state;
+      if (data.state == "MAGIC") {
+        this.isTransferring = true;
+        this.setProgress({ progress: data.progress });
+        this.setBandwidth({ bandwidth: data.bandwidth });
+        this.setTimeStarted({ time: data.start_time });
+        this.selectedGithubImage = this.getGithubImageFromName(data.filename);
+        this.$refs.magicprogressbar.update();
+        setTimeout(this.checkProgress, 1000);
+      } else {
+        this.isTransferring = false;
+        if (data.state == "ERROR") {
+          this.$waveui.notify(data.error, "error", 0);
+        } else if (data.state == "FINISHED") {
+          await axios.get(`/api/run_install_finished_commands`);
+          this.installFinished = true;
+        } else if (data.state == "CANCELED") {
+          this.selectedGithubImage = null;
         }
       }
     },
@@ -418,26 +501,23 @@ export default {
             self.checkDownloadProgress();
           });
       } else {
-        await axios.put(`/api/cancel_download`).then(() => {
-          self.checkDownloadProgress();
-        });
+        axios.put(`/api/cancel_download`);
       }
     },
     async checkDownloadProgress() {
       const response = await axios.get(`/api/get_progress`);
       let data = response.data;
+      this.state = data.state;
       if (data.state == "DOWNLOADING") {
         this.isTransferring = true;
-        this.setProgress({ name: "transfer", progress: data.progress });
-        this.setBandwidth({ name: "transfer", bandwidth: data.bandwidth });
-        this.setTimeStarted({ name: "transfer", time: data.start_time });
-        this.setVisible({ name: "transfer", visible: true });
+        this.setProgress({ progress: data.progress });
+        this.setBandwidth({ bandwidth: data.bandwidth });
+        this.setTimeStarted({ time: data.start_time });
         this.selectedGithubImage = this.getGithubImageFromName(data.filename);
         this.$refs.transferprogressbar.update();
         setTimeout(this.checkDownloadProgress, 1000);
       } else {
         this.isTransferring = false;
-        this.setVisible({ name: "transfer", visible: false });
         if (data.state == "ERROR") {
           this.$waveui.notify(data.error, "error", 0);
         } else if (data.state == "FINISHED") {
@@ -477,30 +557,24 @@ export default {
         });
     },
     async cancelInstall() {
-      let self = this;
-      await axios
-        .put(`/api/cancel_installation`, {
-          filename: this.selectedLocalImage,
-        })
-        .then(() => {
-          self.checkInstallProgress();
-        });
+      await axios.put(`/api/cancel_installation`, {
+        filename: this.selectedLocalImage,
+      });
     },
     async checkInstallProgress() {
       const response = await axios.get(`/api/get_progress`);
       let data = response.data;
+      this.state = data.state;
       if (data.state == "INSTALLING") {
         this.isInstalling = true;
-        this.setVisible({ name: "install", visible: true });
-        this.setProgress({ name: "install", progress: data.progress });
-        this.setBandwidth({ name: "install", bandwidth: data.bandwidth });
-        this.setTimeStarted({ name: "install", time: data.start_time });
+        this.setProgress({ progress: data.progress });
+        this.setBandwidth({ bandwidth: data.bandwidth });
+        this.setTimeStarted({ time: data.start_time });
         this.selectedLocalImage = data.filename;
         this.$refs.installprogressbar.update();
         setTimeout(this.checkInstallProgress, 1000);
       } else {
         this.isInstalling = false;
-        this.setVisible({ name: "install", visible: false });
         if (data.state == "ERROR") {
           this.$waveui.notify(data.error, "error", 0);
         } else if (data.state == "FINISHED") {
@@ -515,7 +589,7 @@ export default {
       });
     },
     async backupSelected() {
-      this.setProgress({ name: "install", progress: 0 });
+      this.setProgress({ progress: 0 });
       this.$refs.installprogressbar.update();
       let self = this;
       await axios
@@ -530,12 +604,12 @@ export default {
     async checkBackupProgress() {
       const response = await axios.get(`/api/get_progress`);
       let data = response.data;
+      this.state = data.state;
       if (data.state == "BACKUPING") {
         this.isInstalling = true;
-        this.setVisible({ name: "install", visible: true });
-        this.setTimeStarted({ name: "install", time: data.start_time });
-        this.setProgress({ name: "install", progress: data.progress });
-        this.setBandwidth({ name: "install", bandwidth: data.bandwidth });
+        this.setTimeStarted({ time: data.start_time });
+        this.setProgress({ progress: data.progress });
+        this.setBandwidth({ bandwidth: data.bandwidth });
         if (this.flash.selectedMethod != 1) {
           this.$refs.flashSelector.setSelection(1);
           this.backupFile = data.filename;
@@ -544,7 +618,6 @@ export default {
         setTimeout(this.checkBackupProgress, 1000);
       } else {
         this.isInstalling = false;
-        this.setVisible({ name: "install", visible: false });
         if (data.state == "FINISHED") {
           this.backupFile = "";
           this.getLocalImages();
@@ -565,7 +638,7 @@ export default {
       axios.put(`/api/enable_ssh`);
     },
     setOption(opt, value) {
-      if (opt == "darkmode") {        
+      if (opt == "darkmode") {
         this.setTheme(value);
       }
     },
@@ -712,5 +785,4 @@ body {
 .w-button.size--xl span {
   color: var(--w-primary-color);
 }
-
 </style>

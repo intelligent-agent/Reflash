@@ -1,7 +1,7 @@
 <template>
-  <div v-if="progress[name].visible">
+  <div>
     <w-progress
-      :model-value="progress[name].progress"
+      :model-value="progress.progress"
       size="1em"
       outline
       round
@@ -21,7 +21,6 @@ import { mapGetters } from 'vuex';
 
 export default {
   name: 'ProgressBar',
-  props: ['name'],
   computed: {
     ...mapGetters(['progress'])
   },
@@ -34,7 +33,7 @@ export default {
   }),
   methods: {
     update: function() {
-      let model = this.progress[this.name];
+      let model = this.progress;
       let timePassedSeconds = (Date.now() - model.timeStarted)/1000;
       this.seconds = Math.floor(timePassedSeconds % 60) ;
       this.minutes = Math.floor(timePassedSeconds / (60));

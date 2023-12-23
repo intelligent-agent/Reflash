@@ -24,6 +24,13 @@
           label="Enable SSH access on new image"
         >
         </w-switch>
+        <w-switch
+          @change="onChange('magicmode', options.magicmode)"
+          v-model="options.magicmode"
+          class="ma2"
+          label="Magicmode"
+        >
+        </w-switch>
         <w-divider class="my6 mx-3"></w-divider>
         <h4>Screen rotation</h4>
         <w-radios
@@ -64,7 +71,7 @@ export default {
       this.setOption(data);
       this.$emit("set-option", name, value);
       if (name == "rotateScreen") {
-        const result = await axios.put(`/api/rotate_screen`, { rotation: value, where: "FBCON", restart_app: true });
+        const result = await axios.put(`/api/rotate_screen`, { rotation: value, where: "FBCON", restart_app: false});
         if (result.data.status != "OK") {
           this.$waveui.notify(result.data.error, "error", 0);
         }

@@ -23,7 +23,7 @@
       Board will automatically reboot once USB is removed
     </p>
     <w-button
-      v-if="rebootPressed == false"
+      v-if="rebootPressed == false && this.options.rebootWhenDone == false"
       xl
       outline
       class="ma1 btn"
@@ -78,6 +78,8 @@ export default {
     computeText() {
       if (this.isUsbPresent) {
         return "Please remove USB drive before rebooting";
+      } else if (this.options.rebootWhenDone){
+        return "USB removed, rebooting";
       } else {
         return "USB removed, ready to reboot";
       }
@@ -87,6 +89,7 @@ export default {
       this.isUsbPresent = response.data.result;
       if (this.options.rebootWhenDone && this.isUsbPresent == false) {
         this.$emit("reboot-board");
+        this.rebootPressed = true;
         this.serverResponding = false;
         setTimeout(this.checkServerResponse, 1000);
       } else if (!this.rebootPressed) {
