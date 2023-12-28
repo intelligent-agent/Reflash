@@ -7,4 +7,4 @@ info() {
 
 info "Shutting down"
 
-shutdown now
+systemctl poweroff

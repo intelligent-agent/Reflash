@@ -7,6 +7,8 @@ import (
 	"image/draw"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/golang/freetype"
@@ -37,8 +39,14 @@ var fb *os.File
 var reDraw bool
 
 func ScreenInit() {
-	fb_width = 720
-	fb_height = 1280
+	content, err := os.ReadFile("/sys/class/graphics/fb0/virtual_size")
+	if err != nil {
+		fmt.Printf("Error opening /sys/class/graphics/fb0/virtual_size: %v\n", err)
+		return
+	}
+	sizes := strings.Split(strings.TrimSpace(string(content)), ",")
+	fb_width, _ = strconv.Atoi(sizes[0])
+	fb_height, _ = strconv.Atoi(sizes[1])
 	fb_min = min(fb_width, fb_height)
 	fb_max = max(fb_width, fb_height)
 
@@ -46,7 +54,6 @@ func ScreenInit() {
 	white = color.RGBA{201, 201, 201, 255}
 	black = color.RGBA{41, 42, 44, 255}
 
-	var err error
 	fb, err = os.OpenFile(framebufferDevice, os.O_RDWR, 0)
 	if err != nil {
 		fmt.Printf("Error opening framebuffer device: %v\n", err)
@@ -61,7 +68,6 @@ func ScreenInit() {
 	}
 
 	img = image.NewRGBA(image.Rect(0, 0, fb_min, fb_min))
-
 	Draw(0, "IDLE", 0)
 }
 
@@ -70,13 +76,17 @@ func ScreenClose() {
 	syscall.Munmap(fbMem)
 }
 
+// TODO: This is horrobly inefficient and should be optimized.
 func Draw(progress float32, state string, rot int) {
 	img = image.NewRGBA(image.Rect(0, 0, fb_min, fb_min))
 	clear(img)
-	drawLogo(img, (fb_min/2)-250)
-	drawText(img, "REFLASH", 50, (fb_min/2)-100)
 
-	if state != "IDLE" {
+	if state == "IDLE" {
+		drawLogo(img, (fb_min/2)-75)
+		drawText(img, "REFLASH", 50, (fb_min/2)+75)
+	} else {
+		drawLogo(img, (fb_min/2)-250)
+		drawText(img, "REFLASH", 50, (fb_min/2)-100)
 		drawProgressBar(img, (fb_min / 2), progress)
 		drawText(img, state, 30, (fb_min/2)+70)
 	}
@@ -92,7 +102,9 @@ func Draw(progress float32, state string, rot int) {
 		img = rotate90Degrees(img)
 	}
 	img = translateImage(img, 0, (fb_max/2)-(fb_min/2))
-	copyImageToFramebuffer(img, fbMem)
+	if fbMem != nil {
+		copyImageToFramebuffer(img, fbMem)
+	}
 }
 
 func clear(img *image.RGBA) {

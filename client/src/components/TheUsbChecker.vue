@@ -98,14 +98,14 @@ export default {
     },
     async checkServerResponse() {
       await axios
-        .get("/?r=" + Math.random(), { timeout: 500 })
+        .get("/robots.txt?r=" + Math.random(), { timeout: 3000 })
         .then(() => {
           this.serverResponding = true;
-          setTimeout(this.checkServerResponse, 500);
+          setTimeout(this.checkServerResponse, 1000);
         })
         .catch(() => {
           this.serverResponding = false;
-          setTimeout(this.checkServerResponse, 500);
+          setTimeout(this.checkServerResponse, 1000);
         });
     },
     clickReboot() {

@@ -62,9 +62,8 @@ type StatusResult struct {
 }
 
 type RotateCommand struct {
-	RestartApp bool   `json:"restart_app"`
-	Rotation   int    `json:"rotation"`
-	Where      string `json:"where"`
+	Rotation int    `json:"rotation"`
+	Where    string `json:"where"`
 }
 
 type State struct {
@@ -123,6 +122,8 @@ var cancelFunc context.CancelFunc
 
 var stateMutex sync.Mutex
 
+var saveOptionsWhenIdle bool
+
 func ServerInit() {
 	env := os.Getenv("APP_ENV")
 	if env == "dev" {
@@ -153,6 +154,7 @@ func ServerInit() {
 	expandUsb()
 	mountUsb(MODE_RO)
 	loadOptions()
+	updateDisplay()
 
 	version := runCommandReturnString("get-reflash-version")
 
@@ -172,6 +174,7 @@ func ServerInit() {
 	http.HandleFunc("/api/start_installation", installRefactor)
 	http.HandleFunc("/api/cancel_installation", cancelInstallation)
 	http.HandleFunc("/api/reboot_board", rebootBoard)
+	http.HandleFunc("/api/shutdown_board", shutdownBoard)
 	http.HandleFunc("/api/is_usb_present", isUsbPresent)
 	http.HandleFunc("/api/start_backup", startBackup)
 	http.HandleFunc("/api/cancel_backup", cancelBackup)
@@ -204,7 +207,11 @@ func getOptions(w http.ResponseWriter, r *http.Request) {
 func setOptions(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &options)
-	saveOptions()
+	if state.State == IDLE {
+		saveOptions()
+	} else {
+		saveOptionsWhenIdle = true
+	}
 	updateDisplay()
 	json.NewEncoder(w).Encode(options)
 }
@@ -315,7 +322,7 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	state.State = UPLOADING
 	mountUsb(MODE_RW)
 
-	timeStart := time.Now()
+	timeStart = time.Now()
 	logInfo("Starting upload at " + timeStart.Format("15:04:05"))
 	logInfo("Filename: " + state.Filename)
 	os.Create(images_folder + "/" + state.Filename)
@@ -354,6 +361,9 @@ func uploadFinish(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	state.State = FINISHED
+	if saveOptionsWhenIdle {
+		saveOptions()
+	}
 }
 
 func uploadCancel(w http.ResponseWriter, r *http.Request) {
@@ -611,15 +621,15 @@ func cancelInstallation(w http.ResponseWriter, r *http.Request) {
 
 func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	var err error
-	err = cmdRotateScreen(options.ScreenRotation, "CMDLINE", false)
+	err = cmdRotateScreen(options.ScreenRotation, "CMDLINE")
 	if err != nil {
 		sendResponse(w, err)
 	}
-	err = cmdRotateScreen(options.ScreenRotation, "XORG", false)
+	err = cmdRotateScreen(options.ScreenRotation, "XORG")
 	if err != nil {
 		sendResponse(w, err)
 	}
-	err = cmdRotateScreen(options.ScreenRotation, "WESTON", false)
+	err = cmdRotateScreen(options.ScreenRotation, "WESTON")
 	if err != nil {
 		sendResponse(w, err)
 	}
@@ -685,17 +695,22 @@ func rebootBoard(w http.ResponseWriter, r *http.Request) {
 	sendResponse(w, err)
 }
 
+func shutdownBoard(w http.ResponseWriter, r *http.Request) {
+	_, _, err := runCommand2("/usr/local/bin/shutdown-board")
+	sendResponse(w, err)
+}
+
 func rotateScreen(w http.ResponseWriter, r *http.Request) {
 	var data *RotateCommand = &RotateCommand{}
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
 
-	//err := cmdRotateScreen(data.Rotation, data.Where, data.RestartApp)
-	sendResponse(w, nil)
+	err := cmdRotateScreen(data.Rotation, data.Where)
+	sendResponse(w, err)
 }
 
-func cmdRotateScreen(rotation int, place string, restart bool) error {
-	_, _, err := runCommand2("/usr/local/bin/rotate-screen", strconv.Itoa(rotation), place, strings.ToUpper(strconv.FormatBool(restart)))
+func cmdRotateScreen(rotation int, place string) error {
+	_, _, err := runCommand2("/usr/local/bin/rotate-screen", strconv.Itoa(rotation), place)
 	return err
 }
 

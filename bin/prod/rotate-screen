@@ -2,16 +2,12 @@
 
 ROTATION=$1
 PLACE=$2
-RESTART=$3
 
 # Valid rotation options are normal,inverted,left,right
 ROTATIONS=(0 90 180 270)
 
 # Valid places to update
 PLACES=(FBCON XORG CMDLINE WESTON)
-
-# Restart relevant app
-RESTARTS=(TRUE FALSE)
 
 EMMC=/dev/mmcblk2
 
@@ -21,10 +17,9 @@ info() {
 }
 
 usage(){
-    echo "Usage: $0 <rotation> <place> <restart>"
+    echo "Usage: $0 <rotation> <place>"
     echo "Valid  rotations: " "${ROTATIONS[@]}"
     echo "Valid  places: " "${PLACES[@]}"
-    echo "Restart app:"  "${RESTARTS[@]}"
 }
 
 update_xorg(){
@@ -43,40 +38,33 @@ update_xorg(){
                 Option "Rotate" "$ROT_XORG"
             EndSection
 EOF
-        if [ "$RESTART" == "TRUE" ]; then
-            systemctl restart KlipperScreen
-        fi
     fi
     umount /mnt/emmc
 }
 
 update_weston(){
     mkdir -p /mnt/emmc
-    umount -q /mnt/emmc/
+    umount -q /mnt/emmc/ || true
     mount "${EMMC}p2" /mnt/emmc
 
     RELEASE=$(cut -d '.' -f 1 /mnt/emmc/etc/debian_version)
-    XDG_DIR="/mnt/emmc/etc/xdg/weston/weston.ini"
+    CONFIG_FILE="/mnt/emmc/etc/xdg/weston/weston.ini"
 
-    if [ ! -d "$XDG_DIR" ]; then
-        echo "Misssig directory: ${XDG_DIR}"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Misssig file: ${CONFIG_FILE}"
     else
         case "$RELEASE" in
-            11)
-                sed -i "s/transform.*/transform=${ROT_WESTON_11}/" "${XDG_DIR}"
+            11 | 12)
+                sed -i "s/transform.*/transform=${ROT_WESTON_11}/" "${CONFIG_FILE}"
                 ;;
             10)
-                sed -i "s/transform.*/transform=${ROT_WESTON_10}/" "${XDG_DIR}"
+                sed -i "s/transform.*/transform=${ROT_WESTON_10}/" "${CONFIG_FILE}"
                 ;;
             *)
                 echo "Unknown debian release: '${RELEASE}'"
                 exit 0
                 ;;
         esac
-
-        if [ "$RESTART" == "TRUE" ]; then
-            systemctl restart KlipperScreen
-        fi
     fi
     umount /mnt/emmc
 }
@@ -97,10 +85,6 @@ update_cmdline(){
 
 update_fbcon() {
     echo $ROT_FBCON > /sys/devices/virtual/graphics/fbcon/rotate
-
-    if [ "$RESTART" == "TRUE" ]; then
-        systemctl restart reflash-curses
-    fi
 }
 
 if [ "$ROTATION" == "" ]; then
@@ -112,16 +96,6 @@ if [ "$PLACE" == "" ]; then
     usage
     exit 1
 fi
-
-case "${RESTART}" in
-    TRUE | FALSE)        
-        ;;
-    *)
-        usage
-        exit 1
-        ;;
-esac
-
 
 case "${ROTATION}" in 
     0)
@@ -135,8 +109,8 @@ case "${ROTATION}" in
         ROT_XORG="right"
         ROT_FBCON="1"
         ROT_PLYMOUTH=""
-        ROT_WESTON_10="90"
-        ROT_WESTON_11="rotate-90"
+        ROT_WESTON_10="270"
+        ROT_WESTON_11="rotate-270"
         ;;
     180)
         ROT_XORG="inverted"
@@ -149,8 +123,8 @@ case "${ROTATION}" in
         ROT_XORG="left"
         ROT_FBCON="3"
         ROT_PLYMOUTH=""
-        ROT_WESTON_10="270"
-        ROT_WESTON_11="rotate-270"
+        ROT_WESTON_10="90"
+        ROT_WESTON_11="rotate-90"
         ;;
     *)
         echo "$ROTATION not in " "${ROTATIONS[@]}"

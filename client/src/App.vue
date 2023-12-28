@@ -230,8 +230,9 @@ export default {
     openOptions: false,
     showOverlay: false,
     availableMethods: [
-      { id: 0, label: "GitHub", value: 0, image: "Cloud" },
+      { id: 0, label: "Refactor", value: 0, image: "Cloud" },
       { id: 1, label: "File upload", value: 1, image: "File" },
+      { id: 2, label: "Rebuild", value: 2, image: "Cloud" },
     ],
     selectedMethod: 0,
     imageColor: "white",
@@ -352,6 +353,14 @@ export default {
     async uploadCancel() {
       await axios.put(`/api/upload_cancel`).then(function (response) {
         self.status = response.data["success"];
+      });
+    },
+    async apiCall(call){
+      var self = this
+      await axios.put(`/api/`+call).then(function (response) {
+        if(response.data.status == "ERROR"){
+          self.$waveui.notify(response.data.error, "error", 0);
+        }
       });
     },
     async uploadSelected() {
@@ -632,7 +641,7 @@ export default {
       axios.put(`/api/reboot_board`);
     },
     shutdownBoard() {
-      axios.put(`/api/shutdown_board`);
+      this.apiCall("shutdown_board")
     },
     enableSsh() {
       axios.put(`/api/enable_ssh`);

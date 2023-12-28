@@ -1,7 +1,4 @@
 verbosity=0
-bootlogo=false
 console=serial
 extraargs=vt.global_cursor_default=0
 overlay_prefix=sun50i-a64
-rootdev=/dev/sda2
-rootfstype=ext4

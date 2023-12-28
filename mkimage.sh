@@ -90,12 +90,13 @@ TAG=$(git describe --always --tags)
 NAME="reflash-${TAG}"
 echo "$NAME" > "$ROOTFSDIR"/initrd/etc/reflash-version
 
-# Remove the boot folder outside the rootfs
+# Move the boot folder outside the rootfs
 sudo rm -rf "${ROOTFSDIR}"/boot
 sudo mv "${ROOTFSDIR}"/initrd/boot/ "${ROOTFSDIR}"
 
-# Copy extra files
+# Compile and copy extra files
 sudo cp rootfs_files/files/* "${ROOTFSDIR}"/boot
+mkimage -C none -A arm -T script -d "${ROOTFSDIR}"/boot/boot.cmd "${ROOTFSDIR}"/boot/boot.scr
 
 # Crate initramfs
 sudo bash -c "cd '${ROOTFSDIR}/initrd' && find . | cpio -ov --format=newc | gzip -9 >'../initrd.img.gz'" >/dev/null 2>&1
