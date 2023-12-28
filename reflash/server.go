@@ -210,6 +210,7 @@ func setOptions(w http.ResponseWriter, r *http.Request) {
 	if state.State == IDLE {
 		saveOptions()
 	} else {
+		logInfo("Options not saved because the disk is in use")
 		saveOptionsWhenIdle = true
 	}
 	updateDisplay()
@@ -815,6 +816,7 @@ func saveOptions() error {
 	mountUsb(MODE_RW)
 	content, err := toml.Marshal(options)
 	err = os.WriteFile(options_file, content, 0644)
+	logInfo("Options saved")
 	mountUsb(MODE_RO)
 	return err
 }

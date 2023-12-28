@@ -20,7 +20,11 @@ import (
 const (
 	framebufferDevice = "/dev/fb0"
 	bitsPerPixel      = 32
-	rot               = 0
+)
+
+const (
+	PORTRAIT  = iota
+	LANDSCAPE = iota
 )
 
 var fb_width int
@@ -37,6 +41,7 @@ var fbMem []byte
 var fb *os.File
 
 var reDraw bool
+var orientation int
 
 func ScreenInit() {
 	content, err := os.ReadFile("/sys/class/graphics/fb0/virtual_size")
@@ -50,6 +55,15 @@ func ScreenInit() {
 	fb_min = min(fb_width, fb_height)
 	fb_max = max(fb_width, fb_height)
 
+	fmt.Println("Screen width: ", fb_width)
+	fmt.Println("Screen height: ", fb_height)
+	fmt.Println("Screen min: ", fb_min)
+	fmt.Println("Screen max: ", fb_max)
+	if fb_width > fb_height {
+		orientation = LANDSCAPE
+	} else {
+		orientation = PORTRAIT
+	}
 	blue = color.RGBA{4, 163, 229, 255}
 	white = color.RGBA{201, 201, 201, 255}
 	black = color.RGBA{41, 42, 44, 255}
@@ -85,10 +99,17 @@ func Draw(progress float32, state string, rot int) {
 		drawLogo(img, (fb_min/2)-75)
 		drawText(img, "REFLASH", 50, (fb_min/2)+75)
 	} else {
-		drawLogo(img, (fb_min/2)-250)
-		drawText(img, "REFLASH", 50, (fb_min/2)-100)
-		drawProgressBar(img, (fb_min / 2), progress)
-		drawText(img, state, 30, (fb_min/2)+70)
+		if fb_min > 700 {
+			drawLogo(img, (fb_min/2)-250)
+			drawText(img, "REFLASH", 50, (fb_min/2)-100)
+			drawProgressBar(img, (fb_min / 2), progress)
+			drawText(img, state, 30, (fb_min/2)+120)
+		} else {
+			drawLogo(img, (fb_min/2)-210)
+			drawText(img, "REFLASH", 50, (fb_min/2)-(110-50))
+			drawProgressBar(img, (fb_min / 2), progress)
+			drawText(img, state, 30, (fb_min/2)+60+36)
+		}
 	}
 
 	if rot == 90 {
@@ -101,7 +122,12 @@ func Draw(progress float32, state string, rot int) {
 		img = rotate90Degrees(img)
 		img = rotate90Degrees(img)
 	}
-	img = translateImage(img, 0, (fb_max/2)-(fb_min/2))
+	if orientation == PORTRAIT {
+		img = translateImage(img, 0, (fb_max/2)-(fb_min/2))
+	} else {
+		img = translateImage(img, (fb_max/2)-(fb_min/2), 0)
+	}
+
 	if fbMem != nil {
 		copyImageToFramebuffer(img, fbMem)
 	}
@@ -191,10 +217,8 @@ func drawRect(img *image.RGBA, x int, y int, w int, h int) {
 }
 
 func drawLogo(img *image.RGBA, y int) {
-	//s := 10
-	//s2 := 20
 	s := 40
-	o := 10
+	o := 15
 	x := (fb_min / 2) - 20
 	drawRect(img, x, y, s, s)
 
