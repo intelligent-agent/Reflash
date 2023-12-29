@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+
+handle_error() {
+    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
+    exit $1
+}
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+STATE=$1
+MODE=$2
+
+if [ $STATE == "mounted" ]; then
+    info "Mounting /dev/loop100 on /mnt/usb as ${MODE}"
+fi
+
+if [ $STATE == "unmounted" ]; then
+    info "Unmounting /mnt/usb"
+fi

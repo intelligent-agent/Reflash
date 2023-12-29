@@ -1,0 +1,32 @@
+#!/bin/bash
+set -euo pipefail
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+info "Running expand USB script"
+umount -q /mnt/usb/ || true
+
+if [ -b /dev/sda2 ]; then
+    info "Partition 2 exists, exiting"
+    exit 0
+fi
+
+info "Creating partition on unused space"
+printf "n\n\n\n\nw\n" | fdisk /dev/sda
+
+info "Creating ext4 filesystem"
+mkfs.ext4 -F -E nodiscard /dev/sda2
+
+info "Mounting new partition"
+mkdir -p /mnt/usb
+mount /dev/sda2 /mnt/usb
+
+info "creating images folder"
+mkdir /mnt/usb/images
+
+umount /mnt/usb
+
+systemctl daemon-reload

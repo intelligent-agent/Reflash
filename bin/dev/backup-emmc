@@ -17,7 +17,7 @@ info "Recore eMMC backup (dev)"
 info "------------------"
 
 OUTFILE=$1
-INFILE=".tmp/dev/mmcblk0"
+INFILE="/opt/reflash/dev/mmcblk2"
 OUTIMG=${OUTFILE}.img.xz
 SIZE=$(stat --printf="%s" $INFILE)
 

@@ -3,19 +3,19 @@ module.exports = {
   devServer: {
     proxy: {
       '^/api': {
-        target: 'http://127.0.0.1:8081',
+        target: 'http://127.0.0.1:8080',
         loglevel: 'debug',
         ws: true,
         changeOrigin: true,
       },
-      '^/favicon.ico':{
-        target: 'http://127.0.0.1:8081'
-      },
-      '^/darkmode.css': {
-        target: 'http://127.0.0.1:8081'
+      '^/favicon.ico': {
+        target: 'http://127.0.0.1:8080'
       }
     },
     compress: false
   },
-  assetsDir: "static"
+  assetsDir: "static",
+  css: {
+    extract: false
+  }
 }

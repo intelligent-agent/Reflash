@@ -2,7 +2,6 @@
 
 ROTATION=$1
 PLACE=$2
-RESTART=$3
 
 # Valid rotation options are normal,inverted,left,right
 ROTATIONS=(0 90 180 270)
@@ -10,10 +9,7 @@ ROTATIONS=(0 90 180 270)
 # Valid places to update
 PLACES=(FBCON XORG CMDLINE WESTON)
 
-# Restart relevant app
-RESTARTS=(TRUE FALSE)
-
-EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+EMMC=/dev/mmcblk2
 
 info() {
     echo "[info] $1" >> /var/log/reflash.log
@@ -21,69 +17,64 @@ info() {
 }
 
 usage(){
-    echo "Usage: $0 <rotation> <place> <restart>"
-    echo "Valid  rotations: '${ROTATIONS[@]}'"
-    echo "Valid  places: '${PLACES[@]}'"
-    echo "Restart app: '${RESTARTS[@]}'"
+    echo "Usage: $0 <rotation> <place>"
+    echo "Valid  rotations: " "${ROTATIONS[@]}"
+    echo "Valid  places: " "${PLACES[@]}"
 }
 
 update_xorg(){
     mkdir -p /mnt/emmc
     umount -q /mnt/emmc/
-    mount "/dev/${EMMC}p2" /mnt/emmc
+    mount "${EMMC}p2" /mnt/emmc
 
     XORG_DIR="/mnt/emmc/usr/share/X11/xorg.conf.d"
     if [ ! -d ${XORG_DIR} ]; then
         echo "Misssig directory: ${XORG_DIR}"
         exit 0
-    fi
-
-    cat <<EOF > "${XORG_DIR}/90-monitor.conf"
-    Section "Monitor"
-        Identifier "HDMI-1"
-        Option "Rotate" "$ROT_XORG"
-    EndSection
+    else
+        cat <<EOF > "${XORG_DIR}/90-monitor.conf"
+            Section "Monitor"
+                Identifier "HDMI-1"
+                Option "Rotate" "$ROT_XORG"
+            EndSection
 EOF
-    umount /mnt/emmc
-
-    if [ $RESTART == "TRUE" ]; then
-        systemctl restart KlipperScreen
     fi
+    umount /mnt/emmc
 }
 
 update_weston(){
     mkdir -p /mnt/emmc
-    umount -q /mnt/emmc/
-    mount "/dev/${EMMC}p2" /mnt/emmc
+    umount -q /mnt/emmc/ || true
+    mount "${EMMC}p2" /mnt/emmc
 
-    RELEASE=`cat /mnt/emmc/etc/debian_version | cut -d '.' -f 1`
-    XDG_DIR="/mnt/emmc/etc/xdg/weston/weston.ini"
+    RELEASE=$(cut -d '.' -f 1 /mnt/emmc/etc/debian_version)
+    CONFIG_FILE="/mnt/emmc/etc/xdg/weston/weston.ini"
 
-    case "${RELEASE}" in
-        11)
-            sed -i "s/transform.*/transform=${ROT_WESTON_11}/" "${XDG_DIR}"
-            ;;
-        10)
-            sed -i "s/transform.*/transform=${ROT_WESTON_10}/" "${XDG_DIR}"
-            ;;
-        *)
-            echo "Unknown debian release: '${RELEASE}'"
-            exit 0
-            ;;
-    esac
-
-    if [ $RESTART == "TRUE" ]; then
-        systemctl restart KlipperScreen
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Misssig file: ${CONFIG_FILE}"
+    else
+        case "$RELEASE" in
+            11 | 12)
+                sed -i "s/transform.*/transform=${ROT_WESTON_11}/" "${CONFIG_FILE}"
+                ;;
+            10)
+                sed -i "s/transform.*/transform=${ROT_WESTON_10}/" "${CONFIG_FILE}"
+                ;;
+            *)
+                echo "Unknown debian release: '${RELEASE}'"
+                exit 0
+                ;;
+        esac
     fi
-
+    umount /mnt/emmc
 }
 
 update_cmdline(){
     mkdir -p /mnt/emmc
     umount -q /mnt/emmc/
-    mount "/dev/${EMMC}p1" /mnt/emmc
+    mount "${EMMC}p1" /mnt/emmc
 
-    if [[ `grep 'fbcon=' /mnt/emmc/armbianEnv.txt` ]]; then
+    if [[ $(grep 'fbcon=' /mnt/emmc/armbianEnv.txt) ]]; then
         sed -i "s/\(fbcon=rotate:\)[0-3]/\1${ROT_FBCON}/" /mnt/emmc/armbianEnv.txt
     else
         sed -i "/extraargs=/ s/$/ fbcon=rotate:${ROT_FBCON}/" /mnt/emmc/armbianEnv.txt
@@ -94,31 +85,17 @@ update_cmdline(){
 
 update_fbcon() {
     echo $ROT_FBCON > /sys/devices/virtual/graphics/fbcon/rotate
-
-    if [ $RESTART == "TRUE" ]; then
-        systemctl restart reflash-curses
-    fi
 }
 
-if [ "x$ROTATION" == "x" ]; then
+if [ "$ROTATION" == "" ]; then
     usage 
     exit 1
 fi
 
-if [ "x$PLACE" == "x" ]; then
+if [ "$PLACE" == "" ]; then
     usage
     exit 1
 fi
-
-case "${RESTART}" in
-    TRUE | FALSE)        
-        ;;
-    *)
-        usage
-        exit 1
-        ;;
-esac
-
 
 case "${ROTATION}" in 
     0)
@@ -132,8 +109,8 @@ case "${ROTATION}" in
         ROT_XORG="right"
         ROT_FBCON="1"
         ROT_PLYMOUTH=""
-        ROT_WESTON_10="90"
-        ROT_WESTON_11="rotate-90"
+        ROT_WESTON_10="270"
+        ROT_WESTON_11="rotate-270"
         ;;
     180)
         ROT_XORG="inverted"
@@ -146,11 +123,11 @@ case "${ROTATION}" in
         ROT_XORG="left"
         ROT_FBCON="3"
         ROT_PLYMOUTH=""
-        ROT_WESTON_10="270"
-        ROT_WESTON_11="rotate-270"
+        ROT_WESTON_10="90"
+        ROT_WESTON_11="rotate-90"
         ;;
     *)
-        echo "$ROTATION not in '${ROTATIONS[@]}'"
+        echo "$ROTATION not in " "${ROTATIONS[@]}"
         exit 1
         ;;
 esac
@@ -171,7 +148,7 @@ case "${PLACE}" in
         update_weston
         ;;
     *)
-        echo "$PLACE not in '${PLACES[@]}'"
+        echo "$PLACE not in " "${PLACES[@]}"
         exit 1
         ;;
 esac

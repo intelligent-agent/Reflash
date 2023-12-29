@@ -1,20 +1,13 @@
 #!/bin/bash
 
-set -o pipefail
-
-handle_error() {
-    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
-    exit $1
-}
-
-trap 'handle_error $? $LINENO' ERR
+set -euo pipefail
 
 partprobe
 
-DEV=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+DEV=/dev/mmcblk2
 
 mkdir -p /mnt/config
-if ! grep -qs '/mnt/config ' /proc/mounts; then
-    mount -r "/dev/${DEV}boot0p1" /mnt/config/
-fi
+umount -q /mnt/config/ || true
+mount -r "/dev/${DEV}boot0p1" /mnt/config/
 cat /mnt/config/serial_number
+umount /mnt/config/

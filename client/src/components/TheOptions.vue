@@ -24,6 +24,13 @@
           label="Enable SSH access on new image"
         >
         </w-switch>
+        <w-switch
+          @change="onChange('magicmode', options.magicmode)"
+          v-model="options.magicmode"
+          class="ma2"
+          label="Magicmode"
+        >
+        </w-switch>
         <w-divider class="my6 mx-3"></w-divider>
         <h4>Screen rotation</h4>
         <w-radios
@@ -36,21 +43,15 @@
         >
         </w-radios>
         <w-divider class="my6 mx-3"></w-divider>
-        <h4>Reboot to eMMC</h4>
-        <w-switch
-          @change="changeBootMedia(options.bootFromEmmc)"
-          v-model="options.bootFromEmmc"
-          class="ma2"
-          label="Set boot media to eMMC"
-        >
-        </w-switch>
-        <w-divider class="my6 mx-3"></w-divider>
-        <w-button xl outline class="ma2" @click="$emit('reboot-board')">
-          <span>Reboot</span>
+        <h4>Actions</h4>
+        <div>
+          <w-button xl outline class="ma2" @click="$emit('reboot-board')">
+          <span>Reboot now</span>
         </w-button>
         <w-button xl outline class="ma2" @click="$emit('shutdown-board')"
           ><span>Shut down</span></w-button
         >
+        </div>
       </w-flex>
     </w-drawer>
   </div>
@@ -58,7 +59,6 @@
 
 <script>
 import { mapGetters, mapActions } from "vuex";
-import axios from "axios";
 
 export default {
   name: "TheOptions",
@@ -69,20 +69,6 @@ export default {
       data[name] = value;
       this.setOption(data);
       this.$emit("set-option", name, value);
-      if (name == "rotateScreen") {
-        const result = await axios.put(`/api/rotate_screen`, { rotation: value, where: "FBCON", restart_app: true });
-        if (result.data.status != 0) {
-          this.$waveui.notify(result.data.result, "error", 0);
-        }
-      }
-    },
-    async changeBootMedia(value) {
-      const result = await axios.put(`/api/set_boot_media`, {
-        media: value ? "emmc" : "usb",
-      });
-      if (result.data.status != 0) {
-        this.$waveui.notify(result.data.result, "error", 0);
-      }
     },
   },
   computed: mapGetters(["options"]),

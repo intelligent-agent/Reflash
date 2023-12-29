@@ -211,7 +211,7 @@ def get_boot_media():
     ret = reflash.get_boot_media()
     return {"boot_media": ret}
 
-@app.route('/api/options')
+@app.route('/api/get_options')
 def get_options():
     reflash = ref.Reflash(settings)
     return reflash.get_options()

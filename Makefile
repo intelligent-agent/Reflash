@@ -9,12 +9,16 @@ install_bins:
 	chmod +x /usr/local/bin/get-boot-media
 	chmod +x /usr/local/bin/get-emmc-version
 	chmod +x /usr/local/bin/get-recore-serial-number
-	chmod +x /usr/local/bin/get-recore-revision
 	chmod +x /usr/local/bin/rotate-screen
 	chmod +x /usr/local/bin/create-recore-config
 	chmod +x /usr/local/bin/is-usb-present
 	chmod +x /usr/local/bin/is-ssh-enabled
 	chmod +x /usr/local/bin/get-free-space
+	chmod +x /usr/local/bin/mount-unmount-usb
+	chmod +x /usr/local/bin/get-reflash-version
+
+upload_bins:
+	scp bin/prod/* root@recore.local:/usr/local/bin
 
 dev-server:
 	FLASK_RUN_PORT=8081 \
@@ -48,9 +52,16 @@ build-board:
 
 upload:
 	scp -r client/dist root@recore.local:/var/www/html/reflash
-	scp server/*.py root@recore.local:/var/www/html/server/
-	scp reflash/*.py root@recore.local:/usr/local/lib/python3.9/dist-packages/reflash
-	scp systemd/*.service root@recore.local:/etc/systemd/system/
+
+build-go:
+	cd reflash; GOOS=linux GOARCH=arm64 go build -o reflash main.go server.go screen.go
+
+run-go:
+	git describe --always --tags > /etc/reflash-version
+	cd reflash; APP_ENV=dev go run main.go server.go screen.go
+
+upload-go:
+	scp reflash/reflash root@recore.local:/usr/local/bin
 
 tar:
 	cd zip; tar -zcvf reflash.tar.gz reflash/

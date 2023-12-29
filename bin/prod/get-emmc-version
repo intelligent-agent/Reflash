@@ -1,21 +1,11 @@
 #!/bin/bash
 
-set -o pipefail
-
-handle_error() {
-    echo "[error] $1 occurred on line $2" | tee -a /var/log/reflash.log
-    exit $1
-}
-
-trap 'handle_error $? $LINENO' ERR
-
-EMMC=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+set -euo pipefail
 
 mkdir -p /mnt/emmc
-if ! mountpoint -q /mnt/emmc
-then
-    mount "/dev/${EMMC}p2" /mnt/emmc
-fi
+umount -q /mnt/emmc || true
+mount "/dev/mmcblk2p2" /mnt/emmc
+
 if test -f /mnt/emmc/etc/refactor.version ; then
     cat /mnt/emmc/etc/refactor.version
 elif test -f /mnt/emmc/etc/rebuild-version ; then

@@ -1,0 +1,37 @@
+#!/bin/bash
+set -euo pipefail
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+STATE=$1
+
+if [ "$STATE" == "unmounted" ]; then
+    info "Unmounting /mnt/usb"
+    umount -q /mnt/usb || true
+    exit 0
+fi
+
+MODE=$2
+
+if [ "${MODE}" == "rw" ]; then
+    MODE_STR="-w"
+elif [ "${MODE}" == "ro" ]; then
+    MODE_STR="-r"
+else
+    info "Wrong mode '${MODE}'"
+    exit 1
+fi
+
+umount -q /mnt/usb || true
+
+if [ "$STATE" == "mounted" ]; then
+    info "Mounting /dev/sda2 on /mnt/usb as ${MODE}"
+    mount /dev/sda2 "${MODE_STR}" /mnt/usb
+    exit 0
+fi
+
+info "Unknown state '$STATE'"
+exit 1

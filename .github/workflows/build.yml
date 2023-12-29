@@ -1,4 +1,4 @@
-name: Build Armbian
+name: "Build Reflash"
 on:
   push:
     branches:
@@ -26,20 +26,6 @@ jobs:
       with:
         node-version: 18
 
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.x'
-
-    - name: Install dependencies
-      run: |
-        python3 -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Run tests
-      run: |
-        make tests
-
     - name: install and build usb version
       working-directory: ./client
       run: |
@@ -48,27 +34,18 @@ jobs:
 
     - name: Make archive with version file
       run: |
-        make package
-        echo ${VERSION} > zip/reflash/reflash.version
-        make tar
-
-    - name: install and build emmc version
-      working-directory: ./board
+        make build-go
+        
+    - name: Make image
       run: |
-        npm ci
-        npm run build
-
-    - name: Make archive with version file
-      run: |
-        make package-board
-        echo ${VERSION} > zip/reflash/reflash.version
-        make tar-board
-
+        sudo apt install debootstrap qemu-user-static u-boot-tools
+        sudo ./mkimage.sh
+  
     - name: Release if tagged
       uses: ncipollo/release-action@v1
       if: startsWith(github.ref, 'refs/tags/')
       with:
         allowUpdates: true
-        artifacts: "reflash.tar.gz,reflash-board.tar.gz"
+        artifacts: "reflash-*.img.xz"
         token: ${{ secrets.GITHUB_TOKEN }}
         prerelease: true
