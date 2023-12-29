@@ -117,15 +117,13 @@ var http_port string
 var last_size_check time.Time
 var bytes_last int
 var timeStart time.Time
-
 var cancelFunc context.CancelFunc
-
 var stateMutex sync.Mutex
-
 var saveOptionsWhenIdle bool
+var env string
 
 func ServerInit() {
-	env := os.Getenv("APP_ENV")
+	env = os.Getenv("APP_ENV")
 	if env == "dev" {
 		static_dir = "../client/dist"
 		images_folder = "/opt/reflash/images"
@@ -470,13 +468,16 @@ func cancelBackup(w http.ResponseWriter, r *http.Request) {
 			logError(fmt.Sprintf("Command 'pkill -f xz -9' returned exit code %v\n", exitError.ExitCode()))
 		}
 	}
-
+	os.Remove(images_folder + "/" + state.Filename)
 	mountUsb(MODE_RO)
 	state.State = CANCELLED
 	sendResponse(w, err)
 }
 
 func getBlockSize(file string) int {
+	if env == "dev" {
+		return 100 * 1024 * 1024
+	}
 	return runCommandReturnInt("lsblk", "-n", "-d", "-o", "SIZE", "--bytes", file)
 }
 
@@ -492,7 +493,6 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 		fi, err := os.Stat(images_folder + "/" + state.Filename)
 		if err == nil {
 			state.BytesNow = int(fi.Size())
-
 		}
 	}
 
@@ -510,6 +510,9 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 		state.State = IDLE
 	}
 	if state.State == CANCELLED {
+		state.State = IDLE
+	}
+	if state.State == ERROR {
 		state.State = IDLE
 	}
 }

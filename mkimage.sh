@@ -26,14 +26,20 @@ export LC_ALL=C
 dpkg -i linux-dtb-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 dpkg -i linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 
-echo 'root:temppwd' | chpasswd
-
 apt install -y systemd-resolved systemd openssh-server udev kmod fdisk parted ca-certificates xz-utils pv systemd-timesyncd wget --no-install-recommends --no-install-suggests
 systemctl enable systemd-networkd
 ln -s /lib/systemd/systemd /init
 
 # Enable root login
 sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config
+
+useradd debian -d /home/debian -G tty,dialout -m -s /bin/bash -e -1
+echo "debian ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/debian
+
+# Set default passwords
+echo 'debian:temppwd' | chpasswd
+echo 'root:temppwd' | chpasswd
+
 
 # Clean up
 rm ./*.deb

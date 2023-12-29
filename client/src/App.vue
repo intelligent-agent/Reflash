@@ -48,7 +48,7 @@
           </w-select>
         </div>
         <div class="xs1 pa1 align-self-center">
-          {{ selectedMethod.id == 0 ? "Download" : "Upload" }}
+          {{ selectedMethod.id == 2 ? "Upload" : "Download" }}
         </div>
         <div class="xs1 pa1 align-self-center">
           {{ this.options.magicmode ? "Magic" : "USB drive" }}
@@ -81,7 +81,7 @@
         </div>
 
         <div class="xs1 pa1 therow">
-          Choose image to {{ selectedMethod.id == 0 ? "Download" : "Upload" }}
+          Choose image to {{ selectedMethod.id == 2 ? "Upload" : "Download" }}
         </div>
         <div class="xs1 pa1">
           <ProgressBar
@@ -107,15 +107,24 @@
         <div class="xs1 pa1">
           <w-select
             v-if="selectedMethod.id == 0"
-            v-model="selectedGithubImage"
+            v-model="selectedRebuildImage"
             return-object
-            :items="githubImages"
+            :items="rebuildImages"
+            item-label-key="name"
+            placeholder="Please select one"
+          >
+          </w-select>
+          <w-select
+            v-if="selectedMethod.id == 1"
+            v-model="selectedRefactorImage"
+            return-object
+            :items="refactorImages"
             item-label-key="name"
             placeholder="Please select one"
           >
           </w-select>
           <w-input
-            v-if="selectedMethod.id == 1"
+            v-if="selectedMethod.id == 2"
             type="file"
             ref="inputFile"
             v-model="selectedUploadImage"
@@ -154,7 +163,7 @@
           >
             <span> {{ this.computeMagicButtonText() }} </span>
           </w-button>
-          <IntegrityChecker ref="integritychecker" />
+          <IntegrityChecker ref="integritychecker" v-if="!options.magicmode" />
         </w-flex>
         <div class="xs1 align-self-center">
           <w-button
@@ -212,17 +221,21 @@ export default {
   },
   data: () => ({
     state: "IDLE",
+    previousState: "IDLE",
     installFinished: false,
     isDownloading: false,
-    isTransferring: false,
     isMagicing: false,
     transferProgress: 0,
     isInstalling: false,
     installProgress: 0,
     selectedGithubImage: undefined,
+    selectedRefactorImage: undefined,
+    selectedRebuildImage: undefined,
     selectedUploadImage: [],
     selectedLocalImage: undefined,
     githubImages: [],
+    refactorImages: [],
+    rebuildImages: [],
     localImages: [],
     uploadError: false,
     openInfo: false,
@@ -230,9 +243,9 @@ export default {
     openOptions: false,
     showOverlay: false,
     availableMethods: [
-      { id: 0, label: "Refactor", value: 0, image: "Cloud" },
-      { id: 1, label: "File upload", value: 1, image: "File" },
-      { id: 2, label: "Rebuild", value: 2, image: "Cloud" },
+      { id: 0, label: "Rebuild", value: 0, image: "Cloud" },
+      { id: 1, label: "Refactor", value: 1, image: "Cloud" },
+      { id: 2, label: "File upload", value: 2, image: "File" },
     ],
     selectedMethod: 0,
     imageColor: "white",
@@ -260,53 +273,50 @@ export default {
       return require("./assets/" + name + "-" + this.$waveui.theme + ".svg");
     },
     computeTransferButtonText() {
-      if (this.selectedMethod.id == 0) {
-        return this.isTransferring ? "Cancel" : "Download";
-      } else if (this.selectedMethod.id == 1) {
-        return this.isTransferring ? "Cancel" : "Upload";
-      }
+      if (this.selectedMethod.id == 0)
+        return this.state == "DOWNLOADING" ? "Cancel" : "Download";
+      if (this.selectedMethod.id == 1)
+        return this.state == "DOWNLOADING" ? "Cancel" : "Download";
+      if (this.selectedMethod.id == 2)
+        return this.state == "UPLOADING" ? "Cancel" : "Upload";
       return "";
     },
     computeMagicButtonText() {
-      return this.isTransferring ? "Cancel" : "Magic";
+      return this.state == "MAGIC" ? "Cancel" : "Magic";
     },
     flashDirection() {
-      return this.flash.selectedMethod == 0 ? "right" : "left";
+      return this.flash.selectedMethod == 1 ? "left" : "right";
     },
     installButtonText() {
-      if (this.isInstalling) {
+      if (this.state == "INSTALLING" || this.state == "BACKUPING") {
         return "Cancel";
       }
-      if (this.flash.selectedMethod == 0) {
-        return "Install";
-      } else {
+      if (this.flash.selectedMethod == 1) {
         return "Backup";
+      } else {
+        return "Install";
       }
     },
     isInstallButtonVisibile() {
       if (this.options.magicmode) return false;
-      if (this.flash.selectedMethod == 0) {
-        return this.selectedLocalImage;
-      } else {
+      if (this.flash.selectedMethod == 1) {
         return this.backupFile != "";
+      } else {
+        return this.selectedLocalImage;
       }
     },
     isMagicButtonVisible() {
-      if (
-        this.options.magicmode &&
-        this.selectedMethod.id == 0 &&
-        this.selectedGithubImage
-      )
+      if (!this.options.magicmode) return false;
+      if (this.selectedMethod.id == 0 && this.selectedRebuildImage) return true;
+      if (this.selectedMethod.id == 1 && this.selectedRefactorImage)
         return true;
       return false;
     },
     isTransferButtonVisible() {
       if (this.options.magicmode) return false;
-      if (this.selectedMethod.id == 0) {
-        return this.selectedGithubImage;
-      } else if (this.selectedMethod.id == 1) {
-        return this.selectedUploadImage.file;
-      }
+      if (this.selectedMethod.id == 0) return this.selectedRebuildImage;
+      if (this.selectedMethod.id == 1) return this.selectedRefactorImage;
+      if (this.selectedMethod.id == 2) return this.selectedUploadImage.file;
       return "";
     },
     setTheme(darkmode) {
@@ -345,27 +355,18 @@ export default {
       this.files = files;
       this.file = files.file;
     },
-    async uploadFinish() {
-      await axios.put(`/api/upload_finish`).then(function (response) {
-        self.status = response.data["success"];
-      });
-    },
-    async uploadCancel() {
-      await axios.put(`/api/upload_cancel`).then(function (response) {
-        self.status = response.data["success"];
-      });
-    },
-    async apiCall(call){
-      var self = this
-      await axios.put(`/api/`+call).then(function (response) {
-        if(response.data.status == "ERROR"){
+    async apiCall(call) {
+      var self = this;
+      await axios.put(`/api/` + call).then(function (response) {
+        if (response.data.status == "ERROR") {
           self.$waveui.notify(response.data.error, "error", 0);
         }
       });
     },
     async uploadSelected() {
       let self = this;
-      if (this.isTransferring) {
+      if (this.state == "IDLE") {
+        this.state = "UPLOADING";
         await axios
           .put(`/api/upload_start`, {
             filename: self.file.name,
@@ -375,10 +376,10 @@ export default {
           .then(function (response) {
             self.status = response.data["success"];
             self.uploadLocalFile();
-            self.checkUploadProgress();
+            self.checkProgress();
           });
       } else {
-        self.uploadCancel();
+        this.apiCall('upload_cancel')
       }
     },
     async uploadLocalFile() {
@@ -397,17 +398,17 @@ export default {
           })
           .then(function (response) {
             const status = response.data;
-            if (status.success && self.isTransferring) {
+            if (status.success && self.state == "UPLOADING") {
               offset += CHUNK_SIZE;
               if (offset <= filesize) {
                 var slice = self.file.slice(offset, offset + CHUNK_SIZE);
                 reader.readAsDataURL(slice);
               } else {
                 offset = filesize;
-                self.uploadFinish();
+                self.apiCall('upload_finish');
               }
             } else {
-              self.uploadCancel();
+              self.apiCall('upload_cancel')
             }
           });
       };
@@ -418,38 +419,18 @@ export default {
         self.fileName = this.file.name;
       }
     },
-    async checkUploadProgress() {
-      const response = await axios.get(`/api/get_progress`);
-      let data = response.data;
-      this.state = data.state;
-      if (data.state == "UPLOADING") {
-        this.isTransferring = true;
-        this.setProgress({ progress: data.progress });
-        this.setBandwidth({ bandwidth: data.bandwidth });
-        this.setTimeStarted({ time: data.start_time });
-        this.$refs.transferprogressbar.update();
-        this.selectedMethod = this.availableMethods[1];
-        setTimeout(this.checkUploadProgress, 1000);
-      } else {
-        this.isTransferring = false;
-        if (data.state == "ERROR") {
-          this.$waveui.notify(data.error, "error", 0);
-        } else if (data.state == "FINISHED") {
-          this.selectedUploadImage = [];
-          await this.getLocalImages();
-          this.selectedLocalImage = data.filename;
-        } else if (data.state == "CANCELED") {
-          this.getLocalImages();
-        }
-      }
-    },
     onMagicButtonClick() {
-      this.isTransferring = !this.isTransferring;
+      if (this.selectedMethod.id == 0) {
+        this.selectedGithubImage = this.selectedRebuildImage;
+      } else if (this.selectedMethod.id == 1) {
+        this.selectedGithubImage = this.selectedRefactorImage;
+      }
       this.startMagic();
     },
     async startMagic() {
       let self = this;
-      if (this.isTransferring) {
+      if (this.state == "IDLE") {
+        this.state = "MAGIC"
         await axios
           .put(`/api/start_magic`, {
             filename: this.selectedGithubImage["name"],
@@ -464,41 +445,95 @@ export default {
         axios.put(`/api/cancel_magic`);
       }
     },
-    async checkProgress() {
+    async checkOnLoadProgress() {
       const response = await axios.get(`/api/get_progress`);
       let data = response.data;
       this.state = data.state;
       if (data.state == "MAGIC") {
-        this.isTransferring = true;
+        this.selectedGithubImage = this.getGithubImageFromName(data.filename);
+      } else if (data.state == "DOWNLOADING") {
+        this.selectedGithubImage = this.getGithubImageFromName(data.filename);
+      } else if (data.state == "INSTALLING") {
+        this.selectedLocalImage = data.filename;
+      } else if (data.state == "BACKUPING") {
+        if (this.flash.selectedMethod != 1) {
+          this.$refs.flashSelector.setSelection(1);
+          this.backupFile = data.filename;
+        }
+        // This method is called on page load. If a refresh happens during upload, we can not continue.
+      } else if (data.state == "UPLOADING") {
+        this.selectedMethod = this.availableMethods[2];
+      }
+      this.previousState = this.state;
+      this.checkProgress();
+    },
+    async checkProgress() {
+      const response = await axios.get(`/api/get_progress`);
+      let data = response.data;
+      this.state = data.state;
+      if (
+        [
+          "DOWNLOADING",
+          "UPLOADING",
+          "INSTALLING",
+          "BACKUPING",
+          "MAGIC",
+        ].includes(this.state)
+      ) {
         this.setProgress({ progress: data.progress });
         this.setBandwidth({ bandwidth: data.bandwidth });
         this.setTimeStarted({ time: data.start_time });
-        this.selectedGithubImage = this.getGithubImageFromName(data.filename);
+        this.$refs.installprogressbar.update();
         this.$refs.magicprogressbar.update();
-        setTimeout(this.checkProgress, 1000);
-      } else {
-        this.isTransferring = false;
-        if (data.state == "ERROR") {
-          this.$waveui.notify(data.error, "error", 0);
-        } else if (data.state == "FINISHED") {
+        this.$refs.transferprogressbar.update();
+      } else if (data.state == "FINISHED") {
+        if (this.previousState == "INSTALLING") {
+          this.selectedLocalImage = null;
           await axios.get(`/api/run_install_finished_commands`);
           this.installFinished = true;
-        } else if (data.state == "CANCELED") {
-          this.selectedGithubImage = null;
+        } else if (this.previousState == "BACKUPING") {
+          this.backupFile = "";
+          this.getLocalImages();
+        } else if (this.previousState == "DOWNLOADING") {
+          this.selectedRebuildImage = null;
+          this.selectedRefactorImage = null;
+          await this.getLocalImages();
+          this.selectedLocalImage = data.filename;
+        } else if (this.previousState == "UPLOADING") {
+          this.selectedUploadImage = [];
+          await this.getLocalImages();
+          this.selectedLocalImage = data.filename;
+        } else if (this.previousState == "MAGIC") {
+          this.selectedRebuildImage = null;
+          this.selectedRefactorImage = null;
+          await axios.get(`/api/run_install_finished_commands`);
+          this.installFinished = true;
         }
+      } else if (data.state == "CANCELLED") {
+        this.selectedGithubImage = null;
+        this.getLocalImages();
+      } else if (data.state == "ERROR") {
+        this.$waveui.notify(data.error, "error", 0);
       }
+
+      this.previousState = this.state;
+      if (data.state != "IDLE") setTimeout(this.checkProgress, 1000);
     },
     onTransferButtonClick() {
-      this.isTransferring = !this.isTransferring;
       if (this.selectedMethod.id == 0) {
+        this.selectedGithubImage = this.selectedRebuildImage;
         this.downloadSelected();
       } else if (this.selectedMethod.id == 1) {
+        this.selectedGithubImage = this.selectedRefactorImage;
+        this.downloadSelected();
+      } else if (this.selectedMethod.id == 2) {
         this.uploadSelected();
       }
     },
     async downloadSelected() {
       let self = this;
-      if (this.isTransferring) {
+      if (this.state == "IDLE") {
+        this.state = "DOWNLOADING";
         await axios
           .put(`/api/start_download`, {
             filename: this.selectedGithubImage["name"],
@@ -507,50 +542,24 @@ export default {
             start_time: Date.now(),
           })
           .then(() => {
-            self.checkDownloadProgress();
+            self.checkProgress();
           });
       } else {
         axios.put(`/api/cancel_download`);
       }
     },
-    async checkDownloadProgress() {
-      const response = await axios.get(`/api/get_progress`);
-      let data = response.data;
-      this.state = data.state;
-      if (data.state == "DOWNLOADING") {
-        this.isTransferring = true;
-        this.setProgress({ progress: data.progress });
-        this.setBandwidth({ bandwidth: data.bandwidth });
-        this.setTimeStarted({ time: data.start_time });
-        this.selectedGithubImage = this.getGithubImageFromName(data.filename);
-        this.$refs.transferprogressbar.update();
-        setTimeout(this.checkDownloadProgress, 1000);
-      } else {
-        this.isTransferring = false;
-        if (data.state == "ERROR") {
-          this.$waveui.notify(data.error, "error", 0);
-        } else if (data.state == "FINISHED") {
-          this.selectedGithubImage = null;
-          await this.getLocalImages();
-          this.selectedLocalImage = data.filename;
-        } else if (data.state == "CANCELED") {
-          this.getLocalImages();
-        }
-      }
-    },
     onInstallButtonClick() {
-      this.isInstalling = !this.isInstalling;
       if (this.flash.selectedMethod == 0) {
-        if (this.isInstalling) {
+        if (this.state == "IDLE") {
           this.installSelected();
         } else {
-          this.cancelInstall();
+          this.apiCall("cancel_installation");
         }
       } else {
-        if (this.isInstalling) {
+        if (this.state == "IDLE") {
           this.backupSelected();
         } else {
-          this.cancelBackup();
+          this.apiCall("cancel_backup");
         }
       }
     },
@@ -562,40 +571,8 @@ export default {
           start_time: Date.now(),
         })
         .then(() => {
-          self.checkInstallProgress();
+          self.checkProgress();
         });
-    },
-    async cancelInstall() {
-      await axios.put(`/api/cancel_installation`, {
-        filename: this.selectedLocalImage,
-      });
-    },
-    async checkInstallProgress() {
-      const response = await axios.get(`/api/get_progress`);
-      let data = response.data;
-      this.state = data.state;
-      if (data.state == "INSTALLING") {
-        this.isInstalling = true;
-        this.setProgress({ progress: data.progress });
-        this.setBandwidth({ bandwidth: data.bandwidth });
-        this.setTimeStarted({ time: data.start_time });
-        this.selectedLocalImage = data.filename;
-        this.$refs.installprogressbar.update();
-        setTimeout(this.checkInstallProgress, 1000);
-      } else {
-        this.isInstalling = false;
-        if (data.state == "ERROR") {
-          this.$waveui.notify(data.error, "error", 0);
-        } else if (data.state == "FINISHED") {
-          await axios.get(`/api/run_install_finished_commands`);
-          this.installFinished = true;
-        }
-      }
-    },
-    async cancelBackup() {
-      await axios.put(`/api/cancel_backup`, {
-        filename: this.backupFile,
-      });
     },
     async backupSelected() {
       this.setProgress({ progress: 0 });
@@ -607,44 +584,18 @@ export default {
           start_time: Date.now(),
         })
         .then(() => {
-          self.checkBackupProgress();
+          self.checkProgress();
         });
-    },
-    async checkBackupProgress() {
-      const response = await axios.get(`/api/get_progress`);
-      let data = response.data;
-      this.state = data.state;
-      if (data.state == "BACKUPING") {
-        this.isInstalling = true;
-        this.setTimeStarted({ time: data.start_time });
-        this.setProgress({ progress: data.progress });
-        this.setBandwidth({ bandwidth: data.bandwidth });
-        if (this.flash.selectedMethod != 1) {
-          this.$refs.flashSelector.setSelection(1);
-          this.backupFile = data.filename;
-        }
-        this.$refs.installprogressbar.update();
-        setTimeout(this.checkBackupProgress, 1000);
-      } else {
-        this.isInstalling = false;
-        if (data.state == "FINISHED") {
-          this.backupFile = "";
-          this.getLocalImages();
-        }
-        if (data.state == "ERROR") {
-          this.$waveui.notify(data.error, "error", 0);
-        }
-      }
     },
     rebootBoard() {
       this.showOverlay = true;
-      axios.put(`/api/reboot_board`);
+      this.apiCall("reboot_board");
     },
     shutdownBoard() {
-      this.apiCall("shutdown_board")
+      this.apiCall("shutdown_board");
     },
     enableSsh() {
-      axios.put(`/api/enable_ssh`);
+      this.apiCall("enable_ssh");
     },
     setOption(opt, value) {
       if (opt == "darkmode") {
@@ -658,11 +609,25 @@ export default {
         }
       }
     },
-    populateImages(releases) {
+    populateRefactorImages(releases) {
       for (let release of releases) {
         for (let asset of release.assets) {
           if (asset.name.includes("Refactor-recore")) {
-            this.githubImages.push({
+            this.refactorImages.push({
+              name: asset.name,
+              id: asset.id,
+              url: asset.browser_download_url,
+              size: asset.size,
+            });
+          }
+        }
+      }
+    },
+    populateRebuildImages(releases) {
+      for (let release of releases) {
+        for (let asset of release.assets) {
+          if (asset.name.includes("rebuild")) {
+            this.rebuildImages.push({
               name: asset.name,
               id: asset.id,
               url: asset.browser_download_url,
@@ -683,17 +648,17 @@ export default {
     async getGithubImages() {
       fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
         .then((response) => response.json())
-        .then((data) => this.populateImages(data));
+        .then((data) => this.populateRefactorImages(data));
+      fetch("https://api.github.com/repos/intelligent-agent/Rebuild/releases")
+        .then((response) => response.json())
+        .then((data) => this.populateRebuildImages(data));
     },
   },
   created() {
     this.selectedMethod = this.availableMethods[0];
     this.getGithubImages();
     this.getLocalImages();
-    this.checkDownloadProgress();
-    this.checkInstallProgress();
-    this.checkBackupProgress();
-    this.checkUploadProgress();
+    this.checkOnLoadProgress();
   },
 };
 </script>
