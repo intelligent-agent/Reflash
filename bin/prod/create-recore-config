@@ -47,6 +47,7 @@ info "Creating boot partition"
 dd if=/dev/zero of=/dev/${DEV}boot0
 partprobe
 printf "g\nn\n\n\n\nw\n" | fdisk /dev/${DEV}boot0
+partprobe
 mkfs.ext4 -E nodiscard /dev/${DEV}boot0p1
 
 mkdir -p /mnt/config

@@ -4,7 +4,7 @@ set -euo pipefail
 
 partprobe
 
-DEV=/dev/mmcblk2
+DEV=mmcblk2
 
 mkdir -p /mnt/config
 umount -q /mnt/config/ || true
