@@ -74,7 +74,7 @@ if test -d /mnt/emmc/home/debian; then
     # Enable mainsail on mainsail distros
     if test -f printer_data/config/mainsail.cfg; then
       info "Including Mainsail in config file, above the first section"
-      # Older distros has the include fiel as a comment
+      # Older distros has the include field as a comment
       sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
       sed -i 's:\(\[recore.*\]\):\[include mainsail.cfg\]\n\n\1:' printer_data/config/printer.cfg
     fi
