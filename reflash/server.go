@@ -158,6 +158,14 @@ func ServerInit() {
 	loadOptions()
 	updateDisplay()
 
+	timer1 := time.NewTimer(10 * time.Second)
+	go func() {
+		<-timer1.C
+		logInfo("Updating IPs")
+		state.IPs = getIPs()
+		updateDisplay()
+	}()
+
 	version := runCommandReturnString("get-reflash-version")
 
 	fs := http.FileServer(http.Dir(static_dir))
