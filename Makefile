@@ -1,3 +1,5 @@
+REMOTE=recore5.local
+
 install_bins:
 	cp bin/dev/* /usr/local/bin
 	chmod +x /usr/local/bin/backup-emmc
@@ -54,7 +56,7 @@ run-go:
 	cd reflash; APP_ENV=dev go run main.go server.go screen.go
 
 upload-go:
-	scp reflash/reflash root@recore.local:/usr/local/bin
+	scp reflash/reflash root@${REMOTE}:/usr/local/bin
 
 tar:
 	cd zip; tar -zcvf reflash.tar.gz reflash/

@@ -19,6 +19,7 @@ import (
 
 	"github.com/grafana/tail"
 	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/exp/slices"
 )
 
 type Image struct {
@@ -28,12 +29,13 @@ type Image struct {
 }
 
 type GetInfo struct {
-	LocalImages    []Image `json:"local_images"`
-	ReflashVersion string  `json:"reflash_version"`
-	RecoreRevision string  `json:"recore_revision"`
-	EmmcVersion    string  `json:"emmc_version"`
-	IsSshEnabled   bool    `json:"is_ssh_enabled"`
-	BytesAvailable int     `json:"bytes_available"`
+	LocalImages    []Image  `json:"local_images"`
+	ReflashVersion string   `json:"reflash_version"`
+	RecoreRevision string   `json:"recore_revision"`
+	EmmcVersion    string   `json:"emmc_version"`
+	IsSshEnabled   bool     `json:"is_ssh_enabled"`
+	BytesAvailable int      `json:"bytes_available"`
+	IPs            []string `json:"ips"`
 }
 
 type Options struct {
@@ -67,14 +69,15 @@ type RotateCommand struct {
 }
 
 type State struct {
-	State      string  `json:"state"`
-	Filename   string  `json:"filename"`
-	StartTime  int64   `json:"start_time"`
-	Progress   float64 `json:"progress"`
-	Bandwidth  float32 `json:"bandwidth"`
-	BytesNow   int     `json:"bytes_now"`
-	BytesTotal int     `json:"bytes_total"`
-	Error      string  `json:"error"`
+	State      string   `json:"state"`
+	Filename   string   `json:"filename"`
+	StartTime  int64    `json:"start_time"`
+	Progress   float64  `json:"progress"`
+	Bandwidth  float32  `json:"bandwidth"`
+	BytesNow   int      `json:"bytes_now"`
+	BytesTotal int      `json:"bytes_total"`
+	Error      string   `json:"error"`
+	IPs        []string `json:"ips"`
 }
 
 type Chunk struct {
@@ -141,6 +144,7 @@ func ServerInit() {
 	state = &State{
 		State:      IDLE,
 		BytesTotal: 1,
+		IPs:        getIPs(),
 	}
 
 	oldState = &State{
@@ -194,6 +198,7 @@ func getInfo(w http.ResponseWriter, r *http.Request) {
 		EmmcVersion:    runCommandReturnString("get-emmc-version"),
 		IsSshEnabled:   runCommandReturnBool("is-ssh-enabled"),
 		BytesAvailable: getFreeSpace(),
+		IPs:            getIPs(),
 	}
 	json.NewEncoder(w).Encode(get_info)
 }
@@ -217,8 +222,8 @@ func setOptions(w http.ResponseWriter, r *http.Request) {
 
 func updateDisplay() {
 	stateMutex.Lock()
-	if oldState.State != state.State || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation {
-		Draw(float32(state.Progress)/100, state.State, options.ScreenRotation)
+	if oldState.State != state.State || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
+		Draw(float32(state.Progress)/100, state.State, options.ScreenRotation, state.IPs)
 		oldState.State = state.State
 		oldState.Progress = state.Progress
 		oldRotation = options.ScreenRotation
@@ -808,6 +813,11 @@ func unmountUsb() error {
 
 func getFreeSpace() int {
 	return runCommandReturnInt("get-free-space")
+}
+
+func getIPs() []string {
+	ips := runCommandReturnString("get-hostnames")
+	return strings.Split(ips, "\n")
 }
 
 func getRecoreRevision() string {

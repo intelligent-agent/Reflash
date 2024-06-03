@@ -1,0 +1,4 @@
+#!/bin/bash
+
+ip -6 a | grep "scope link" | sed -e 's/^[[:space:]]*//' | sed -e 's#/# #' | cut -d ' ' -f 2 | xargs getent hosts | cut -d ' ' -f2 | awk '{print $1".local"}' | uniq
+ip -4 a | grep global | sed -e 's/^[[:space:]]*//' | sed -e 's#/# #' | cut -d ' ' -f 2

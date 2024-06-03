@@ -82,7 +82,8 @@ func ScreenInit() {
 	}
 
 	img = image.NewRGBA(image.Rect(0, 0, fb_min, fb_min))
-	Draw(0, "IDLE", 0)
+	ips := make([]string, 0)
+	Draw(0, "IDLE", 0, ips)
 }
 
 func ScreenClose() {
@@ -91,13 +92,16 @@ func ScreenClose() {
 }
 
 // TODO: This is horrobly inefficient and should be optimized.
-func Draw(progress float32, state string, rot int) {
+func Draw(progress float32, state string, rot int, ips []string) {
 	img = image.NewRGBA(image.Rect(0, 0, fb_min, fb_min))
 	clear(img)
 
 	if state == "IDLE" {
-		drawLogo(img, (fb_min/2)-75)
-		drawText(img, "REFLASH", 50, (fb_min/2)+75)
+		drawLogo(img, (fb_min/2)-95)
+		drawText(img, "REFLASH", 50, (fb_min/2)+55)
+		for i, s := range ips {
+			drawText(img, s, 20, (fb_min/2)+125+(20*i))
+		}
 	} else {
 		if fb_min > 700 {
 			drawLogo(img, (fb_min/2)-250)
