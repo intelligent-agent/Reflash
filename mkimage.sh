@@ -26,7 +26,7 @@ export LC_ALL=C
 dpkg -i linux-dtb-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 dpkg -i linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 
-apt install -y systemd-resolved systemd openssh-server udev kmod fdisk parted ca-certificates xz-utils pv systemd-timesyncd wget wpasupplicant sudo --no-install-recommends --no-install-suggests
+apt install -y systemd-resolved systemd openssh-server udev kmod fdisk parted ca-certificates xz-utils pv systemd-timesyncd wget wpasupplicant sudo policykit-1 iproute2 --no-install-recommends --no-install-suggests
 systemctl enable systemd-networkd
 ln -s /lib/systemd/systemd /init
 
