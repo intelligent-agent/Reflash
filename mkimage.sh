@@ -26,12 +26,9 @@ export LC_ALL=C
 dpkg -i linux-dtb-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 dpkg -i linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 
-apt install -y systemd-resolved systemd openssh-server udev kmod fdisk parted ca-certificates xz-utils pv systemd-timesyncd wget --no-install-recommends --no-install-suggests
+apt install -y systemd-resolved systemd openssh-server udev kmod fdisk parted ca-certificates xz-utils pv systemd-timesyncd wget wpasupplicant sudo --no-install-recommends --no-install-suggests
 systemctl enable systemd-networkd
 ln -s /lib/systemd/systemd /init
-
-# Enable root login
-sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config
 
 useradd debian -d /home/debian -G tty,dialout -m -s /bin/bash -e -1
 echo "debian ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/debian
@@ -39,7 +36,6 @@ echo "debian ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/debian
 # Set default passwords
 echo 'debian:temppwd' | chpasswd
 echo 'root:temppwd' | chpasswd
-
 
 # Clean up
 rm ./*.deb
@@ -54,9 +50,9 @@ rm -rf /usr/share/lintian/* /usr/share/linda/* /var/cache/man/*
 
 ENDOFDEB
 
-cat <<EOL > "${ROOTFSDIR}"/initrd/etc/systemd/network/20-wired.network
+cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/20-wired.network
 [Match]
-Name=end0
+Name=eth0
 
 [Network]
 DHCP=yes
@@ -64,9 +60,36 @@ MulticastDNS=yes
 
 [Link]
 Multicast=yes
-EOL
+EOF
 
-cat <<EOL >"${ROOTFSDIR}"/initrd/etc/systemd/system/reflash.service
+cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/30-wireless.network
+[Match]
+Name=wlan0
+[Network]
+Address=192.168.50.1/24
+DHCPServer=yes
+LinkLocalAddressing=yes
+MulticastDNS=yes
+EOF
+
+systemctl enable wpa_supplicant@wlan0.service --root="${ROOTFSDIR}"/initrd
+
+cat <<EOF > "${ROOTFSDIR}"/initrd/etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+ap_scan=1
+
+network={
+    priority=0
+    ssid="Recore"
+    mode=2
+    key_mgmt=WPA-PSK
+    psk="12345678"
+    frequency=2462
+}
+EOF
+
+cat <<EOF >"${ROOTFSDIR}"/initrd/etc/systemd/system/reflash.service
 [Unit]
 Description=Refactor flashing server
 After=network.target
@@ -78,7 +101,7 @@ ExecStart=/usr/local/bin/reflash
 
 [Install]
 WantedBy=multi-user.target
-EOL
+EOF
 
 systemctl enable reflash --root="${ROOTFSDIR}"/initrd
 

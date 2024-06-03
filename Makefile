@@ -20,13 +20,6 @@ install_bins:
 upload_bins:
 	scp bin/prod/* root@recore.local:/usr/local/bin
 
-dev-server:
-	FLASK_RUN_PORT=8081 \
-	FLASK_ENV=development \
-	FLASK_DEBUG=1 \
-	FLASK_APP=server/__init__.py \
-	flask run --with-threads
-
 dev-clean:
 	rm -rf .tmp
 	mkdir -p .tmp/opt/reflash/images
