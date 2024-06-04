@@ -33,10 +33,17 @@ update_xorg(){
         exit 0
     else
         cat <<EOF > "${XORG_DIR}/90-monitor.conf"
-            Section "Monitor"
-                Identifier "HDMI-1"
-                Option "Rotate" "$ROT_XORG"
-            EndSection
+Section "Monitor"
+    Identifier "HDMI-1"
+    Option "Rotate" "$ROT_XORG"
+EndSection
+Section "InputClass"
+    Identifier "Coordinate Transformation Matrix"
+    MatchIsTouchscreen "on"
+    MatchDevicePath "/dev/input/event*"
+    MatchDriver "libinput"
+    Option "CalibrationMatrix" "$ROT_MATRIX"
+EndSection
 EOF
     fi
     umount /mnt/emmc
@@ -104,6 +111,7 @@ case "${ROTATION}" in
         ROT_PLYMOUTH=""
         ROT_WESTON_10="0"
         ROT_WESTON_11="normal"
+        ROT_MATRIX="1 0 0 0 1 0 0 0 1"
         ;;
     90)
         ROT_XORG="right"
@@ -111,6 +119,7 @@ case "${ROTATION}" in
         ROT_PLYMOUTH=""
         ROT_WESTON_10="270"
         ROT_WESTON_11="rotate-270"
+        ROT_MATRIX="0 1 0 -1 0 1 0 0 1"
         ;;
     180)
         ROT_XORG="inverted"
@@ -118,6 +127,7 @@ case "${ROTATION}" in
         ROT_PLYMOUTH=""
         ROT_WESTON_10="180"
         ROT_WESTON_11="rotate-180"
+        ROT_MATRIX="-1 0 1 0 -1 1 0 0 1"
         ;;
     270)
         ROT_XORG="left"
@@ -125,6 +135,7 @@ case "${ROTATION}" in
         ROT_PLYMOUTH=""
         ROT_WESTON_10="90"
         ROT_WESTON_11="rotate-90"
+        ROT_MATRIX="0 -1 1 1 0 0 0 0 1"
         ;;
     *)
         echo "$ROTATION not in " "${ROTATIONS[@]}"
