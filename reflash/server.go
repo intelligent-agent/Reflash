@@ -351,6 +351,12 @@ func uploadChunk(w http.ResponseWriter, r *http.Request) {
 
 	path := images_folder + "/" + state.Filename
 
+	if state.State == CANCELLED {
+		response := map[string]bool{"success": false}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -379,10 +385,9 @@ func uploadFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadCancel(w http.ResponseWriter, r *http.Request) {
-	mountUsb(MODE_RO)
+	state.State = CANCELLED
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
-	state.State = CANCELLED
 }
 
 func startMagic(w http.ResponseWriter, r *http.Request) {
@@ -482,7 +487,6 @@ func cancelBackup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	os.Remove(images_folder + "/" + state.Filename)
-	mountUsb(MODE_RO)
 	state.State = CANCELLED
 	sendResponse(w, err)
 }
@@ -523,6 +527,7 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 		state.State = IDLE
 	}
 	if state.State == CANCELLED {
+		mountUsb(MODE_RO)
 		state.State = IDLE
 	}
 	if state.State == ERROR {
