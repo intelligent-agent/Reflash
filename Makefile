@@ -1,4 +1,4 @@
-REMOTE=recore5.local
+REMOTE=recore.local
 
 install_bins:
 	cp bin/dev/* /usr/local/bin
@@ -56,7 +56,7 @@ run-go:
 	cd reflash; APP_ENV=dev go run main.go server.go screen.go
 
 upload-go:
-	scp reflash/reflash root@${REMOTE}:/usr/local/bin
+	scp reflash/reflash debian@${REMOTE}:/tmp/
 
 tar:
 	cd zip; tar -zcvf reflash.tar.gz reflash/
