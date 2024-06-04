@@ -129,8 +129,6 @@ mkimage -C none -A arm -T script -d "${ROOTFSDIR}"/boot/boot.cmd "${ROOTFSDIR}"/
 
 # Crate initramfs
 sudo bash -c "cd '${ROOTFSDIR}/initrd' && find . | cpio -ov --format=newc | gzip -9 >'../initrd.img.gz'" >/dev/null 2>&1
-
-#cd "${ROOTFSDIR}"/initrd; sudo bash -c "find . | cpio -ov --format=newc | gzip -9 >../initrd.img.gz";  cd ../..
 mkimage -A arm -T ramdisk -C gzip -n uInitrd -d "${ROOTFSDIR}"/initrd.img.gz "${ROOTFSDIR}"/uInitrd
 sudo cp "${ROOTFSDIR}"/uInitrd "${ROOTFSDIR}"/boot
 
@@ -153,3 +151,5 @@ sudo losetup -d "${LOOPDEV}"
 
 xz -f -T 0 -k -z "${ROOTFSDIR}"/reflash.img
 mv "${ROOTFSDIR}"/reflash.img.xz ./${NAME}.img.xz
+
+sudo rm -rf "${ROOTFSDIR}"

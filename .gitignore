@@ -1,6 +1,5 @@
-**__pycache__
-**/*.pyc
 */*.log
 reflash/dist
-.tmp*
-reflash-go/server
+reflash/reflash
+reflash_rootfs
+rootfs_files/debs
