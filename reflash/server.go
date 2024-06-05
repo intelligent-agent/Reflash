@@ -19,6 +19,7 @@ import (
 
 	"github.com/grafana/tail"
 	"github.com/pelletier/go-toml/v2"
+	"github.com/ulikunitz/xz"
 	"golang.org/x/exp/slices"
 )
 
@@ -88,15 +89,16 @@ type Settings struct {
 }
 
 const (
-	IDLE        = "IDLE"
-	DOWNLOADING = "DOWNLOADING"
-	UPLOADING   = "UPLOADING"
-	INSTALLING  = "INSTALLING"
-	BACKUPING   = "BACKUPING"
-	MAGIC       = "MAGIC"
-	FINISHED    = "FINISHED"
-	CANCELLED   = "CANCELLED"
-	ERROR       = "ERROR"
+	IDLE            = "IDLE"
+	DOWNLOADING     = "DOWNLOADING"
+	UPLOADING       = "UPLOADING"
+	INSTALLING      = "INSTALLING"
+	BACKUPING       = "BACKUPING"
+	MAGIC           = "MAGIC"
+	UPLOADING_MAGIC = "UPLOADING_MAGIC"
+	FINISHED        = "FINISHED"
+	CANCELLED       = "CANCELLED"
+	ERROR           = "ERROR"
 )
 
 const (
@@ -190,6 +192,8 @@ func ServerInit() {
 	http.HandleFunc("/api/cancel_backup", cancelBackup)
 	http.HandleFunc("/api/start_magic", startMagic)
 	http.HandleFunc("/api/cancel_magic", cancelMagic)
+	http.HandleFunc("/api/upload_magic_start", uploadMagicStart)
+	http.HandleFunc("/api/upload_magic_chunk", uploadMagicChunk)
 	http.HandleFunc("/api/get_progress", getProgress)
 	http.HandleFunc("/api/check_file_integrity", checkFileIntegrity)
 	http.HandleFunc("/api/run_install_finished_commands", runInstallFinishedCommands)
@@ -340,6 +344,72 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	os.Create(images_folder + "/" + state.Filename)
 
 	sendResponse(w, nil)
+}
+
+func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
+	var data *Download = &Download{}
+	reqBody, _ := io.ReadAll(r.Body)
+	json.Unmarshal(reqBody, &data)
+
+	state.Filename = data.Filename
+	state.StartTime = data.StartTime
+	state.BytesNow = 0
+	state.BytesTotal = data.Size
+	state.State = UPLOADING_MAGIC
+
+	timeStart = time.Now()
+	logInfo("Starting magic upload at " + timeStart.Format("15:04:05"))
+	logInfo("Filename: " + state.Filename)
+
+	path := "/tmp/decompressed.img"
+	os.Create(path)
+	sendResponse(w, nil)
+}
+
+func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
+	var chunk *Chunk = &Chunk{}
+	reqBody, _ := io.ReadAll(r.Body)
+	json.Unmarshal(reqBody, &chunk)
+
+	decoded, err := base64.StdEncoding.DecodeString(chunk.Encoded[37:])
+
+	path := "/tmp/decompressed.img"
+
+	if state.State == CANCELLED {
+		response := map[string]bool{"success": false}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	reader, err := xz.NewReader(bytes.NewReader(decoded))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var decompressedData bytes.Buffer
+	if _, err := io.Copy(&decompressedData, reader); err != nil {
+		log.Fatal("Failed to copy")
+		log.Fatal(err)
+	}
+
+	outFile, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal("Failed to open file")
+		log.Fatal(err)
+	}
+
+	if _, err := outFile.Write(decompressedData.Bytes()); err != nil {
+		log.Fatal("Failed write")
+		log.Fatal(err)
+	}
+	if err := outFile.Close(); err != nil {
+		log.Fatal(err)
+	}
+	state.BytesNow += len(decoded)
+	state.Progress = float64(state.BytesNow) * 100 / float64(state.BytesTotal)
+
+	response := map[string]bool{"success": true}
+	json.NewEncoder(w).Encode(response)
 }
 
 func uploadChunk(w http.ResponseWriter, r *http.Request) {
