@@ -107,6 +107,7 @@ tests:
 	python3 -m pytest tests
 
 image:
+	make build
 	make build-go
 	sudo ./mkimage.sh
 .PHONY: tests

@@ -116,7 +116,7 @@ export default {
     },
     clickReload() {
       window.location.href =
-        "http://" + window.location.hostname + ":" + location.port;
+        "http://" + window.location.hostname + ":" + location.port+"?r=" + Math.random();
     },
   },
   watch: {
