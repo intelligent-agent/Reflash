@@ -18,6 +18,7 @@ install_bins:
 	chmod +x /usr/local/bin/get-free-space
 	chmod +x /usr/local/bin/mount-unmount-usb
 	chmod +x /usr/local/bin/get-reflash-version
+	chmod +x /usr/local/bin/save-settings
 
 upload_bins:
 	scp bin/prod/* root@recore.local:/usr/local/bin
@@ -105,4 +106,7 @@ upload-tar-board:
 tests:
 	python3 -m pytest tests
 
+image:
+	make build-go
+	sudo ./mkimage.sh
 .PHONY: tests
