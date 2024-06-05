@@ -35,6 +35,10 @@ echo "debian ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/debian
 echo 'debian:temppwd' | chpasswd
 echo 'root:temppwd' | chpasswd
 
+echo "g_serial" >> /etc/modules
+echo "ttyGS0" >> /etc/securetty
+systemctl enable serial-getty@ttyGS0.service
+
 # Clean up
 rm ./*.deb
 rm -rf /var/lib/apt/lists/
