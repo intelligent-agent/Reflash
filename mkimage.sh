@@ -8,8 +8,7 @@ mkdir -p "${ROOTFSDIR}"
 
 sudo debootstrap --arch=arm64 --foreign --variant=minbase bookworm "${ROOTFSDIR}"/initrd
 
-if [ ! -f rootfs_files/debs/linux-dtb-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb ]; then
-    wget -P rootfs_files/debs/ http://feeds.iagent.no/debian/pool/main/linux-dtb-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
+if [ ! -f rootfs_files/debs/linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb ]; then
     wget -P rootfs_files/debs/ http://feeds.iagent.no/debian/pool/main/linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 fi
 
@@ -23,7 +22,6 @@ export TERM=xterm-color
 /debootstrap/debootstrap --second-stage
 export LC_ALL=C
 
-dpkg -i linux-dtb-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 dpkg -i linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 
 apt install -y systemd-resolved systemd openssh-server udev kmod fdisk parted ca-certificates xz-utils pv systemd-timesyncd wget wpasupplicant sudo policykit-1 iproute2 --no-install-recommends --no-install-suggests
@@ -124,8 +122,13 @@ sudo rm -rf "${ROOTFSDIR}"/boot
 sudo mv "${ROOTFSDIR}"/initrd/boot/ "${ROOTFSDIR}"
 
 # Compile and copy extra files
-sudo cp rootfs_files/files/* "${ROOTFSDIR}"/boot
+sudo cp rootfs_files/boot/* "${ROOTFSDIR}"/boot
 mkimage -C none -A arm -T script -d "${ROOTFSDIR}"/boot/boot.cmd "${ROOTFSDIR}"/boot/boot.scr
+
+# Copy recore dtb and fixup
+mkdir -p "${ROOTFSDIR}"/boot/dtb/allwinner/overlay
+sudo cp rootfs_files/dtb/*.dtb "${ROOTFSDIR}"/boot/dtb/allwinner/
+sudo cp rootfs_files/dtb/*.scr "${ROOTFSDIR}"/boot/dtb/allwinner/overlay/
 
 # Crate initramfs
 sudo bash -c "cd '${ROOTFSDIR}/initrd' && find . | cpio -ov --format=newc | gzip -9 >'../initrd.img.gz'" >/dev/null 2>&1
