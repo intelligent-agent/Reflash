@@ -37,14 +37,8 @@ dev-clean:
 dev-client:
 	cd client; npm run serve
 
-dev-board:
-	cd board; npm run serve
-
 build:
 	cd client; npm run build
-
-build-board:
-	cd board; npm run build
 
 upload:
 	scp -r client/dist root@recore.local:/var/www/html/reflash

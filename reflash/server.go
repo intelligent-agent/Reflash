@@ -19,7 +19,6 @@ import (
 
 	"github.com/grafana/tail"
 	"github.com/pelletier/go-toml/v2"
-	"github.com/ulikunitz/xz"
 	"golang.org/x/exp/slices"
 )
 
@@ -79,6 +78,7 @@ type State struct {
 	BytesTotal int      `json:"bytes_total"`
 	Error      string   `json:"error"`
 	IPs        []string `json:"ips"`
+	File       *os.File
 }
 
 type Chunk struct {
@@ -113,7 +113,6 @@ var oldState *State
 var oldRotation int
 
 var static_dir string
-var version_file string
 var images_folder string
 var options_file string
 var log_file string
@@ -194,6 +193,7 @@ func ServerInit() {
 	http.HandleFunc("/api/cancel_magic", cancelMagic)
 	http.HandleFunc("/api/upload_magic_start", uploadMagicStart)
 	http.HandleFunc("/api/upload_magic_chunk", uploadMagicChunk)
+	http.HandleFunc("/api/upload_magic_finish", uploadMagicFinish)
 	http.HandleFunc("/api/get_progress", getProgress)
 	http.HandleFunc("/api/check_file_integrity", checkFileIntegrity)
 	http.HandleFunc("/api/run_install_finished_commands", runInstallFinishedCommands)
@@ -361,55 +361,54 @@ func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
 	logInfo("Starting magic upload at " + timeStart.Format("15:04:05"))
 	logInfo("Filename: " + state.Filename)
 
-	path := "/tmp/decompressed.img"
-	os.Create(path)
+	path := "/tmp/mypipe"
+	var err error
+	state.File, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
 	sendResponse(w, nil)
 }
 
 func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
-	var chunk *Chunk = &Chunk{}
-	reqBody, _ := io.ReadAll(r.Body)
-	json.Unmarshal(reqBody, &chunk)
-
-	decoded, err := base64.StdEncoding.DecodeString(chunk.Encoded[37:])
-
-	path := "/tmp/decompressed.img"
-
 	if state.State == CANCELLED {
 		response := map[string]bool{"success": false}
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	reader, err := xz.NewReader(bytes.NewReader(decoded))
+	var chunk *Chunk = &Chunk{}
+	reqBody, _ := io.ReadAll(r.Body)
+	json.Unmarshal(reqBody, &chunk)
+
+	decoded, err := base64.StdEncoding.DecodeString(chunk.Encoded[37:])
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, "Failed to decode base64", http.StatusBadRequest)
+		return
 	}
-
-	var decompressedData bytes.Buffer
-	if _, err := io.Copy(&decompressedData, reader); err != nil {
-		log.Fatal("Failed to copy")
-		log.Fatal(err)
-	}
-
-	outFile, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	_, err = state.File.Write(decoded)
 	if err != nil {
-		log.Fatal("Failed to open file")
-		log.Fatal(err)
+		http.Error(w, "Failed to write decompressed data to file", http.StatusInternalServerError)
+		return
 	}
 
-	if _, err := outFile.Write(decompressedData.Bytes()); err != nil {
-		log.Fatal("Failed write")
-		log.Fatal(err)
-	}
-	if err := outFile.Close(); err != nil {
-		log.Fatal(err)
-	}
 	state.BytesNow += len(decoded)
 	state.Progress = float64(state.BytesNow) * 100 / float64(state.BytesTotal)
 
 	response := map[string]bool{"success": true}
 	json.NewEncoder(w).Encode(response)
+}
+
+func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
+	if err := state.File.Close(); err != nil {
+		log.Fatal(err)
+	}
+	duration := time.Since(timeStart)
+	logInfo(fmt.Sprintf("Upload magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	state.State = FINISHED
+	if saveOptionsWhenIdle {
+		saveOptions()
+	}
 }
 
 func uploadChunk(w http.ResponseWriter, r *http.Request) {

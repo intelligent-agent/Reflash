@@ -415,7 +415,7 @@ export default {
                 reader.readAsDataURL(slice);
               } else {
                 offset = filesize;
-                self.apiCall("upload_finish");
+                self.apiCall("upload_magic_finish");
               }
             } else {
               self.apiCall("upload_cancel");
