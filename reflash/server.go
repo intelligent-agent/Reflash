@@ -655,12 +655,13 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		sendResponse(w, err)
 	}
-	if options.EnableSsh {
-		err = setSshEnabled(true)
-		if err != nil {
-			sendResponse(w, err)
-		}
-	}
+
+	settings := "# Settings from Reflash\n" +
+		"SSH_ENABLED_ON_BOOT=" + strconv.FormatBool(options.EnableSsh) + "\n" +
+		"SSH_TIMEOUT=60\n" +
+		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10)
+
+	runCommand2("/usr/local/bin/save-settings", settings)
 	err = unmountUsb()
 	sendResponse(w, err)
 }
@@ -675,17 +676,6 @@ func sendResponse(w http.ResponseWriter, err error) {
 		response.Error = err.Error()
 	}
 	json.NewEncoder(w).Encode(response)
-}
-
-func runCommand(cmd_str string) int {
-	cmd := exec.Command(cmd_str)
-	if err := cmd.Run(); err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			logError(fmt.Sprintf("Command '%s' returned exit code %v\n", cmd_str, exitError.ExitCode()))
-			return exitError.ExitCode()
-		}
-	}
-	return 0
 }
 
 func runCommandReturnBool(cmd_str string) bool {

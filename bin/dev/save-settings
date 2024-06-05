@@ -1,0 +1,18 @@
+#!/bin/bash
+
+CONTENT=$1
+
+SETTINGS_FILE="/opt/reflash/rebuild-settings"
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+update_settings(){
+    echo -e "$CONTENT" > "$SETTINGS_FILE"
+}
+
+info "Updating settings"
+
+update_settings
