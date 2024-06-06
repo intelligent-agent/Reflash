@@ -17,6 +17,6 @@ info "Overwriting block device $OUTFILE"
 
 rm -f "$FIFO"
 mkfifo "$FIFO"
-xz -d < "$FIFO" > "$OUTFILE" &
+xz -d < "$FIFO" > "$OUTFILE"
 
 info "Mkfifo script done!"

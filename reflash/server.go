@@ -376,22 +376,23 @@ func goUploadMagic() {
 }
 
 func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
-	if state.State == CANCELLED {
-		response := map[string]bool{"success": false}
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
 	var chunk *Chunk = &Chunk{}
 	var err error
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &chunk)
 
-	path := "/tmp/mypipe"
-	if state.File == nil {
-		state.File, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Fatal(err)
+	if state.State == CANCELLED {
+		response := map[string]bool{"success": false}
+		json.NewEncoder(w).Encode(response)
+		return
+	} else {
+		path := "/tmp/mypipe"
+		if state.File == nil {
+			logInfo("Open file " + path)
+			state.File, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 
@@ -477,6 +478,13 @@ func uploadFinish(w http.ResponseWriter, r *http.Request) {
 
 func uploadCancel(w http.ResponseWriter, r *http.Request) {
 	state.State = CANCELLED
+	if state.File != nil {
+		logInfo("Closing file")
+		if err := state.File.Close(); err != nil {
+			log.Fatal(err)
+		}
+		state.File = nil
+	}
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 }
