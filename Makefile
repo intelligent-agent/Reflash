@@ -19,6 +19,8 @@ install_bins:
 	chmod +x /usr/local/bin/mount-unmount-usb
 	chmod +x /usr/local/bin/get-reflash-version
 	chmod +x /usr/local/bin/save-settings
+	chmod +x /usr/local/bin/flash-cleanup
+	chmod +x /usr/local/bin/flash-mkfifo
 
 upload_bins:
 	scp bin/prod/* root@recore.local:/usr/local/bin

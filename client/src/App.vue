@@ -390,16 +390,13 @@ export default {
       }
     },
     async magicUploadLocalFile() {
-      console.log("magig upload local file");
       const CHUNK_SIZE = 3 * 1024 * 1024;
       let self = this;
       var reader = new FileReader();
       var offset = 0;
       var filesize = this.file.size;
-      console.log(filesize);
 
       reader.onload = function () {
-        console.log("onload");
         var result = reader.result;
         var chunk = result;
         axios
@@ -531,7 +528,7 @@ export default {
           this.backupFile = data.filename;
         }
         // This method is called on page load. If a refresh happens during upload, we can not continue.
-      } else if (data.state == "UPLOADING") {
+      } else if (data.state == "UPLOADING" || data.state == "UPLOADING_MAGIC") {
         this.selectedMethod = this.availableMethods[2];
       }
       this.previousState = this.state;
@@ -577,6 +574,10 @@ export default {
         } else if (this.previousState == "MAGIC") {
           this.selectedRebuildImage = null;
           this.selectedRefactorImage = null;
+          await axios.get(`/api/run_install_finished_commands`);
+          this.installFinished = true;
+        } else if (this.previousState == "UPLOADING_MAGIC") {
+          this.selectedUploadImage = [];
           await axios.get(`/api/run_install_finished_commands`);
           this.installFinished = true;
         }

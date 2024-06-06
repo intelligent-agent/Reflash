@@ -6,36 +6,16 @@ info() {
     echo "$1"
 }
 
-info "---------------------"
-info "Starting magic script"
-info "---------------------"
+info "-----------------------"
+info "Starting cleanup script"
+info "-----------------------"
 
-URL=$1
+REVISION=$1
 OUTFILE="/dev/mmcblk2"
 
-if ! test -b ${OUTFILE}boot0p1; then
-    info "partx"
-    partx -a ${OUTFILE}boot0
-fi
-
-mkdir -p /mnt/config
-if ! grep -qs '/mnt/config ' /proc/mounts; then
-    mount -r ${OUTFILE}boot0p1 /mnt/config/
-fi
-
-CONFIG=$(ls /mnt/config/*.json)
-REVISION=$(grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]')
-umount /mnt/config/
-
-info "Found Recore hardware revision $REVISION"
-info "URL $URL"
+info "Using Recore hardware revision $REVISION"
 info "Overwriting block device $OUTFILE"
 
-info "Umounting /dev/mmcblk*"
-mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount || true
-info "Starting flashing..."
-(wget -q -O - "$URL" | pv -f -n -b | xz -T 0 -d -c > "$OUTFILE") 2> /tmp/recore-flash-progress
-info "Flashing done"
 sync
 
 # Re-read partition table
@@ -102,4 +82,4 @@ cd /
 umount ${OUTFILE}p1
 
 sync
-info "Magic script done!"
+info "Cleanup script done!"

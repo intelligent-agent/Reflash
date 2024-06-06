@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+info "-----------------------"
+info "Starting cleanup script"
+info "-----------------------"
+
+REVISION=$1
+OUTFILE="/opt/reflash/mmcblk2"
+
+info "Using Recore hardware revision $REVISION"
+info "Overwriting block device $OUTFILE"
+info "Checking filesystems"
+info "Creating new UUIDs"
+info "Cleanup script done!"

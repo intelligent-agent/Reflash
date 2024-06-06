@@ -357,17 +357,22 @@ func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
 	state.BytesTotal = data.Size
 	state.State = UPLOADING_MAGIC
 
+	go goUploadMagic()
+	time.Sleep(1 * time.Second)
+
+	sendResponse(w, nil)
+}
+
+func goUploadMagic() {
 	timeStart = time.Now()
 	logInfo("Starting magic upload at " + timeStart.Format("15:04:05"))
 	logInfo("Filename: " + state.Filename)
 
-	path := "/tmp/mypipe"
-	var err error
-	state.File, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	stdout, _, err := runCommand2("/usr/local/bin/flash-mkfifo")
 	if err != nil {
-		log.Fatal(err)
+		logError("Error encountered when setting up pipe: \n" + stdout)
 	}
-	sendResponse(w, nil)
+	state.State = FINISHED
 }
 
 func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
@@ -378,8 +383,17 @@ func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var chunk *Chunk = &Chunk{}
+	var err error
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &chunk)
+
+	path := "/tmp/mypipe"
+	if state.File == nil {
+		state.File, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 
 	decoded, err := base64.StdEncoding.DecodeString(chunk.Encoded[37:])
 	if err != nil {
@@ -405,7 +419,15 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
-	state.State = FINISHED
+	revision := runCommandReturnString("get-recore-revision")
+	stdout, _, err := runCommand2("/usr/local/bin/flash-cleanup", revision)
+	if err != nil {
+		logError("Error encountered during cleanup: \n" + stdout)
+		state.State = ERROR
+		state.Error = "An error was encountered during magic. Check log for details"
+	} else {
+		state.State = FINISHED
+	}
 	if saveOptionsWhenIdle {
 		saveOptions()
 	}

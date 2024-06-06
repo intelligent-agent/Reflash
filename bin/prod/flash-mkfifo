@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+info "-----------------------"
+info "Starting mkfifo script"
+info "-----------------------"
+
+OUTFILE="/dev/mmcblk2"
+FIFO="/tmp/mypipe"
+
+info "Overwriting block device $OUTFILE"
+
+rm -f "$FIFO"
+mkfifo "$FIFO"
+xz -d < "$FIFO" > "$OUTFILE" &
+
+info "Mkfifo script done!"
