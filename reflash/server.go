@@ -372,7 +372,7 @@ func goUploadMagic() {
 	if err != nil {
 		logError("Error encountered when setting up pipe: \n" + stdout)
 	}
-	state.State = FINISHED
+	logInfo("flash-mkfifo done")
 }
 
 func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {

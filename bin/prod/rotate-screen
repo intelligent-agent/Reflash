@@ -30,7 +30,6 @@ update_xorg(){
     XORG_DIR="/mnt/emmc/usr/share/X11/xorg.conf.d"
     if [ ! -d ${XORG_DIR} ]; then
         echo "Misssig directory: ${XORG_DIR}"
-        exit 0
     else
         cat <<EOF > "${XORG_DIR}/90-monitor.conf"
 Section "Monitor"
@@ -69,7 +68,6 @@ update_weston(){
                 ;;
             *)
                 echo "Unknown debian release: '${RELEASE}'"
-                exit 0
                 ;;
         esac
     fi
