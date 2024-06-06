@@ -78,6 +78,7 @@ type State struct {
 	BytesTotal int      `json:"bytes_total"`
 	Error      string   `json:"error"`
 	IPs        []string `json:"ips"`
+	File       *os.File
 }
 
 type Chunk struct {
@@ -88,15 +89,16 @@ type Settings struct {
 }
 
 const (
-	IDLE        = "IDLE"
-	DOWNLOADING = "DOWNLOADING"
-	UPLOADING   = "UPLOADING"
-	INSTALLING  = "INSTALLING"
-	BACKUPING   = "BACKUPING"
-	MAGIC       = "MAGIC"
-	FINISHED    = "FINISHED"
-	CANCELLED   = "CANCELLED"
-	ERROR       = "ERROR"
+	IDLE            = "IDLE"
+	DOWNLOADING     = "DOWNLOADING"
+	UPLOADING       = "UPLOADING"
+	INSTALLING      = "INSTALLING"
+	BACKUPING       = "BACKUPING"
+	MAGIC           = "MAGIC"
+	UPLOADING_MAGIC = "UPLOADING_MAGIC"
+	FINISHED        = "FINISHED"
+	CANCELLED       = "CANCELLED"
+	ERROR           = "ERROR"
 )
 
 const (
@@ -111,7 +113,6 @@ var oldState *State
 var oldRotation int
 
 var static_dir string
-var version_file string
 var images_folder string
 var options_file string
 var log_file string
@@ -190,6 +191,9 @@ func ServerInit() {
 	http.HandleFunc("/api/cancel_backup", cancelBackup)
 	http.HandleFunc("/api/start_magic", startMagic)
 	http.HandleFunc("/api/cancel_magic", cancelMagic)
+	http.HandleFunc("/api/upload_magic_start", uploadMagicStart)
+	http.HandleFunc("/api/upload_magic_chunk", uploadMagicChunk)
+	http.HandleFunc("/api/upload_magic_finish", uploadMagicFinish)
 	http.HandleFunc("/api/get_progress", getProgress)
 	http.HandleFunc("/api/check_file_integrity", checkFileIntegrity)
 	http.HandleFunc("/api/run_install_finished_commands", runInstallFinishedCommands)
@@ -340,6 +344,93 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	os.Create(images_folder + "/" + state.Filename)
 
 	sendResponse(w, nil)
+}
+
+func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
+	var data *Download = &Download{}
+	reqBody, _ := io.ReadAll(r.Body)
+	json.Unmarshal(reqBody, &data)
+
+	state.Filename = data.Filename
+	state.StartTime = data.StartTime
+	state.BytesNow = 0
+	state.BytesTotal = data.Size
+	state.State = UPLOADING_MAGIC
+
+	go goUploadMagic()
+	time.Sleep(1 * time.Second)
+
+	sendResponse(w, nil)
+}
+
+func goUploadMagic() {
+	timeStart = time.Now()
+	logInfo("Starting magic upload at " + timeStart.Format("15:04:05"))
+	logInfo("Filename: " + state.Filename)
+
+	stdout, _, err := runCommand2("/usr/local/bin/flash-mkfifo")
+	if err != nil {
+		logError("Error encountered when setting up pipe: \n" + stdout)
+	}
+	logInfo("flash-mkfifo done")
+}
+
+func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
+	if state.State == CANCELLED {
+		response := map[string]bool{"success": false}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var chunk *Chunk = &Chunk{}
+	var err error
+	reqBody, _ := io.ReadAll(r.Body)
+	json.Unmarshal(reqBody, &chunk)
+
+	path := "/tmp/mypipe"
+	if state.File == nil {
+		state.File, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(chunk.Encoded[37:])
+	if err != nil {
+		http.Error(w, "Failed to decode base64", http.StatusBadRequest)
+		return
+	}
+	_, err = state.File.Write(decoded)
+	if err != nil {
+		http.Error(w, "Failed to write decompressed data to file", http.StatusInternalServerError)
+		return
+	}
+
+	state.BytesNow += len(decoded)
+	state.Progress = float64(state.BytesNow) * 100 / float64(state.BytesTotal)
+
+	response := map[string]bool{"success": true}
+	json.NewEncoder(w).Encode(response)
+}
+
+func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
+	if err := state.File.Close(); err != nil {
+		log.Fatal(err)
+	}
+	duration := time.Since(timeStart)
+	logInfo(fmt.Sprintf("Upload magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	revision := runCommandReturnString("get-recore-revision")
+	stdout, _, err := runCommand2("/usr/local/bin/flash-cleanup", revision)
+	if err != nil {
+		logError("Error encountered during cleanup: \n" + stdout)
+		state.State = ERROR
+		state.Error = "An error was encountered during magic. Check log for details"
+	} else {
+		state.State = FINISHED
+	}
+	if saveOptionsWhenIdle {
+		saveOptions()
+	}
 }
 
 func uploadChunk(w http.ResponseWriter, r *http.Request) {

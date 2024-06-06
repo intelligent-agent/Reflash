@@ -19,6 +19,8 @@ install_bins:
 	chmod +x /usr/local/bin/mount-unmount-usb
 	chmod +x /usr/local/bin/get-reflash-version
 	chmod +x /usr/local/bin/save-settings
+	chmod +x /usr/local/bin/flash-cleanup
+	chmod +x /usr/local/bin/flash-mkfifo
 
 upload_bins:
 	scp bin/prod/* root@recore.local:/usr/local/bin
@@ -37,14 +39,8 @@ dev-clean:
 dev-client:
 	cd client; npm run serve
 
-dev-board:
-	cd board; npm run serve
-
 build:
 	cd client; npm run build
-
-build-board:
-	cd board; npm run build
 
 upload:
 	scp -r client/dist root@recore.local:/var/www/html/reflash
@@ -57,7 +53,7 @@ run-go:
 	cd reflash; APP_ENV=dev go run main.go server.go screen.go
 
 upload-go:
-	scp reflash/reflash debian@${REMOTE}:/tmp/
+	scp reflash/reflash root@${REMOTE}:/usr/local/bin
 
 tar:
 	cd zip; tar -zcvf reflash.tar.gz reflash/

@@ -91,7 +91,10 @@
           <span class="red">{{ this.computeSizeCheckText() }}</span>
         </div>
         <div class="xs1 pa1">
-          <ProgressBar ref="magicprogressbar" v-show="state === 'MAGIC'" />
+          <ProgressBar
+            ref="magicprogressbar"
+            v-show="state === 'MAGIC' || state === 'UPLOADING_MAGIC'"
+          />
           {{ this.options.magicmode ? "" : "Choose image to install" }}
         </div>
         <div class="xs1 pa1">
@@ -282,7 +285,9 @@ export default {
       return "";
     },
     computeMagicButtonText() {
-      return this.state == "MAGIC" ? "Cancel" : "Magic";
+      return this.state == "MAGIC" || this.state == "UPLOADING_MAGIC"
+        ? "Cancel"
+        : "Magic";
     },
     flashDirection() {
       return this.flash.selectedMethod == 1 ? "left" : "right";
@@ -309,6 +314,8 @@ export default {
       if (!this.options.magicmode) return false;
       if (this.selectedMethod.id == 0 && this.selectedRebuildImage) return true;
       if (this.selectedMethod.id == 1 && this.selectedRefactorImage)
+        return true;
+      if (this.selectedMethod.id == 2 && this.selectedUploadImage.file)
         return true;
       return false;
     },
@@ -363,6 +370,62 @@ export default {
         }
       });
     },
+    async startMagicUpload() {
+      let self = this;
+      if (this.state == "IDLE") {
+        this.state = "UPLOADING_MAGIC";
+        await axios
+          .put(`/api/upload_magic_start`, {
+            filename: self.file.name,
+            size: self.file.size,
+            start_time: Date.now(),
+          })
+          .then(function (response) {
+            self.status = response.data["success"];
+            self.magicUploadLocalFile();
+            self.checkProgress();
+          });
+      } else {
+        this.apiCall("upload_cancel");
+      }
+    },
+    async magicUploadLocalFile() {
+      const CHUNK_SIZE = 3 * 1024 * 1024;
+      let self = this;
+      var reader = new FileReader();
+      var offset = 0;
+      var filesize = this.file.size;
+
+      reader.onload = function () {
+        var result = reader.result;
+        var chunk = result;
+        axios
+          .post(`/api/upload_magic_chunk`, {
+            chunk: chunk,
+          })
+          .then(function (response) {
+            const status = response.data;
+            if (status.success && self.state == "UPLOADING_MAGIC") {
+              offset += CHUNK_SIZE;
+              if (offset <= filesize) {
+                var slice = self.file.slice(offset, offset + CHUNK_SIZE);
+                reader.readAsDataURL(slice);
+              } else {
+                offset = filesize;
+                self.apiCall("upload_magic_finish");
+              }
+            } else {
+              self.apiCall("upload_cancel");
+            }
+          });
+      };
+
+      if (this.file) {
+        var slice = this.file.slice(offset, offset + CHUNK_SIZE);
+        reader.readAsDataURL(slice);
+        self.fileName = this.file.name;
+      }
+    },
     async uploadSelected() {
       let self = this;
       if (this.state == "IDLE") {
@@ -379,7 +442,7 @@ export default {
             self.checkProgress();
           });
       } else {
-        this.apiCall('upload_cancel')
+        this.apiCall("upload_cancel");
       }
     },
     async uploadLocalFile() {
@@ -405,10 +468,10 @@ export default {
                 reader.readAsDataURL(slice);
               } else {
                 offset = filesize;
-                self.apiCall('upload_finish');
+                self.apiCall("upload_finish");
               }
             } else {
-              self.apiCall('upload_cancel')
+              self.apiCall("upload_cancel");
             }
           });
       };
@@ -422,15 +485,19 @@ export default {
     onMagicButtonClick() {
       if (this.selectedMethod.id == 0) {
         this.selectedGithubImage = this.selectedRebuildImage;
+        this.startMagic();
       } else if (this.selectedMethod.id == 1) {
         this.selectedGithubImage = this.selectedRefactorImage;
+        this.startMagic();
+      } else if (this.selectedMethod.id == 2) {
+        this.selectedGithubImage = this.selectedLocalImage;
+        this.startMagicUpload();
       }
-      this.startMagic();
     },
     async startMagic() {
       let self = this;
       if (this.state == "IDLE") {
-        this.state = "MAGIC"
+        this.state = "MAGIC";
         await axios
           .put(`/api/start_magic`, {
             filename: this.selectedGithubImage["name"],
@@ -461,7 +528,7 @@ export default {
           this.backupFile = data.filename;
         }
         // This method is called on page load. If a refresh happens during upload, we can not continue.
-      } else if (data.state == "UPLOADING") {
+      } else if (data.state == "UPLOADING" || data.state == "UPLOADING_MAGIC") {
         this.selectedMethod = this.availableMethods[2];
       }
       this.previousState = this.state;
@@ -478,6 +545,7 @@ export default {
           "INSTALLING",
           "BACKUPING",
           "MAGIC",
+          "UPLOADING_MAGIC",
         ].includes(this.state)
       ) {
         this.setProgress({ progress: data.progress });
@@ -506,6 +574,10 @@ export default {
         } else if (this.previousState == "MAGIC") {
           this.selectedRebuildImage = null;
           this.selectedRefactorImage = null;
+          await axios.get(`/api/run_install_finished_commands`);
+          this.installFinished = true;
+        } else if (this.previousState == "UPLOADING_MAGIC") {
+          this.selectedUploadImage = [];
           await axios.get(`/api/run_install_finished_commands`);
           this.installFinished = true;
         }

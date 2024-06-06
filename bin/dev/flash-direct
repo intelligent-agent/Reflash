@@ -6,8 +6,9 @@ info() {
     echo "$1"
 }
 
+info "----------------------------"
 info "Starting flash direct script"
-info "------------------"
+info "----------------------------"
 
 URL=$1
 OUTFILE="/dev/null"
