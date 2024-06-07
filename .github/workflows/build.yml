@@ -11,7 +11,7 @@ env:
 
 jobs:
   package:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
     - name: Make filename
       run: echo "VERSION=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
