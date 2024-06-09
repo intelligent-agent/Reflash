@@ -38,8 +38,8 @@ jobs:
         
     - name: Make image
       run: |
-        sudo apt install debootstrap qemu-user-static u-boot-tools
-        sudo ./mkimage.sh
+        make docker
+        mv output/*.img.xz .
   
     - name: Release if tagged
       uses: ncipollo/release-action@v1

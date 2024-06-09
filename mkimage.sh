@@ -9,7 +9,7 @@ mkdir -p "${ROOTFSDIR}"
 sudo debootstrap --arch=arm64 --foreign --variant=minbase bookworm "${ROOTFSDIR}"/initrd
 
 if [ ! -f rootfs_files/debs/linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb ]; then
-    wget -P rootfs_files/debs/ http://feeds.iagent.no/debian/pool/main/linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
+    wget -q -P rootfs_files/debs/ http://feeds.iagent.no/debian/pool/main/linux-image-legacy-sunxi64_23.08.0-trunk_arm64__5.15.127.deb
 fi
 
 sudo cp rootfs_files/debs/* "${ROOTFSDIR}"/initrd
@@ -74,7 +74,24 @@ LinkLocalAddressing=yes
 MulticastDNS=yes
 EOF
 
-systemctl enable wpa_supplicant@wlan0.service --root="${ROOTFSDIR}"/initrd
+cat <<'EOF' > "${ROOTFSDIR}"/initrd/etc/systemd/system/wpa_supplicant_for_wlan0.service
+[Unit]
+Description=WPA supplicant daemon for wlan0
+Requires=sys-subsystem-net-devices-wlan0.device
+After=sys-subsystem-net-devices-wlan0.device
+Before=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/sbin/wpa_supplicant -c/etc/wpa_supplicant/wpa_supplicant-wlan0.conf -iwlan0
+ExecReload=/bin/kill -HUP $MAINPID
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl enable wpa_supplicant_for_wlan0.service --root="${ROOTFSDIR}"/initrd
 
 cat <<EOF > "${ROOTFSDIR}"/initrd/etc/wpa_supplicant/wpa_supplicant-wlan0.conf
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
@@ -114,12 +131,11 @@ sudo mkdir -p "${ROOTFSDIR}"/initrd/usr/local/share/fonts
 sudo cp reflash/Roboto-Light.ttf "${ROOTFSDIR}"/initrd/usr/local/share/fonts/
 sudo mkdir -p "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo cp -r client/dist "${ROOTFSDIR}"/initrd/var/www/html/reflash
-sudo cp bin/prod/* "${ROOTFSDIR}"/initrd/usr/local/bin
+sudo cp bin/* "${ROOTFSDIR}"/initrd/usr/local/bin
 sudo mkdir -p "${ROOTFSDIR}"/initrd/mnt/usb
 
-TAG=$(git describe --always --tags)
-NAME="reflash-${TAG}"
-echo "$NAME" > "$ROOTFSDIR"/initrd/etc/reflash-version
+sudo cp reflash-version "$ROOTFSDIR"/initrd/etc/
+NAME="reflash-"$(cat reflash-version  | tr -d '\n')
 
 # Move the boot folder outside the rootfs
 sudo rm -rf "${ROOTFSDIR}"/boot
@@ -157,6 +173,6 @@ sudo umount "${ROOTFSDIR}"/image
 sudo losetup -d "${LOOPDEV}"
 
 xz -f -T 0 -k -z "${ROOTFSDIR}"/reflash.img
-mv "${ROOTFSDIR}"/reflash.img.xz ./${NAME}.img.xz
+mv "${ROOTFSDIR}"/reflash.img.xz /output/${NAME}.img.xz
 
 sudo rm -rf "${ROOTFSDIR}"
