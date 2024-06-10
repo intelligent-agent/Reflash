@@ -74,25 +74,9 @@ LinkLocalAddressing=yes
 MulticastDNS=yes
 EOF
 
-cat <<'EOF' > "${ROOTFSDIR}"/initrd/etc/systemd/system/wpa_supplicant_for_wlan0.service
-[Unit]
-Description=WPA supplicant daemon for wlan0
-Requires=sys-subsystem-net-devices-wlan0.device
-After=sys-subsystem-net-devices-wlan0.device
-Before=network.target
-Wants=network.target
-
-[Service]
-Type=simple
-ExecStart=/sbin/wpa_supplicant -c/etc/wpa_supplicant/wpa_supplicant-wlan0.conf -iwlan0
-ExecReload=/bin/kill -HUP $MAINPID
-TimeoutSec=10
-
-[Install]
-WantedBy=multi-user.target
+cat <<'EOF' > "${ROOTFSDIR}"/initrd/etc/udev/rules.d/20-wifi.rules
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="wlan0", ENV{SYSTEMD_WANTS}+="wpa_supplicant@wlan0.service"
 EOF
-
-systemctl enable wpa_supplicant_for_wlan0.service --root="${ROOTFSDIR}"/initrd
 
 cat <<EOF > "${ROOTFSDIR}"/initrd/etc/wpa_supplicant/wpa_supplicant-wlan0.conf
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev

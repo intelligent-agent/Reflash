@@ -111,14 +111,15 @@ docker:
 	mkdir -p output
 	git describe --always --tags > docker-reflash/reflash-version
 	cp mkimage.sh docker-reflash
-	cp -r bin/prod docker-reflash/bin
+	mkdir -p docker-reflash/bin
+	cp bin/prod/* docker-reflash/bin
 	cp -r client docker-reflash/
 	cp -r rootfs_files docker-reflash/
 	mkdir -p docker-reflash/reflash
 	cp reflash/reflash docker-reflash/reflash
 	cp reflash/Roboto-Light.ttf docker-reflash/reflash
+	docker container prune -f
 	cd docker-reflash; docker build -t docker-reflash .
 	cd docker-reflash; docker container run -v /dev/:/dev -v $(PWD)/output:/output --privileged=true --name reflash docker-reflash
-	docker container prune -f
 
 .PHONY: tests
