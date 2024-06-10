@@ -10,12 +10,12 @@ Reflash and use Balena Etcher to flash it to a USB drive.
 ### Create linux image
 This will use debootstrap to create a Reflash image
 ```
-make image
+make docker
 ```
 
 ### Local development
 To start the npm client/Vue frontend
 ```
-make dev-client
 make run-go
+make dev-client
 ```

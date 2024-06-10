@@ -1,31 +1,37 @@
 #!/bin/bash
 
-HW_REV=$1
-SERIAL_NR=$2
+SERIAL_NR=$1
 
 usage(){
-  echo "Usage: $0 <hardware revision> <serial number>"
+  echo "Usage: $0 <serial number>"
   echo "This scipt is for adding a serial number and"
-  echo "calibration file to Recore A5/A6/A7. The serial number should be"
+  echo "calibration file to Recore A5/A6/A7/A8. The serial number should be"
   echo "in have the following format: "
-  echo "A5: 0100"
-  echo "A6: 0200"
-  echo "A7: 0300"
+  echo "A5: 100"
+  echo "A6: 200"
+  echo "A7: 300"
+  echo "A8: 400"
 }
 
-case $HW_REV in
-  A5|A6|A7)
-    echo "Using recore revision ${HW_REV}"
-    ;;
-  *)
-    echo "Wrong hardware revision ${HW_REV}"
-    usage
-    exit 1
-    ;;
-esac
+SNR="0${SERIAL_NR}"
+if (( "$SERIAL_NR" >= 100 && "$SERIAL_NR" < 200 )); then
+  HW_REV="A5"
+  URL="https://raw.githubusercontent.com/intelligent-agent/Recore/master/Calibrations/Recore_A5_${SNR}.json"
+elif (( "$SERIAL_NR" >= 200 && "$SERIAL_NR" < 300 )); then
+  HW_REV="A6"
+  URL="https://raw.githubusercontent.com/intelligent-agent/Recore/master/Calibrations/Recore_A6_${SNR}.json"
+elif (( "$SERIAL_NR" >= 300 && "$SERIAL_NR" < 400 )); then
+  HW_REV="A7"
+  URL="https://raw.githubusercontent.com/intelligent-agent/Recore/master/Calibrations/Recore_A7_${SNR}.json"
+elif (( "$SERIAL_NR" >= 400 && "$SERIAL_NR" < 1000 )); then
+  HW_REV="A8"
+  URL="https://raw.githubusercontent.com/intelligent-agent/Recore/master/Calibrations/Recore_A8_${SNR}/calibration.json"
+else
+  echo "Unknown serial number $SERIAL_NR"
+fi
 
-FILE="Recore_${HW_REV}_${SERIAL_NR}.json"
-URL="https://raw.githubusercontent.com/intelligent-agent/Recore/master/Calibrations/${FILE}"
+echo "Hardware revision: ${HW_REV}"
+echo "serial number: ${SNR}"
 
 if [[ ! `wget -NS --spider $URL 2>&1 | grep 'HTTP/1.1 200 OK'` ]]; then
   echo "Unable to find the calibration file at the remote location: $URL". 
@@ -33,5 +39,4 @@ if [[ ! `wget -NS --spider $URL 2>&1 | grep 'HTTP/1.1 200 OK'` ]]; then
 fi
 
 echo "Calibration file valid"
-
-echo "Done"
+echo $SNR > /opt/reflash/serial_number

@@ -8,8 +8,9 @@
           <li>Once downloaded, you can flash the image to the internal storage (eMMC)</li>
           <li>Finally reboot the board. The board will boot from the internal storage.</li>
         </ol>
-        <span>Reflash version {{version}}</span><br />
-        <span>Recore revision {{revision}}</span>
+        <span>Reflash version: {{version}}</span><br />
+        <span>Recore revision: {{revision}}</span><br />
+        <span>Recore serial number: {{serialNumber}}</span>
       </p>
   </w-transition-expand>
 </template>
@@ -21,6 +22,7 @@ export default {
     open: Boolean,
     version: String,
     revision: String,
+    serialNumber: String,
   },
 };
 </script>

@@ -1,0 +1,9 @@
+#!/bin/bash
+
+DEV=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+
+echo 0 > "/sys/block/${DEV}boot0/force_ro"
+dd if=/dev/zero of=/dev/${DEV}boot0
+partprobe
+echo 1 > "/sys/block/${DEV}boot0/force_ro"
+echo "Done"
