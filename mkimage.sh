@@ -86,6 +86,7 @@ Wants=network.target
 Type=simple
 ExecStart=/sbin/wpa_supplicant -c/etc/wpa_supplicant/wpa_supplicant-wlan0.conf -iwlan0
 ExecReload=/bin/kill -HUP $MAINPID
+TimeoutSec=10
 
 [Install]
 WantedBy=multi-user.target
