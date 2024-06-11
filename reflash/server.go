@@ -32,10 +32,15 @@ type GetInfo struct {
 	LocalImages    []Image  `json:"local_images"`
 	ReflashVersion string   `json:"reflash_version"`
 	RecoreRevision string   `json:"recore_revision"`
+	SerialNumber   string   `json:"serial_number"`
 	EmmcVersion    string   `json:"emmc_version"`
 	IsSshEnabled   bool     `json:"is_ssh_enabled"`
 	BytesAvailable int      `json:"bytes_available"`
 	IPs            []string `json:"ips"`
+}
+
+type GetSerialNumber struct {
+	SerialNumber string `json:"serial_number"`
 }
 
 type Options struct {
@@ -66,6 +71,10 @@ type StatusResult struct {
 type RotateCommand struct {
 	Rotation int    `json:"rotation"`
 	Where    string `json:"where"`
+}
+
+type UpdateConfigCommand struct {
+	Snr int `json:"snr"`
 }
 
 type State struct {
@@ -199,6 +208,9 @@ func ServerInit() {
 	http.HandleFunc("/api/run_install_finished_commands", runInstallFinishedCommands)
 	http.HandleFunc("/api/clear_log", clearLog)
 	http.HandleFunc("/api/rotate_screen", rotateScreen)
+	http.HandleFunc("/api/update_config", updateConfig)
+	http.HandleFunc("/api/is_config_present", isConfigPresent)
+	http.HandleFunc("/api/get_serial_number", getSerialNumber)
 	log.Fatal(http.ListenAndServe(http_port, nil))
 }
 
@@ -207,12 +219,20 @@ func getInfo(w http.ResponseWriter, r *http.Request) {
 		LocalImages:    getLocalImages(),
 		ReflashVersion: runCommandReturnString("get-reflash-version"),
 		RecoreRevision: runCommandReturnString("get-recore-revision"),
+		SerialNumber:   runCommandReturnString("get-recore-serial-number"),
 		EmmcVersion:    runCommandReturnString("get-emmc-version"),
 		IsSshEnabled:   runCommandReturnBool("is-ssh-enabled"),
 		BytesAvailable: getFreeSpace(),
 		IPs:            getIPs(),
 	}
 	json.NewEncoder(w).Encode(get_info)
+}
+
+func getSerialNumber(w http.ResponseWriter, r *http.Request) {
+	var get_serial_number *GetSerialNumber = &GetSerialNumber{
+		SerialNumber: runCommandReturnString("get-recore-serial-number"),
+	}
+	json.NewEncoder(w).Encode(get_serial_number)
 }
 
 func getOptions(w http.ResponseWriter, r *http.Request) {
@@ -811,12 +831,25 @@ func shutdownBoard(w http.ResponseWriter, r *http.Request) {
 	sendResponse(w, err)
 }
 
+func isConfigPresent(w http.ResponseWriter, r *http.Request) {
+	_, _, err := runCommand2("/usr/local/bin/get-recore-revision")
+	sendResponse(w, err)
+}
+
 func rotateScreen(w http.ResponseWriter, r *http.Request) {
 	var data *RotateCommand = &RotateCommand{}
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
 
 	err := cmdRotateScreen(data.Rotation, data.Where)
+	sendResponse(w, err)
+}
+
+func updateConfig(w http.ResponseWriter, r *http.Request) {
+	var data *UpdateConfigCommand = &UpdateConfigCommand{}
+	reqBody, _ := io.ReadAll(r.Body)
+	json.Unmarshal(reqBody, &data)
+	_, _, err := runCommand2("/usr/local/bin/create-recore-config", strconv.Itoa(data.Snr))
 	sendResponse(w, err)
 }
 

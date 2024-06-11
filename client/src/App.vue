@@ -7,6 +7,7 @@
       @reboot-board="rebootBoard"
       @shutdown-board="shutdownBoard"
       @close="openOptions = false"
+      @open-serial-number="openSerialNumber=true"
     />
     <w-card class="mxa pa3 card secondary">
       <w-flex wrap class="text-center">
@@ -36,6 +37,7 @@
             :open="openInfo"
             :version="reflash_version"
             :revision="recore_revision"
+            :serialNumber="serial_number"
           />
         </div>
         <div class="xs1 pa1 align-self-center">
@@ -190,6 +192,11 @@
           ref="TheUsbChecker"
           @reboot-board="rebootBoard"
         />
+        <TheConfigUpdater
+          :open="openSerialNumber"
+          ref="TheConfigUpdater"
+          @close="openSerialNumber = false"
+        />
       </w-flex>
     </w-card>
   </w-app>
@@ -203,6 +210,7 @@ import ProgressBar from "./components/ProgressBar";
 import FlashSelector from "./components/FlashSelector";
 import IntegrityChecker from "./components/IntegrityChecker";
 import TheUsbChecker from "./components/TheUsbChecker";
+import TheConfigUpdater from "./components/TheConfigUpdater";
 import WaveUI from "wave-ui";
 import { mapGetters, mapActions } from "vuex";
 import axios from "axios";
@@ -217,6 +225,7 @@ export default {
     FlashSelector,
     IntegrityChecker,
     TheUsbChecker,
+    TheConfigUpdater,
   },
   setup() {
     const waveui = new WaveUI(this, {});
@@ -245,6 +254,7 @@ export default {
     openLog: false,
     openOptions: false,
     showOverlay: false,
+    openSerialNumber: false,
     availableMethods: [
       { id: 0, label: "Rebuild", value: 0, image: "Cloud" },
       { id: 1, label: "Refactor", value: 1, image: "Cloud" },
@@ -257,8 +267,9 @@ export default {
     reflash_version: "Unknown",
     emmc_version: "Unknown",
     recore_revision: "Unknown",
+    serial_number: "Unknown",
     bytesAvailable: -1,
-    sizeWarning: "",
+    sizeWarning: ""
   }),
   computed: mapGetters(["options", "progress", "flash"]),
   methods: {
@@ -561,15 +572,15 @@ export default {
           this.installFinished = true;
         } else if (this.previousState == "BACKUPING") {
           this.backupFile = "";
-          this.getLocalImages();
+          this.getInfo();
         } else if (this.previousState == "DOWNLOADING") {
           this.selectedRebuildImage = null;
           this.selectedRefactorImage = null;
-          await this.getLocalImages();
+          await this.getInfo();
           this.selectedLocalImage = data.filename;
         } else if (this.previousState == "UPLOADING") {
           this.selectedUploadImage = [];
-          await this.getLocalImages();
+          await this.getInfo();
           this.selectedLocalImage = data.filename;
         } else if (this.previousState == "MAGIC") {
           this.selectedRebuildImage = null;
@@ -583,7 +594,7 @@ export default {
         }
       } else if (data.state == "CANCELLED") {
         this.selectedGithubImage = null;
-        this.getLocalImages();
+        this.getInfo();
       } else if (data.state == "ERROR") {
         this.$waveui.notify(data.error, "error", 0);
       }
@@ -709,13 +720,15 @@ export default {
         }
       }
     },
-    async getLocalImages() {
+    async getInfo() {
       const response = await axios.get(`/api/get_info`);
       this.localImages = response.data.local_images;
       this.reflash_version = response.data.reflash_version;
       this.emmc_version = response.data.emmc_version;
       this.recore_revision = response.data.recore_revision;
+      this.serial_number = response.data.serial_number;
       this.bytesAvailable = response.data.bytes_available;
+      this.openSerialNumber = (this.serial_number == "");
     },
     async getGithubImages() {
       fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
@@ -729,7 +742,7 @@ export default {
   created() {
     this.selectedMethod = this.availableMethods[0];
     this.getGithubImages();
-    this.getLocalImages();
+    this.getInfo();
     this.checkOnLoadProgress();
   },
 };
