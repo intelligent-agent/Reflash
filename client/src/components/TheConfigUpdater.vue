@@ -1,5 +1,5 @@
 <template>
-  <w-dialog v-if="open" :width="dialog.width" persistent>
+  <w-dialog v-model="dialog.show" :width="dialog.width">
     <template #title>
       <span class="dialog_title">Recore Serial Number</span>
     </template>
@@ -39,7 +39,7 @@ export default {
   },
   data: () => ({
     dialog: {
-      show: true,
+      show: false,
       width: "30%",
     },
     isConfigPresent: false,
@@ -94,6 +94,7 @@ export default {
       immediate: true,
       handler(is_open) {
         if (is_open) {
+          this.dialog.show = true;
           this.getInfo();
         }
       },

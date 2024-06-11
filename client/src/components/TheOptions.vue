@@ -43,14 +43,21 @@
         >
         </w-radios>
         <w-divider class="my6 mx-3"></w-divider>
+        <h4>Serial number</h4>
+        <div>
+          <w-button xl outline class="ma2" @click="$emit('open-serial-number')">
+            <span>Set Serial Number</span>
+          </w-button>
+        </div>
+        <w-divider class="my6 mx-3"></w-divider>
         <h4>Actions</h4>
         <div>
           <w-button xl outline class="ma2" @click="$emit('reboot-board')">
-          <span>Reboot now</span>
-        </w-button>
-        <w-button xl outline class="ma2" @click="$emit('shutdown-board')"
-          ><span>Shut down</span></w-button
-        >
+            <span>Reboot now</span>
+          </w-button>
+          <w-button xl outline class="ma2" @click="$emit('shutdown-board')"
+            ><span>Shut down</span></w-button
+          >
         </div>
       </w-flex>
     </w-drawer>

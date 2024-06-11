@@ -7,6 +7,7 @@
       @reboot-board="rebootBoard"
       @shutdown-board="shutdownBoard"
       @close="openOptions = false"
+      @open-serial-number="openSerialNumber=true"
     />
     <w-card class="mxa pa3 card secondary">
       <w-flex wrap class="text-center">
@@ -192,8 +193,9 @@
           @reboot-board="rebootBoard"
         />
         <TheConfigUpdater
-          :open="this.isSerialNumberValid == false"
+          :open="openSerialNumber"
           ref="TheConfigUpdater"
+          @close="openSerialNumber = false"
         />
       </w-flex>
     </w-card>
@@ -252,6 +254,7 @@ export default {
     openLog: false,
     openOptions: false,
     showOverlay: false,
+    openSerialNumber: false,
     availableMethods: [
       { id: 0, label: "Rebuild", value: 0, image: "Cloud" },
       { id: 1, label: "Refactor", value: 1, image: "Cloud" },
@@ -266,8 +269,7 @@ export default {
     recore_revision: "Unknown",
     serial_number: "Unknown",
     bytesAvailable: -1,
-    sizeWarning: "",
-    isSerialNumberValid: true,
+    sizeWarning: ""
   }),
   computed: mapGetters(["options", "progress", "flash"]),
   methods: {
@@ -726,7 +728,7 @@ export default {
       this.recore_revision = response.data.recore_revision;
       this.serial_number = response.data.serial_number;
       this.bytesAvailable = response.data.bytes_available;
-      this.isSerialNumberValid = (this.serial_number != "");
+      this.openSerialNumber = (this.serial_number == "");
     },
     async getGithubImages() {
       fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
