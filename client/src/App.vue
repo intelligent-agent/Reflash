@@ -195,7 +195,7 @@
         <TheConfigUpdater
           :open="openSerialNumber"
           ref="TheConfigUpdater"
-          @close="openSerialNumber = false"
+          @close="openSerialNumber = false; this.getInfo()"
         />
       </w-flex>
     </w-card>
