@@ -43,6 +43,11 @@ type GetSerialNumber struct {
 	SerialNumber string `json:"serial_number"`
 }
 
+type GetWifi struct {
+	SSID     string `json:"SSID"`
+	Password string `json:"password"`
+}
+
 type Options struct {
 	Darkmode       bool `json:"darkmode"`
 	RebootWhenDone bool `json:"rebootWhenDone"`
@@ -211,6 +216,8 @@ func ServerInit() {
 	http.HandleFunc("/api/update_config", updateConfig)
 	http.HandleFunc("/api/is_config_present", isConfigPresent)
 	http.HandleFunc("/api/get_serial_number", getSerialNumber)
+	http.HandleFunc("/api/save_wifi", saveWifi)
+	http.HandleFunc("/api/get_wifi", getWifi)
 	log.Fatal(http.ListenAndServe(http_port, nil))
 }
 
@@ -233,6 +240,30 @@ func getSerialNumber(w http.ResponseWriter, r *http.Request) {
 		SerialNumber: runCommandReturnString("get-recore-serial-number"),
 	}
 	json.NewEncoder(w).Encode(get_serial_number)
+}
+
+func getWifi(w http.ResponseWriter, r *http.Request) {
+
+	ssid, _, _ := runCommand2("get-setting", "WIFI_SSID")
+
+	var get_wifi *GetWifi = &GetWifi{
+		SSID: strings.TrimSpace(ssid),
+	}
+	json.NewEncoder(w).Encode(get_wifi)
+}
+
+func saveWifi(w http.ResponseWriter, r *http.Request) {
+	reqBody, _ := io.ReadAll(r.Body)
+	var get_wifi *GetWifi
+	json.Unmarshal(reqBody, &get_wifi)
+	ssid := strings.TrimSpace(get_wifi.SSID)
+	pass := strings.TrimSpace(get_wifi.Password)
+	psk, _, _ := runCommand2("/usr/local/bin/wpa-psk", ssid, pass)
+
+	runCommand2("save-setting", "WIFI_SSID", ssid)
+	runCommand2("save-setting", "WIFI_PSK", strings.TrimSpace(psk))
+
+	sendResponse(w, nil)
 }
 
 func getOptions(w http.ResponseWriter, r *http.Request) {
@@ -962,9 +993,10 @@ func getRecoreRevision() string {
 func saveOptions() error {
 	var err error
 	mountUsb(MODE_RW)
-	content, err := toml.Marshal(options)
+	content, _ := toml.Marshal(options)
 	err = os.WriteFile(options_file, content, 0644)
 	logInfo("Options saved")
+
 	mountUsb(MODE_RO)
 	return err
 }

@@ -8,6 +8,7 @@
       @shutdown-board="shutdownBoard"
       @close="openOptions = false"
       @open-serial-number="openSerialNumber=true"
+      @open-wifi="openWifi=true"
     />
     <w-card class="mxa pa3 card secondary">
       <w-flex wrap class="text-center">
@@ -197,6 +198,11 @@
           ref="TheConfigUpdater"
           @close="openSerialNumber = false; this.getInfo()"
         />
+        <TheWifiSetup
+          :open="openWifi"
+          ref="TheWifiSetup"
+          @close="openWifi = false"
+        />
       </w-flex>
     </w-card>
   </w-app>
@@ -211,6 +217,7 @@ import FlashSelector from "./components/FlashSelector";
 import IntegrityChecker from "./components/IntegrityChecker";
 import TheUsbChecker from "./components/TheUsbChecker";
 import TheConfigUpdater from "./components/TheConfigUpdater";
+import TheWifiSetup from "./components/TheWifiSetup";
 import WaveUI from "wave-ui";
 import { mapGetters, mapActions } from "vuex";
 import axios from "axios";
@@ -226,6 +233,7 @@ export default {
     IntegrityChecker,
     TheUsbChecker,
     TheConfigUpdater,
+    TheWifiSetup,
   },
   setup() {
     const waveui = new WaveUI(this, {});
@@ -255,6 +263,7 @@ export default {
     openOptions: false,
     showOverlay: false,
     openSerialNumber: false,
+    openWifi: false,
     availableMethods: [
       { id: 0, label: "Rebuild", value: 0, image: "Cloud" },
       { id: 1, label: "Refactor", value: 1, image: "Cloud" },

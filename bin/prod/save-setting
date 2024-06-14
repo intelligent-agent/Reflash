@@ -1,0 +1,24 @@
+#!/bin/bash
+
+KEY=$1
+VALUE=$2
+
+EMMC=/dev/mmcblk2
+SETTINGS_FILE="/mnt/emmc/etc/rebuild-settings"
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+mkdir -p /mnt/emmc
+umount -q /mnt/emmc/
+mount "${EMMC}p2" /mnt/emmc
+
+
+if [ $(grep "${KEY}=" $SETTINGS_FILE) ]; then 
+    sed -i "s/${KEY}=.*/${KEY}=${VALUE}/" "${SETTINGS_FILE}"
+else
+    echo "${KEY}=${VALUE}" >> $SETTINGS_FILE
+fi
+umount /mnt/emmc

@@ -1,0 +1,19 @@
+#!/bin/bash
+
+KEY=$1
+VALUE=$2
+
+SETTINGS_FILE="/opt/reflash/rebuild-settings"
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+if [ $(grep "${KEY}=" $SETTINGS_FILE) ]; then 
+    echo "key exists"
+    sed -i "s/${KEY}=.*/${KEY}=${VALUE}/" "${SETTINGS_FILE}"
+else
+    echo "key does not exists"
+    echo "${KEY}=${VALUE}" >> $SETTINGS_FILE
+fi

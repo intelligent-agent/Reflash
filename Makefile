@@ -21,6 +21,7 @@ install_bins:
 	chmod +x /usr/local/bin/save-settings
 	chmod +x /usr/local/bin/flash-cleanup
 	chmod +x /usr/local/bin/flash-mkfifo
+	chmod +x /usr/local/bin/wpa-psk
 
 upload_bins:
 	scp bin/prod/* root@recore.local:/usr/local/bin
