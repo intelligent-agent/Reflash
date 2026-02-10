@@ -437,6 +437,9 @@ export default {
             } else {
               self.apiCall("upload_cancel");
             }
+          }).catch(function (error) {
+            self.$waveui.notify(error, "error", 0);
+            console.log(error);
           });
       };
 

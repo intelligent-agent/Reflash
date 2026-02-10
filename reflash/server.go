@@ -19,6 +19,7 @@ import (
 
 	"github.com/grafana/tail"
 	"github.com/pelletier/go-toml/v2"
+	"github.com/theojulienne/go-wireless"
 	"golang.org/x/exp/slices"
 )
 
@@ -45,15 +46,27 @@ type GetSerialNumber struct {
 
 type GetWifi struct {
 	SSID     string `json:"SSID"`
+	BSSID    string `json:"BSSID"`
 	Password string `json:"password"`
 }
 
+type AccessPoint struct {
+	BSSID     string `json:"BSSID"`
+	Frequency string `json:"frequency"`
+	Signal    string `json:"signal"`
+	Flags     string `json:"flags"`
+	SSID      string `json:"SSID"`
+}
+
 type Options struct {
-	Darkmode       bool `json:"darkmode"`
-	RebootWhenDone bool `json:"rebootWhenDone"`
-	EnableSsh      bool `json:"enableSsh"`
-	Magicmode      bool `json:"magicmode"`
-	ScreenRotation int  `json:"screenRotation"`
+	Darkmode       bool   `json:"darkmode"`
+	RebootWhenDone bool   `json:"rebootWhenDone"`
+	EnableSsh      bool   `json:"enableSsh"`
+	Magicmode      bool   `json:"magicmode"`
+	ScreenRotation int    `json:"screenRotation"`
+	WifiSSID       string `json:"SSID"`
+	WifiBSSID      string `json:"BSSID"`
+	WifiPSK        string `json:"PSK"`
 }
 
 type Download struct {
@@ -139,6 +152,8 @@ var cancelFunc context.CancelFunc
 var stateMutex sync.Mutex
 var saveOptionsWhenIdle bool
 var env string
+var iface string
+var client *wireless.Client
 
 func ServerInit() {
 	env = os.Getenv("APP_ENV")
@@ -148,12 +163,14 @@ func ServerInit() {
 		options_file = "../.tmp/opt/options.cfg"
 		log_file = "/var/log/reflash.log"
 		http_port = ":8080"
+		iface = "wlo1"
 	} else {
 		static_dir = "/var/www/html/reflash/dist"
 		images_folder = "/mnt/usb/images"
 		options_file = "/mnt/usb/options.cfg"
 		log_file = "/var/log/reflash.log"
 		http_port = ":80"
+		iface = "wlan0"
 	}
 
 	state = &State{
@@ -180,6 +197,13 @@ func ServerInit() {
 		state.IPs = getIPs()
 		updateDisplay()
 	}()
+
+	var err error
+	client, err = wireless.NewClient(iface)
+	if err != nil {
+		log.Fatalf("failed to create nl80211 client: %v", err)
+	}
+	defer client.Close()
 
 	version := runCommandReturnString("get-reflash-version")
 
@@ -218,6 +242,9 @@ func ServerInit() {
 	http.HandleFunc("/api/get_serial_number", getSerialNumber)
 	http.HandleFunc("/api/save_wifi", saveWifi)
 	http.HandleFunc("/api/get_wifi", getWifi)
+	http.HandleFunc("/api/get_wifi_status", getWifiStatus)
+	http.HandleFunc("/api/wifi_scan", scanWifi2)
+	http.HandleFunc("/api/connect_wifi", connectWifi)
 	log.Fatal(http.ListenAndServe(http_port, nil))
 }
 
@@ -252,18 +279,84 @@ func getWifi(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(get_wifi)
 }
 
+func scanWifi(w http.ResponseWriter, r *http.Request) {
+	var ap_structs []AccessPoint
+	scan_results := runCommandReturnString("wpa-get-results")
+
+	aps := strings.Split(scan_results, "\n")
+	for i := 0; i < len(aps); i++ {
+		ap := strings.Split(aps[i], "\t")
+		ap_struct := AccessPoint{ap[0], ap[1], ap[2], ap[3], ap[4]}
+		ap_structs = append(ap_structs, ap_struct)
+	}
+
+	json.NewEncoder(w).Encode(ap_structs)
+}
+
+func scanWifi2(w http.ResponseWriter, r *http.Request) {
+	fmt.Println(client)
+	interfaces, err := client.Scan()
+	if err != nil {
+		log.Fatalf("failed to get interfaces: %v", err)
+	}
+	json.NewEncoder(w).Encode(interfaces)
+}
+
+func getWifiStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := client.Status()
+	if err != nil {
+		log.Fatalf("failed to get status: %v", err)
+	}
+	json.NewEncoder(w).Encode(status)
+}
+
 func saveWifi(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	var get_wifi *GetWifi
 	json.Unmarshal(reqBody, &get_wifi)
-	ssid := strings.TrimSpace(get_wifi.SSID)
+	options.WifiSSID = strings.TrimSpace(get_wifi.SSID)
 	pass := strings.TrimSpace(get_wifi.Password)
-	psk, _, _ := runCommand2("/usr/local/bin/wpa-psk", ssid, pass)
-
-	runCommand2("save-setting", "WIFI_SSID", ssid)
-	runCommand2("save-setting", "WIFI_PSK", strings.TrimSpace(psk))
+	psk, _, _ := runCommand2("/usr/local/bin/wpa-psk", options.WifiSSID, pass)
+	options.WifiPSK = strings.TrimSpace(psk)
+	runCommand2("save-setting", "WIFI_BSSID", options.WifiBSSID)
+	runCommand2("save-setting", "WIFI_SSID", options.WifiSSID)
+	runCommand2("save-setting", "WIFI_PSK", options.WifiPSK)
 
 	sendResponse(w, nil)
+}
+
+func connectWifi(w http.ResponseWriter, r *http.Request) {
+	reqBody, _ := io.ReadAll(r.Body)
+	var get_wifi *GetWifi
+	json.Unmarshal(reqBody, &get_wifi)
+	options.WifiSSID = strings.TrimSpace(get_wifi.SSID)
+	options.WifiBSSID = strings.TrimSpace(get_wifi.BSSID)
+	pass := strings.TrimSpace(get_wifi.Password)
+	psk, _, _ := runCommand2("/usr/local/bin/wpa-psk", options.WifiSSID, pass)
+	options.WifiPSK = strings.TrimSpace(psk)
+
+	networks, err := client.Networks()
+	if err != nil {
+		panic(err)
+	}
+	network := networks[1]
+	fmt.Println(network)
+	client.DisableNetwork(network.ID)
+	network.SSID = options.WifiSSID
+	network.PSK = pass
+	network, err = client.UpdateNetwork(network)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(network)
+
+	err = client.EnableNetwork(network.ID)
+	if err != nil {
+		panic(err)
+	}
+	client.Conn().SendCommandBool(wireless.CmdSelectNetwork + " " + strconv.Itoa(network.ID))
+
+	sendResponse(w, err)
 }
 
 func getOptions(w http.ResponseWriter, r *http.Request) {
@@ -809,7 +902,9 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	settings := "# Settings from Reflash\n" +
 		"SSH_ENABLED_ON_BOOT=" + strconv.FormatBool(options.EnableSsh) + "\n" +
 		"SSH_TIMEOUT=60\n" +
-		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10)
+		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10) + "\n" +
+		"WIFI_SSID=" + options.WifiSSID + "\n" +
+		"WIFI_PSK=" + options.WifiPSK
 
 	runCommand2("/usr/local/bin/save-settings", settings)
 	err = unmountUsb()

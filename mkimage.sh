@@ -67,9 +67,11 @@ EOF
 cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/30-wireless.network
 [Match]
 Name=wlan0
+
 [Network]
-Address=192.168.50.1/24
+#Address=192.168.50.1/24
 DHCPServer=yes
+DHCP=yes
 LinkLocalAddressing=yes
 MulticastDNS=yes
 EOF
@@ -84,12 +86,16 @@ update_config=1
 ap_scan=1
 
 network={
-    priority=0
+    priority=-10
     ssid="Recore"
     mode=2
     key_mgmt=WPA-PSK
     psk="12345678"
     frequency=2462
+}
+
+network={
+    ssid="Placeholder"
 }
 EOF
 
