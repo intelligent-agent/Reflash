@@ -18,12 +18,18 @@ info "Overwriting block device $OUTFILE"
 
 sync
 
+info "Expanding partition 2 to fill disk"
+parted -s "${OUTFILE}" resizepart 2 100%
+
 # Re-read partition table
 partprobe ${OUTFILE}
 
 info "Checking filesystems"
 e2fsck -y -f ${OUTFILE}p1
 e2fsck -y -f ${OUTFILE}p2
+
+info "Performing offline resize of filesystem"
+resize2fs "${OUTFILE}"p2
 
 # Create new uuids so they are different than the USB drive
 info "Creating new UUIDs"
@@ -39,6 +45,8 @@ mount ${OUTFILE}p2 /mnt/emmc
 info "Updating fstab with new UUIDs"
 sed -i "s:UUID=.* \/ :UUID=${UUID2} / :" /mnt/emmc/etc/fstab
 sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" /mnt/emmc/etc/fstab
+
+touch /mnt/emmc/root/.no_rootfs_resize
 
 # Copy config file, if one is not already present
 if test -d /mnt/emmc/home/debian; then
@@ -65,6 +73,14 @@ if test -d /mnt/emmc/home/debian; then
     fi
   fi
 fi
+
+if [ -f /mnt/emmc/etc/default/armbian-firstrun ]; then
+    sed -i 's/OPENSSHD_REGENERATE_HOST_KEYS=true/OPENSSHD_REGENERATE_HOST_KEYS=false/' /mnt/emmc/etc/default/armbian-firstrun
+fi
+
+info "Pre-generating SSH host keys"
+ssh-keygen -A -f /mnt/emmc
+
 cd /
 umount ${OUTFILE}p2
 
@@ -83,3 +99,4 @@ umount ${OUTFILE}p1
 
 sync
 info "Cleanup script done!"
+
