@@ -2,12 +2,6 @@
 
 set -euo pipefail
 
-partprobe
-
-DEV=mmcblk2
-
-mkdir -p /mnt/config
-umount -q /mnt/config/ || true
-mount -r "/dev/${DEV}boot0p1" /mnt/config/
+mount-config
 cat /mnt/config/serial_number
 umount /mnt/config/

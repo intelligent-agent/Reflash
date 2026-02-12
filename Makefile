@@ -99,9 +99,6 @@ upload-tar:
 upload-tar-board:
 	scp reflash-board.tar.gz debian@recore.local:/home/debian
 
-tests:
-	python3 -m pytest tests
-
 image:
 	make build
 	make build-go
@@ -122,4 +119,3 @@ docker:
 	cd docker-reflash; docker build -t docker-reflash .
 	cd docker-reflash; docker container run -v /dev/:/dev -v $(PWD)/output:/output --privileged=true --name reflash docker-reflash
 
-.PHONY: tests

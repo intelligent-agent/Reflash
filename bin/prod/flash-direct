@@ -11,21 +11,10 @@ info "Starting magic script"
 info "---------------------"
 
 URL=$1
-OUTFILE="/dev/mmcblk2"
-
-if ! test -b ${OUTFILE}boot0p1; then
-    info "partx"
-    partx -a ${OUTFILE}boot0
-fi
-
-mkdir -p /mnt/config
-if ! grep -qs '/mnt/config ' /proc/mounts; then
-    mount -r ${OUTFILE}boot0p1 /mnt/config/
-fi
-
+mount-config
 CONFIG=$(ls /mnt/config/*.json)
 REVISION=$(grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]')
-umount /mnt/config/
+unmount-config
 
 info "Found Recore hardware revision $REVISION"
 info "URL $URL"

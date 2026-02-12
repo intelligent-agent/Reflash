@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -euo pipefail
+
+DEV_BOOT="/dev/mmcblk2boot0"
+MOUNT_POINT="/mnt/config"
+OFFSET=17408
+
+mkdir -p "$MOUNT_POINT"
+
+if ! mountpoint -q "$MOUNT_POINT"; then
+    systemd-mount -q --collect --options="ro,loop,offset=$OFFSET" "$DEV_BOOT" "$MOUNT_POINT"
+fi

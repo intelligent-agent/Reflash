@@ -2,13 +2,7 @@
 
 set -o pipefail
 
-partprobe
-
-mkdir -p /mnt/config
-umount -q /mnt/config/ || true
-mount -r "/dev/mmcblk2boot0p1" /mnt/config/
-
+mount-config
 CONFIG=$(ls /mnt/config/*.json)
 grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]'
-
-umount -q /mnt/config/ || true
+unmount-config
