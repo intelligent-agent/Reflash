@@ -389,11 +389,10 @@ func connectWifi(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(reqBody, &get_wifi)
 	options.WifiSSID = strings.TrimSpace(get_wifi.SSID)
 	options.WifiBSSID = strings.TrimSpace(get_wifi.BSSID)
+	options.WifiPSK = strings.TrimSpace(get_wifi.Password)
 	isDirty=true
-
-	pass := strings.TrimSpace(get_wifi.Password)
 	var err error
-	_, _, err = runCommand2("/usr/local/bin/wifi-connect", options.WifiSSID, pass)
+	_, _, err = runCommand2("/usr/local/bin/wifi-connect", options.WifiSSID, options.WifiPSK)
 	sendResponse(w, err)
 }
 
@@ -928,8 +927,8 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 		"SSH_ENABLED_ON_BOOT=" + strconv.FormatBool(options.EnableSsh) + "\n" +
 		"SSH_TIMEOUT=60\n" +
 		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10) + "\n" +
-		"WIFI_SSID=" + options.WifiSSID + "\n" +
-		"WIFI_PSK=" + options.WifiPSK
+		"WIFI_SSID='" + options.WifiSSID + "'\n" +
+		"WIFI_PSK='" + options.WifiPSK+"'"
 
 	runCommand2("/usr/local/bin/save-settings", settings)
 	err = unmountUsb()
