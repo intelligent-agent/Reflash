@@ -1,0 +1,27 @@
+#!/bin/bash
+
+KEY=$1
+
+EMMC=/dev/mmcblk2
+SETTINGS_FILE="/mnt/emmc/etc/rebuild-settings"
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+usage(){
+    echo "Usage: $0 <key>"
+}
+
+get_setting(){
+    mkdir -p /mnt/emmc
+    umount -q /mnt/emmc/
+    mount "${EMMC}p2" /mnt/emmc
+
+    cat /etc/rebuild-settings | grep "${KEY}"
+
+    umount /mnt/emmc
+}
+
+get_setting

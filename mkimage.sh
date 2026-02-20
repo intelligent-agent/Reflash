@@ -113,7 +113,7 @@ case "\$1" in
         mkdir -p functions/acm.usb0
         mkdir -p configs/c.1/strings/0x409
         echo "Config 1: Serial" > configs/c.1/strings/0x409/configuration
-        
+
         # Link function to config
         ln -s functions/acm.usb0 configs/c.1/ 2>/dev/null
 
@@ -137,7 +137,7 @@ esac
 EOF
 
 chmod +x /usr/local/bin/usb-gadget-init.sh
-    
+
 cat <<EOF > /etc/systemd/system/usb-gadget-setup.service
 [Unit]
 Description=USB ConfigFS Gadget Manager
@@ -217,25 +217,6 @@ NamePolicy=keep kernel
 EOF
 
 systemctl enable iwd --root="${ROOTFSDIR}"/initrd
-
-#cat <<EOF > "${ROOTFSDIR}"/initrd/etc/udev/rules.d/20-wifi.rules
-#ACTION=="add", SUBSYSTEM=="net", KERNEL=="wlan0", ENV{SYSTEMD_WANTS}+="wpa_supplicant@wlan0.service"
-#EOF
-
-#cat <<EOF > "${ROOTFSDIR}"/initrd/etc/wpa_supplicant/wpa_supplicant-wlan0.conf
-#ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
-#update_config=1
-#ap_scan=1
-
-#network={
-#    priority=0
-#    ssid="Recore"
-#    mode=2
-#    key_mgmt=WPA-PSK
-#    psk="12345678"
-#    frequency=2462
-#}
-#EOF
 
 mkdir -p "${ROOTFSDIR}"/initrd/etc/systemd/resolved.conf.d/
 cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/resolved.conf.d/mdns.conf

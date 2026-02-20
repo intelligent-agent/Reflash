@@ -43,12 +43,29 @@ type GetSerialNumber struct {
 	SerialNumber string `json:"serial_number"`
 }
 
+type GetWifi struct {
+	SSID     string `json:"SSID"`
+	BSSID    string `json:"BSSID"`
+	Password string `json:"password"`
+}
+
+type AccessPoint struct {
+	BSSID     string `json:"BSSID"`
+	Frequency string `json:"frequency"`
+	Signal    string `json:"signal"`
+	Flags     string `json:"flags"`
+	SSID      string `json:"SSID"`
+}
+
 type Options struct {
-	Darkmode       bool `json:"darkmode"`
-	RebootWhenDone bool `json:"rebootWhenDone"`
-	EnableSsh      bool `json:"enableSsh"`
-	Magicmode      bool `json:"magicmode"`
-	ScreenRotation int  `json:"screenRotation"`
+	Darkmode       bool   `json:"darkmode"`
+	RebootWhenDone bool   `json:"rebootWhenDone"`
+	EnableSsh      bool   `json:"enableSsh"`
+	Magicmode      bool   `json:"magicmode"`
+	ScreenRotation int    `json:"screenRotation"`
+	WifiSSID       string `json:"SSID"`
+	WifiBSSID      string `json:"BSSID"`
+	WifiPSK        string `json:"PSK"`
 }
 
 type Download struct {
@@ -88,13 +105,20 @@ type State struct {
 	Error      string   `json:"error"`
 	IPs        []string `json:"ips"`
 	File       *os.File
+	sync.Mutex
 }
 
 type Chunk struct {
 	Encoded string `json:"chunk"`
 }
 
-type Settings struct {
+
+type WifiStatus struct {
+    Connected bool   `json:"connected"`
+    SSID      string `json:"ssid"`
+    IP        string `json:"ip"`
+    Device    string `json:"device"`
+    State     string `json:"state"`
 }
 
 const (
@@ -108,6 +132,7 @@ const (
 	FINISHED        = "FINISHED"
 	CANCELLED       = "CANCELLED"
 	ERROR           = "ERROR"
+	SAVING			= "SAVING"
 )
 
 const (
@@ -131,9 +156,9 @@ var last_size_check time.Time
 var bytes_last int
 var timeStart time.Time
 var cancelFunc context.CancelFunc
-var stateMutex sync.Mutex
-var saveOptionsWhenIdle bool
+var isDirty bool
 var env string
+var optionsLock sync.Mutex
 
 func ServerInit() {
 	env = os.Getenv("APP_ENV")
@@ -166,9 +191,11 @@ func ServerInit() {
 	expandUsb()
 	mountUsb(MODE_RO)
 	loadOptions()
+	bringupWifi()
 	updateDisplay()
+	startWatchdog()
 
-	timer1 := time.NewTimer(10 * time.Second)
+	timer1 := time.NewTimer(3 * time.Second)
 	go func() {
 		<-timer1.C
 		logInfo("Updating IPs")
@@ -211,6 +238,10 @@ func ServerInit() {
 	http.HandleFunc("/api/update_config", updateConfig)
 	http.HandleFunc("/api/is_config_present", isConfigPresent)
 	http.HandleFunc("/api/get_serial_number", getSerialNumber)
+	http.HandleFunc("/api/get_wifi", getWifi)
+	http.HandleFunc("/api/get_wifi_status", getWifiStatus)
+	http.HandleFunc("/api/wifi_scan", scanWifi)
+	http.HandleFunc("/api/connect_wifi", connectWifi)
 	log.Fatal(http.ListenAndServe(http_port, nil))
 }
 
@@ -235,32 +266,156 @@ func getSerialNumber(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(get_serial_number)
 }
 
+func getWifi(w http.ResponseWriter, r *http.Request) {
+
+	ssid, _, _ := runCommand2("get-setting", "WIFI_SSID")
+
+	var get_wifi *GetWifi = &GetWifi{
+		SSID: strings.TrimSpace(ssid),
+	}
+	json.NewEncoder(w).Encode(get_wifi)
+}
+
+func bringupWifi(){
+	// If we have saved credentials, try to connect immediately
+    if options.WifiSSID != "" && options.WifiPSK != "" {
+        logInfo("Boot: Attempting auto-connect to " + options.WifiSSID)
+		runCommand2("/usr/local/bin/wifi-connect", options.WifiSSID, options.WifiPSK)
+    } else {
+		logInfo("Boot: No SSID found, trying auto bring-up")
+		runCommand2("/usr/local/bin/wifi-bringup")
+	}
+}
+
+func scanWifi(w http.ResponseWriter, r *http.Request) {
+    var ap_structs []AccessPoint
+    
+    // 1. Run the script
+    scan_results := runCommandReturnString("/usr/local/bin/wifi-scan")
+    
+    // 2. Split into lines
+    lines := strings.Split(scan_results, "\n")
+    
+    isDataZone := false
+    for _, line := range lines {
+        line = strings.TrimSpace(line)
+        
+        // Marker Logic: Start capturing after this line
+        if line == "---SCAN_RESULTS_START---" {
+            isDataZone = true
+            continue
+        }
+        
+        // Marker Logic: Stop capturing at this line
+        if line == "---SCAN_RESULTS_END---" {
+            isDataZone = false
+            break
+        }
+        
+        // 3. Parse only if we are between the markers
+        if isDataZone && line != "" {
+            // Our script outputs: SSID|Security|Signal
+            parts := strings.Split(line, "|")
+            
+            if len(parts) >= 3 {
+                ap_struct := AccessPoint{
+					BSSID:    parts[0],
+                    SSID:     parts[0],
+                    Flags: 	  parts[1],
+                    Signal:   parts[2],
+                }
+                ap_structs = append(ap_structs, ap_struct)
+            }
+        }
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(ap_structs)
+}
+
+func getWifiStatus(w http.ResponseWriter, r *http.Request) {
+    // 1. Get the station status from iwd
+    // Output usually contains: "Connected-BSS", "State", "Scanning", etc.
+    out, err := exec.Command("iwctl", "station", "wlan0", "show").Output()
+    
+    status := WifiStatus{
+        Connected: false,
+        Device:    "wlan0",
+        State:     "disconnected",
+    }
+
+    if err == nil {
+        lines := strings.Split(string(out), "\n")
+        for _, line := range lines {
+            line = strings.TrimSpace(line)
+            if strings.Contains(line, "Connected network") {
+                // Extracts the SSID
+                parts := strings.Split(line, "network")
+                if len(parts) > 1 {
+                    status.SSID = strings.TrimSpace(parts[1])
+                    status.Connected = true
+                }
+            }
+            if strings.Contains(line, "State") {
+                // Extracts state (e.g., connected, roaming, authenticating)
+                parts := strings.Split(line, "State")
+                if len(parts) > 1 {
+                    status.State = strings.TrimSpace(parts[1])
+                }
+            }
+        }
+    }
+
+    // 2. Get the IP Address if connected
+    if status.Connected {
+        ipCmd, _ := exec.Command("ip", "-4", "addr", "show", "wlan0").Output()
+        // Simple regex or string search to find the IP
+        ipStr := string(ipCmd)
+        if strings.Contains(ipStr, "inet ") {
+            fields := strings.Fields(strings.Split(ipStr, "inet ")[1])
+            if len(fields) > 0 {
+                status.IP = strings.Split(fields[0], "/")[0]
+            }
+        }
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(status)
+}
+
+func connectWifi(w http.ResponseWriter, r *http.Request) {
+	reqBody, _ := io.ReadAll(r.Body)
+	var get_wifi *GetWifi
+	json.Unmarshal(reqBody, &get_wifi)
+	options.WifiSSID = strings.TrimSpace(get_wifi.SSID)
+	options.WifiBSSID = strings.TrimSpace(get_wifi.BSSID)
+	isDirty=true
+
+	pass := strings.TrimSpace(get_wifi.Password)
+	var err error
+	_, _, err = runCommand2("/usr/local/bin/wifi-connect", options.WifiSSID, pass)
+	sendResponse(w, err)
+}
+
 func getOptions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(options)
 }
 
 func setOptions(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
-	json.Unmarshal(reqBody, &options)
-	if state.State == IDLE {
-		saveOptions()
-	} else {
-		logInfo("Options not saved because the disk is in use")
-		saveOptionsWhenIdle = true
-	}
-	updateDisplay()
+	lockSetOptions(reqBody)
 	json.NewEncoder(w).Encode(options)
 }
 
 func updateDisplay() {
-	stateMutex.Lock()
+	state.Lock()
 	if oldState.State != state.State || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
 		Draw(float32(state.Progress)/100, state.State, options.ScreenRotation, state.IPs)
 		oldState.State = state.State
 		oldState.Progress = state.Progress
 		oldRotation = options.ScreenRotation
 	}
-	stateMutex.Unlock()
+	state.Unlock()
 }
 
 func streamLog(w http.ResponseWriter, r *http.Request) {
@@ -449,9 +604,6 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	} else {
 		state.State = FINISHED
 	}
-	if saveOptionsWhenIdle {
-		saveOptions()
-	}
 }
 
 func uploadChunk(w http.ResponseWriter, r *http.Request) {
@@ -491,9 +643,6 @@ func uploadFinish(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	state.State = FINISHED
-	if saveOptionsWhenIdle {
-		saveOptions()
-	}
 }
 
 func uploadCancel(w http.ResponseWriter, r *http.Request) {
@@ -778,7 +927,9 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	settings := "# Settings from Reflash\n" +
 		"SSH_ENABLED_ON_BOOT=" + strconv.FormatBool(options.EnableSsh) + "\n" +
 		"SSH_TIMEOUT=60\n" +
-		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10)
+		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10) + "\n" +
+		"WIFI_SSID=" + options.WifiSSID + "\n" +
+		"WIFI_PSK=" + options.WifiPSK
 
 	runCommand2("/usr/local/bin/save-settings", settings)
 	err = unmountUsb()
@@ -962,7 +1113,7 @@ func getRecoreRevision() string {
 func saveOptions() error {
 	var err error
 	mountUsb(MODE_RW)
-	content, err := toml.Marshal(options)
+	content, _ := toml.Marshal(options)
 	err = os.WriteFile(options_file, content, 0644)
 	logInfo("Options saved")
 	mountUsb(MODE_RO)
@@ -970,21 +1121,96 @@ func saveOptions() error {
 }
 
 func loadOptions() {
+	optionsLock.Lock()
+    defer optionsLock.Unlock()
+
 	content, err := os.ReadFile(options_file)
 	if err != nil {
 		logInfo("No options file found, creating default")
 		options = &Options{
 			Darkmode:       true,
-			RebootWhenDone: false,
-			EnableSsh:      false,
+			RebootWhenDone: true,
+			EnableSsh:      true,
 			ScreenRotation: 0,
 		}
-		saveOptions()
+		isDirty = true
 	} else {
 		toml.Unmarshal(content, &options)
+		logInfo("Options loaded from disk successfully")
 	}
 }
 
 func expandUsb() {
 	runCommand2("/usr/local/bin/expand-usb")
+}
+
+
+func lockSetOptions(opts []byte) error {
+    optionsLock.Lock()
+    defer optionsLock.Unlock()
+
+    err := json.Unmarshal(opts, &options)
+    if err != nil {
+        return err
+    }
+
+    isDirty = true
+    logInfo("Options updated in memory and marked dirty")
+    
+    return nil
+}
+
+
+func lockSaveOptions() {
+    // 1. Pre-check: Is there actually work to do?
+    optionsLock.Lock()
+    if !isDirty {
+        optionsLock.Unlock()
+        return // Nothing changed, go back to sleep
+    }
+    optionsLock.Unlock()
+
+    // 2. State-check: Is the system busy with something else?
+    state.Lock()
+    if state.State != IDLE {
+        state.Unlock()
+        // We leave isDirty = true so the watchdog tries again next tick
+        return 
+    }
+
+    // 3. Begin the Save Sequence
+    state.State = SAVING // Lock the state so others know the disk is busy
+    state.Unlock()
+
+    logInfo("Starting thread-safe save operation...")
+
+    // 4. Perform the Hardware I/O
+    // This calls your existing logic: mount RW -> write -> mount RO
+    err := saveOptions() 
+
+    // 5. Cleanup and Reset
+    state.Lock()
+    if err != nil {
+        logError("Save failed: " + err.Error())
+        // Note: we don't reset isDirty here so it retries later
+    } else {
+        isDirty = false 
+        logInfo("Save successful, dirty flag cleared.")
+    }
+    
+    state.State = IDLE
+    state.Unlock()
+	updateDisplay()	
+}
+
+func startWatchdog() {
+    // Check every 2 seconds
+    ticker := time.NewTicker(2 * time.Second) 
+    
+    go func() {
+        for range ticker.C {
+            // This is the function we built in the previous step
+            lockSaveOptions() 
+        }
+    }()
 }
