@@ -22,7 +22,7 @@ cat > $PROVISIONING_FILE <<EOF
 set -e
 echo "Provisioning started"
 
-sudo -u debian bash <<'INNER_EOF'
+sudo -u printer bash <<'INNER_EOF'
   cd /home/debian
   if [ ! -d klipper-led_effect ]; then
     git clone https://github.com/julianschill/klipper-led_effect.git

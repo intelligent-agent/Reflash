@@ -49,28 +49,25 @@ sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" /mnt/emmc/etc/fstab
 touch /mnt/emmc/root/.no_rootfs_resize
 
 # Copy config file, if one is not already present
-if test -d /mnt/emmc/home/debian; then
-  cd /mnt/emmc/home/debian/ || exit
-  if ! test -f printer_data/config/printer.cfg; then
-    if test -f klipper/config/generic-recore-"$REVISION".cfg; then
-      info "Installing Klipper config file"
-      cp klipper/config/generic-recore-"$REVISION".cfg printer_data/config/printer.cfg
-      chown 1000:1000 printer_data/config/printer.cfg
-    fi
-    # Enable mainsail on mainsail distros
-    if test -f printer_data/config/mainsail.cfg; then
-      info "Including Mainsail in config file, above the first section"
-      # Older distros has the include fiel as a comment
-      sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
-      sed -i 's:\(\[recore.*\]\):\[include mainsail.cfg\]\n\n\1:' printer_data/config/printer.cfg
-    fi
-    # Enable fluidd on fluidd distros
-    if test -f printer_data/config/fluidd.cfg; then
-      info "Including Fluidd in config file, above the first section"
-      # Older distros has the include fiel as a comment
-      sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
-      sed -i 's:\(\[recore.*\]\):\[include fluidd.cfg\]\n\n\1:' printer_data/config/printer.cfg
-    fi
+if test -d /mnt/emmc/home/printer; then
+  cd /mnt/emmc/home/printer/ || exit
+  if test -f klipper/config/generic-recore-"$REVISION".cfg; then
+    info "Installing Klipper config file"
+    cp klipper/config/generic-recore-"$REVISION".cfg printer_data/config/printer.cfg
+  fi
+  # Enable mainsail on mainsail distros
+  if test -f printer_data/config/mainsail.cfg; then
+    info "Including Mainsail in config file, above the first section"
+    # Older distros has the include fiel as a comment
+    sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
+    sed -i 's:\(\[recore.*\]\):\[include mainsail.cfg\]\n\n\1:' printer_data/config/printer.cfg
+  fi
+  # Enable fluidd on fluidd distros
+  if test -f printer_data/config/fluidd.cfg; then
+    info "Including Fluidd in config file, above the first section"
+    # Older distros has the include fiel as a comment
+    sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
+    sed -i 's:\(\[recore.*\]\):\[include fluidd.cfg\]\n\n\1:' printer_data/config/printer.cfg
   fi
 fi
 

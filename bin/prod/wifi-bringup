@@ -1,0 +1,68 @@
+#!/bin/bash
+
+INTERFACE="wlan0"
+EMMC="/dev/mmcblk2p2"
+MOUNT_POINT="/mnt/emmc"
+# Set this to the actual path you want to use
+CONFIG_FILE="/mnt/usb/options.cfg"
+IWD_DIR="/var/lib/iwd"
+AP_PROFILE="Recore"
+LOG_FILE="/var/log/reflash.log"
+
+info() {
+    echo "[info] $1" >> "$LOG_FILE"
+    echo "$1"
+}
+
+# 1. Mount the config partition (Handling both USB and EMMC scenarios)
+# If using /mnt/usb, we assume it's already mounted by your initrd
+# If using EMMC, we mount it here:
+if [[ "$CONFIG_FILE" == *"/mnt/emmc"* ]]; then
+    mkdir -p "$MOUNT_POINT"
+    umount -q "$MOUNT_POINT"
+    if mount "$EMMC" "$MOUNT_POINT"; then
+        info "Mounted eMMC for settings check."
+    else
+        info "Failed to mount eMMC. Falling back to AP mode."
+        iwctl device "$INTERFACE" set-property Mode ap
+        iwctl ap "$INTERFACE" start-profile "$AP_PROFILE" 2>/dev/null
+        exit 1
+    fi
+fi
+
+# 2. Parse credentials (stripping spaces and single quotes)
+if [ -f "$CONFIG_FILE" ]; then
+    SSID=$(grep "WifiSSID" "$CONFIG_FILE" | cut -d'=' -f2 | sed "s/[ ']//g")
+    PSK=$(grep "WifiPSK" "$CONFIG_FILE" | cut -d'=' -f2 | sed "s/[ ']//g")
+else
+    info "Config file $CONFIG_FILE not found."
+    SSID=""
+fi
+
+# 3. Decision Logic
+if [ -z "$SSID" ] || [ "$SSID" == "''" ]; then
+    info "No WiFi SSID configured. Starting AP mode: $AP_PROFILE"
+    iwctl device "$INTERFACE" set-property Mode ap
+    # Stop first to prevent "Object already exists"
+    iwctl ap "$INTERFACE" stop 2>/dev/null
+    iwctl ap "$INTERFACE" start-profile "$AP_PROFILE"
+else
+    info "Found credentials for $SSID. Creating iwd profile..."
+    mkdir -p "$IWD_DIR/ap" # Ensure directory exists
+    
+    cat <<IWD_EOF > "$IWD_DIR/$SSID.psk"
+[Settings]
+AutoConnect=true
+
+[Security]
+Passphrase=$PSK
+IWD_EOF
+
+    info "Switching to Station mode to connect to $SSID"
+    iwctl device "$INTERFACE" set-property Mode station
+fi
+
+# 4. Cleanup if we mounted EMMC
+if [[ "$CONFIG_FILE" == *"/mnt/emmc"* ]]; then
+    umount "$MOUNT_POINT"
+fi

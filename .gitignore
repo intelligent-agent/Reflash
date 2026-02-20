@@ -3,3 +3,5 @@ reflash/dist
 reflash/reflash
 reflash_rootfs
 rootfs_files/debs
+docker-reflash
+output
