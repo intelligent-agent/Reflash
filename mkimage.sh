@@ -2,12 +2,16 @@
 
 set -xeuo pipefail
 
+KERNEL_DEB=linux-image-current-sunxi64_26.02.0-trunk_arm64__6.12.69.deb
 export ROOTFSDIR=reflash_rootfs
 sudo rm -rf "${ROOTFSDIR}"
 mkdir -p "${ROOTFSDIR}"
 
 sudo debootstrap --arch=arm64 --foreign --variant=minbase trixie "${ROOTFSDIR}"/initrd http://ftp.no.debian.org/debian/
 
+if [ ! -f rootfs_files/debs/${KERNEL_DEB} ]; then
+	wget -P rootfs_files/debs/ https://feeds.iagent.no/debian/pool/main/${KERNEL_DEB}
+fi
 sudo cp rootfs_files/debs/* "${ROOTFSDIR}"/initrd
 
 sudo bash -c "echo recore > ${ROOTFSDIR}/initrd/etc/hostname"
@@ -63,7 +67,7 @@ ca-certificates \
 iwd \
 dbus
 
-dpkg -i linux-image-current-sunxi64_26.02.0-trunk_arm64__6.12.69.deb
+dpkg -i ${KERNEL_DEB}
 
 
 systemctl enable systemd-networkd
