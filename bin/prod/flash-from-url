@@ -6,10 +6,11 @@ info() {
     echo "$1"
 }
 
-info "Starting recore flash script"
-info "------------------"
+info "---------------------"
+info "Starting magic script"
+info "---------------------"
 
-INFILE=$1
+URL=$1
 OUTFILE="/dev/mmcblk2"
 
 mount-config
@@ -17,17 +18,14 @@ CONFIG=$(ls /mnt/config/*.json)
 REVISION=$(grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]')
 unmount-config
 
-SIZE=$(xz -lv "$INFILE" | grep Uncompressed | sed 's/[,(]//g' | awk '{ printf "%s\n", $5 }')
-
 info "Found Recore hardware revision $REVISION"
-info "Flashing file name $INFILE"
+info "URL $URL"
 info "Overwriting block device $OUTFILE"
-info "Uncompressed file size is $SIZE bytes"
 
 info "Umounting /dev/mmcblk*"
 mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount || true
 info "Starting flashing..."
-(xz -T 0 -d -c "$INFILE" | pv -f -n -b > "$OUTFILE") 2> /tmp/recore-flash-progress
+(wget -q -O - "$URL" | pv -f -n -b | xz -T 0 -d -c > "$OUTFILE") 2> /tmp/recore-flash-progress
 info "Flashing done"
 sync
 
@@ -65,7 +63,7 @@ if test -d /mnt/emmc/home/printer; then
     # Enable mainsail on mainsail distros
     if test -f printer_data/config/mainsail.cfg; then
       info "Including Mainsail in config file, above the first section"
-      # Older distros has the include field as a comment
+      # Older distros has the include fiel as a comment
       sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
       sed -i 's:\(\[recore.*\]\):\[include mainsail.cfg\]\n\n\1:' printer_data/config/printer.cfg
     fi
@@ -95,4 +93,4 @@ cd /
 umount ${OUTFILE}p1
 
 sync
-info "Install script done!"
+info "Magic script done!"

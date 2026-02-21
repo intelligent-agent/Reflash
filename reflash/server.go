@@ -45,12 +45,10 @@ type GetSerialNumber struct {
 
 type GetWifi struct {
 	SSID     string `json:"SSID"`
-	BSSID    string `json:"BSSID"`
 	Password string `json:"password"`
 }
 
 type AccessPoint struct {
-	BSSID     string `json:"BSSID"`
 	Frequency string `json:"frequency"`
 	Signal    string `json:"signal"`
 	Flags     string `json:"flags"`
@@ -64,7 +62,6 @@ type Options struct {
 	Magicmode      bool   `json:"magicmode"`
 	ScreenRotation int    `json:"screenRotation"`
 	WifiSSID       string `json:"SSID"`
-	WifiBSSID      string `json:"BSSID"`
 	WifiPSK        string `json:"PSK"`
 }
 
@@ -159,7 +156,16 @@ var cancelFunc context.CancelFunc
 var isDirty bool
 var env string
 var optionsLock sync.Mutex
-
+var (
+    cachedAccessPoints []AccessPoint
+    isScanning         bool
+    scanMutex          sync.Mutex
+)
+var (
+    isConnecting   bool
+    connectError   error
+    connectMutex   sync.Mutex
+)
 func ServerInit() {
 	env = os.Getenv("APP_ENV")
 	if env == "dev" {
@@ -238,10 +244,14 @@ func ServerInit() {
 	http.HandleFunc("/api/update_config", updateConfig)
 	http.HandleFunc("/api/is_config_present", isConfigPresent)
 	http.HandleFunc("/api/get_serial_number", getSerialNumber)
+
 	http.HandleFunc("/api/get_wifi", getWifi)
 	http.HandleFunc("/api/get_wifi_status", getWifiStatus)
-	http.HandleFunc("/api/wifi_scan", scanWifi)
-	http.HandleFunc("/api/connect_wifi", connectWifi)
+	http.HandleFunc("/api/wifi_start_scan", startScanWifi)
+	http.HandleFunc("/api/wifi_poll_scan", getWifiScanResults)
+	http.HandleFunc("/api/wifi_start_connect", startConnectWifi)
+	http.HandleFunc("/api/wifi_poll_connect", pollConnectWifi)
+	
 	log.Fatal(http.ListenAndServe(http_port, nil))
 }
 
@@ -286,115 +296,152 @@ func bringupWifi(){
 		runCommand2("/usr/local/bin/wifi-bringup")
 	}
 }
+func startScanWifi(w http.ResponseWriter, r *http.Request) {
+    scanMutex.Lock()
+    if isScanning {
+        scanMutex.Unlock()
+        w.WriteHeader(http.StatusAccepted) // 202: Already working on it
+        return
+    }
+    isScanning = true
+    scanMutex.Unlock()
 
-func scanWifi(w http.ResponseWriter, r *http.Request) {
-    var ap_structs []AccessPoint
-    
-    // 1. Run the script
-    scan_results := runCommandReturnString("/usr/local/bin/wifi-scan")
-    
-    // 2. Split into lines
-    lines := strings.Split(scan_results, "\n")
-    
-    isDataZone := false
-    for _, line := range lines {
-        line = strings.TrimSpace(line)
+    // Kick off the heavy lifting in a goroutine
+    go func() {
+        logInfo("WiFi Scan triggered...")
         
-        // Marker Logic: Start capturing after this line
-        if line == "---SCAN_RESULTS_START---" {
-            isDataZone = true
-            continue
-        }
+        // This is your existing logic, moved into a background task
+        scan_results := runCommandReturnString("/usr/local/bin/wifi-scan")
         
-        // Marker Logic: Stop capturing at this line
-        if line == "---SCAN_RESULTS_END---" {
-            isDataZone = false
-            break
-        }
+        var temp_aps []AccessPoint
+        lines := strings.Split(scan_results, "\n")
+        isDataZone := false
         
-        // 3. Parse only if we are between the markers
-        if isDataZone && line != "" {
-            // Our script outputs: SSID|Security|Signal
-            parts := strings.Split(line, "|")
-            
-            if len(parts) >= 3 {
-                ap_struct := AccessPoint{
-					BSSID:    parts[0],
-                    SSID:     parts[0],
-                    Flags: 	  parts[1],
-                    Signal:   parts[2],
+        for _, line := range lines {
+            line = strings.TrimSpace(line)
+            if line == "---SCAN_RESULTS_START---" {
+                isDataZone = true
+                continue
+            }
+            if line == "---SCAN_RESULTS_END---" {
+                isDataZone = false
+                break
+            }
+            if isDataZone && line != "" {
+                parts := strings.Split(line, "|")
+                if len(parts) >= 3 {
+                    temp_aps = append(temp_aps, AccessPoint{
+                        SSID:   parts[0],
+                        Flags:  parts[1],
+                        Signal: parts[2],
+                    })
                 }
-                ap_structs = append(ap_structs, ap_struct)
             }
         }
+
+        // Update the cache and flip the flag
+        scanMutex.Lock()
+        cachedAccessPoints = temp_aps
+        isScanning = false
+        scanMutex.Unlock()
+        logInfo("WiFi Scan complete.")
+    }()
+
+    // Return immediately so the UI stays responsive
+    w.WriteHeader(http.StatusAccepted)
+}
+
+func getWifiScanResults(w http.ResponseWriter, r *http.Request) {
+    scanMutex.Lock()
+    defer scanMutex.Unlock()
+
+    if isScanning {
+        // HTTP 204 No Content tells the frontend "nothing yet, keep waiting"
+        w.WriteHeader(http.StatusNoContent)
+        return
     }
 
     w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(ap_structs)
+    json.NewEncoder(w).Encode(cachedAccessPoints)
 }
 
 func getWifiStatus(w http.ResponseWriter, r *http.Request) {
-    // 1. Get the station status from iwd
-    // Output usually contains: "Connected-BSS", "State", "Scanning", etc.
-    out, err := exec.Command("iwctl", "station", "wlan0", "show").Output()
-    
-    status := WifiStatus{
-        Connected: false,
-        Device:    "wlan0",
-        State:     "disconnected",
+    result := runCommandReturnString("/usr/local/bin/wifi-present")
+    w.Header().Set("Content-Type", "application/json")
+    w.Write([]byte(result))
+}
+
+func startConnectWifi(w http.ResponseWriter, r *http.Request) {
+    reqBody, _ := io.ReadAll(r.Body)
+    var get_wifi GetWifi
+    if err := json.Unmarshal(reqBody, &get_wifi); err != nil {
+        http.Error(w, "Invalid JSON", 400)
+        return
     }
 
-    if err == nil {
-        lines := strings.Split(string(out), "\n")
-        for _, line := range lines {
-            line = strings.TrimSpace(line)
-            if strings.Contains(line, "Connected network") {
-                // Extracts the SSID
-                parts := strings.Split(line, "network")
-                if len(parts) > 1 {
-                    status.SSID = strings.TrimSpace(parts[1])
-                    status.Connected = true
-                }
-            }
-            if strings.Contains(line, "State") {
-                // Extracts state (e.g., connected, roaming, authenticating)
-                parts := strings.Split(line, "State")
-                if len(parts) > 1 {
-                    status.State = strings.TrimSpace(parts[1])
-                }
-            }
+	if len(strings.TrimSpace(get_wifi.Password)) < 8 {
+		http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
+
+    // 1. Update Global Options and lock memory
+    optionsLock.Lock()
+    options.WifiSSID = strings.TrimSpace(get_wifi.SSID)
+    options.WifiPSK = strings.TrimSpace(get_wifi.Password)
+    isDirty = true
+    optionsLock.Unlock()
+
+    // 2. Prepare Connection State
+    connectMutex.Lock()
+    if isConnecting {
+        connectMutex.Unlock()
+        w.WriteHeader(http.StatusAccepted)
+        return
+    }
+    isConnecting = true
+    connectError = nil // Reset previous errors
+    connectMutex.Unlock()
+
+    // 3. Run connection in background
+    go func() {
+        logInfo("Attempting to connect to: " + options.WifiSSID)
+        
+        // This command usually takes down the AP and brings up the Station
+        _, _, err := runCommand2("/usr/local/bin/wifi-connect", options.WifiSSID, options.WifiPSK)
+        
+        connectMutex.Lock()
+        connectError = err
+        isConnecting = false
+        connectMutex.Unlock()
+        
+        if err != nil {
+            logError("WiFi Connection failed: " + err.Error())
+        } else {
+            logInfo("WiFi Connection successful")
         }
+    }()
+
+    // Respond immediately so Vue knows the process started
+    w.WriteHeader(http.StatusAccepted)
+}
+
+func pollConnectWifi(w http.ResponseWriter, r *http.Request) {
+    connectMutex.Lock()
+    defer connectMutex.Unlock()
+
+    response := map[string]interface{}{
+        "isConnecting": isConnecting,
+        "error":        nil,
     }
 
-    // 2. Get the IP Address if connected
-    if status.Connected {
-        ipCmd, _ := exec.Command("ip", "-4", "addr", "show", "wlan0").Output()
-        // Simple regex or string search to find the IP
-        ipStr := string(ipCmd)
-        if strings.Contains(ipStr, "inet ") {
-            fields := strings.Fields(strings.Split(ipStr, "inet ")[1])
-            if len(fields) > 0 {
-                status.IP = strings.Split(fields[0], "/")[0]
-            }
-        }
+    if connectError != nil {
+        response["error"] = connectError.Error()
     }
 
     w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(status)
+    json.NewEncoder(w).Encode(response)
 }
 
-func connectWifi(w http.ResponseWriter, r *http.Request) {
-	reqBody, _ := io.ReadAll(r.Body)
-	var get_wifi *GetWifi
-	json.Unmarshal(reqBody, &get_wifi)
-	options.WifiSSID = strings.TrimSpace(get_wifi.SSID)
-	options.WifiBSSID = strings.TrimSpace(get_wifi.BSSID)
-	options.WifiPSK = strings.TrimSpace(get_wifi.Password)
-	isDirty=true
-	var err error
-	_, _, err = runCommand2("/usr/local/bin/wifi-connect", options.WifiSSID, options.WifiPSK)
-	sendResponse(w, err)
-}
 
 func getOptions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(options)
@@ -680,7 +727,7 @@ func goMagic(url string) {
 	logInfo(fmt.Sprintf("Starting magic at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Url %s", url))
 
-	stdout, _, err := runCommand2("/usr/local/bin/flash-direct", url)
+	stdout, _, err := runCommand2("/usr/local/bin/flash-from-url", url)
 	if err != nil {
 		logError("Error encountered during magic: \n" + stdout)
 		state.State = ERROR
@@ -858,7 +905,7 @@ func goInstall(filename string) {
 	logInfo(fmt.Sprintf("starting install at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Filename %s", filename))
 
-	stdout, _, err := runCommand2("/usr/local/bin/flash-recore", path)
+	stdout, _, err := runCommand2("/usr/local/bin/flash-from-file", path)
 	if err != nil {
 		logError("Error encountered during install: \n" + stdout)
 		state.State = ERROR

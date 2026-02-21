@@ -26,10 +26,10 @@
         >Password</w-input
       >
     </div>
-    <w-button xl outline class="ma1 btn" @click="clickConnect()"
+    <w-button xl outline class="ma1 btn" @click="startWifiConnect()"
       ><span>Connect</span></w-button
     >
-    <w-button xl outline class="ma1 btn" @click="performScan()"
+    <w-button xl outline class="ma1 btn" @click="startWifiScan()"
       ><span>Rescan</span></w-button
     >
   </w-dialog>
@@ -84,54 +84,96 @@ export default {
         self.inputSSID = response.data.SSID;
       });
     },
-    async performScan() {
-      var self = this;
+    async startWifiScan() {
       this.progressVisible = true;
-      await axios.get(`/api/wifi_scan`).then(function (response) {
-        self.availableAPs = response.data;
-        self.progressVisible = false;
-        for (const ap in self.availableAPs) {
-          self.availableAPs[ap].label = self.availableAPs[ap].SSID + " " + self.availableAPs[ap].signal;
-        }
-      });
+      try {
+        await axios.post('/api/wifi_start_scan');
+        setTimeout(this.pollScanResults, 1000);
+      } catch (err) {
+         this.progressVisible = false;
+      }
     },
-    async clickConnect() {
-      var self = this;
-      if (!self.selected) {
-        self.$waveui.notify("Please select an access point", "error", 0);
+    async pollScanResults() {
+      try {
+        const res = await axios.get('/api/wifi_poll_scan');
+        if (res.status === 204) {
+          setTimeout(this.pollScanResults, 1000);
+        } else {
+          this.availableAPs = res.data;
+          this.progressVisible = false;
+          for (const ap in this.availableAPs) {
+            this.availableAPs[ap].label = this.availableAPs[ap].SSID + " " + this.availableAPs[ap].signal;
+          }
+          this.progressVisible = false;
+        }
+      } catch (err) {
+        setTimeout(this.pollScanResults, 1000);
+      }
+    },
+    async startWifiConnect() {
+      if (!this.selected) {
+        this.$waveui.notify("Please select an access point", "error", 0);
         return;
       }
-      var ssid = self.selected.SSID || self.selected.ssid;
-      var bssid = self.selected.BSSID || self.selected.bssid;
       this.progressVisible = true;
-      await axios
-        .post(`/api/connect_wifi`, {
-          SSID: ssid,
-          BSSID: bssid,
-          password: self.inputPassword,
-        })
-        .then(function (response) {
-          self.progressVisible = false;
-          if (response.data.status != "OK") {
-            self.$waveui.notify(response.data.error, "error", 0);
-          }
+      try {
+        await axios.post('/api/wifi_start_connect',{
+          SSID: this.selected.SSID,
+          password: this.inputPassword,
         });
+        setTimeout(this.pollConnectResults, 1000);
+      } catch (err) {
+        const msg = err.response?.data || "Could not start connection";
+        this.$waveui.notify(msg, "error", 4000);
+        this.progressVisible = false;
+      }
     },
-    async getStatus() {
-      var self = this;
-      await axios.get(`/api/get_wifi_status`).then(function (response) {
-        self.isWifiPresent = response.data.connected;
-        setTimeout(self.getStatus, 1000);
-      });
+    async pollConnectResults() {
+      try {
+        const res = await axios.get('/api/wifi_poll_connect');
+        if (res.status === 204) {
+          setTimeout(this.pollConnectResults, 1000);
+        } else {
+          console.log(res.data)
+          if(res.data.isConnecting == true){
+            setTimeout(this.pollConnectResults, 1000);
+          }
+          else {
+            if (res.data.error) {
+              this.$waveui.notify(res.data.error, "error", 0);
+            }
+            else{
+              this.$waveui.notify("Connected to "+this.selected.SSID, "info", 0);              
+            }
+            this.progressVisible = false;
+          }
+        }
+      } catch (err) {
+        setTimeout(this.pollConnectResults, 1000);
+      }
     },
+    async getWifiStatus() {
+      try {
+        const response = await axios.get('/api/get_wifi_status');
+        
+        this.isWifiPresent = response.data.present;
+        this.wifiDetails = response.data;
+
+      } catch (err) {
+        console.error("WiFi status check failed", err);
+        this.isWifiPresent = false;
+      } finally {
+        setTimeout(this.getWifiStatus, 2000); 
+      }
+    }
   },
   watch: {
     open: {
       immediate: true,
       handler(is_open) {
         if (is_open) {
+          this.getWifiStatus()
           this.dialog.show = true;
-          this.performScan();
         }
       },
     },

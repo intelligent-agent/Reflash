@@ -24,8 +24,8 @@ install_bins:
 	chmod +x /usr/local/bin/wpa-psk
 	chmod +x /usr/local/bin/wpa-get-results
 
-upload_bins:
-	scp bin/prod/* root@recore.local:/usr/local/bin
+upload-bins:
+	scp bin/prod/* debian@recore.local:/usr/local/bin
 
 dev-clean:
 	rm -rf .tmp
