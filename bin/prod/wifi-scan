@@ -9,6 +9,14 @@ info() {
     echo "$1"
 }
 
+# 0. No WiFi adapter present (e.g. no USB dongle): return an empty result set.
+if [ ! -d "/sys/class/net/$INTERFACE" ]; then
+    info "No WiFi adapter ($INTERFACE) present. No networks to scan."
+    echo "---SCAN_RESULTS_START---"
+    echo "---SCAN_RESULTS_END---"
+    exit 0
+fi
+
 # 1. Detect mode
 ORIGINAL_MODE=$(iwctl device "$INTERFACE" show | grep "Mode" | awk '{print $NF}')
 info "WiFi Scan initiated. Current mode: $ORIGINAL_MODE"

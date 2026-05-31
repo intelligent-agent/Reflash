@@ -14,6 +14,13 @@ info() {
     echo "$1"
 }
 
+# 0. Fail gracefully when no WiFi adapter is present (e.g. no USB dongle fitted).
+#    The board is fully usable over Ethernet without WiFi, so this is not an error.
+if [ ! -d "/sys/class/net/$INTERFACE" ]; then
+    info "No WiFi adapter ($INTERFACE) present. Skipping bring-up."
+    exit 0
+fi
+
 # 1. Mount the config partition (Handling both USB and EMMC scenarios)
 # If using /mnt/usb, we assume it's already mounted by your initrd
 # If using EMMC, we mount it here:
