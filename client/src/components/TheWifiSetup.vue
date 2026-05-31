@@ -10,28 +10,42 @@
     <div class="pa5">
       <img style="width: 20%" :src="computeSVG('Wi-Fi')" /><br />
       <w-progress v-if="progressVisible" class="ma1" circle></w-progress>
-      <w-select
-        style="width: 50%; margin: auto"
-        v-model="selected"
-        :items="availableAPs"
-        item-label-key="label"
-        return-object
-        placeholder="Select an access point"
-        >SSID
-      </w-select>
-      <w-input
-        style="width: 50%; margin: auto"
-        v-model="inputPassword"
-        type="password"
-        >Password</w-input
-      >
+      <div v-if="isWifiPresent">
+        <h3>Connected as: {{ wifiDetails?.name }}</h3>
+        <p>Mode: {{ wifiDetails?.mode }}</p>
+        
+        <w-select
+          style="width: 50%; margin: auto"
+          v-model="selected"
+          :items="availableAPs"
+          item-label-key="label"
+          return-object
+          placeholder="Select an access point">
+          SSID
+        </w-select>
+
+        <w-input
+          class="mt4"
+          style="width: 50%; margin: auto"
+          v-model="inputPassword"
+          type="password">
+          Password
+        </w-input>
+
+        <div class="mt4">
+          <w-button @click="startWifiScan" :disabled="progressVisible" class="mr2">
+            Scan for Networks
+          </w-button>
+          <w-button @click="startWifiConnect" :disabled="progressVisible || !selected">
+            Connect
+          </w-button>
+        </div>
+      </div>
+
+      <div v-else class="pa4 text-center mt4 color-error border-error-all">
+        <p>⚠️ No WiFi dongle detected. Please plug in a USB WiFi adapter.</p>
+      </div>
     </div>
-    <w-button xl outline class="ma1 btn" @click="startWifiConnect()"
-      ><span>Connect</span></w-button
-    >
-    <w-button xl outline class="ma1 btn" @click="startWifiScan()"
-      ><span>Rescan</span></w-button
-    >
   </w-dialog>
 </template>
 <script>
