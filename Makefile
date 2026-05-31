@@ -21,8 +21,6 @@ install_bins:
 	chmod +x /usr/local/bin/save-settings
 	chmod +x /usr/local/bin/flash-cleanup
 	chmod +x /usr/local/bin/flash-mkfifo
-	chmod +x /usr/local/bin/wpa-psk
-	chmod +x /usr/local/bin/wpa-get-results
 
 upload-bins:
 	scp bin/prod/* debian@recore.local:/usr/local/bin
@@ -57,36 +55,6 @@ run-go:
 upload-go:
 	scp reflash/reflash debian@${REMOTE}:/usr/local/bin
 
-tar:
-	cd zip; tar -zcvf reflash.tar.gz reflash/
-	mv zip/reflash.tar.gz .
-	rm -rf zip
-
-package:
-	rm -rf zip
-	mkdir -p zip/reflash/bin
-	mkdir -p zip/reflash/reflash
-	cp reflash/*.py zip/reflash/reflash
-	mkdir -p zip/reflash/server
-	cp -r server/*.py zip/reflash/server
-	cp -r client/dist zip/reflash/server
-	cp bin/prod/* zip/reflash/bin
-	cp -r systemd zip/reflash
-	cp -r scripts zip/reflash
-	cp -r curses zip/reflash
-	echo "Unknown version" > zip/reflash/reflash.version
-
-upload-tar:
-	scp reflash.tar.gz debian@recore.local:/usr/src/
-
-upload-tar-board:
-	scp reflash-board.tar.gz debian@recore.local:/home/debian
-
-image:
-	make build
-	make build-go
-	sudo ./mkimage.sh
-
 docker:
 	mkdir -p output
 	git describe --always --tags > docker-reflash/reflash-version
@@ -100,5 +68,24 @@ docker:
 	cp reflash/Roboto-Light.ttf docker-reflash/reflash
 	docker container prune -f
 	cd docker-reflash; docker build -t docker-reflash .
-	cd docker-reflash; docker container run -v /dev/:/dev -v $(PWD)/output:/output --privileged=true --name reflash docker-reflash
+	cd docker-reflash; docker container run --rm -v /dev/:/dev -v $(PWD)/output:/output --privileged=true --name reflash docker-reflash
+
+# Flash the most recently built image to a USB drive (replaces Balena Etcher).
+# Defaults to /dev/sdb; override with: make flash DRIVE=/dev/sdX
+DRIVE ?= /dev/sdb
+IMAGE := $(shell ls -t output/*.img.xz 2>/dev/null | head -1)
+
+flash:
+	@test -n "$(IMAGE)" || { echo "No image found in output/ — run 'make docker' first"; exit 1; }
+	@test -b "$(DRIVE)" || { echo "$(DRIVE) is not a block device"; exit 1; }
+	@test "$$(cat /sys/block/$(notdir $(DRIVE))/removable 2>/dev/null)" = "1" || \
+		{ echo "Refusing: $(DRIVE) is not a removable drive"; exit 1; }
+	@echo "Flashing $(IMAGE)"
+	@echo "      to $(DRIVE):"
+	@lsblk -o NAME,SIZE,TRAN,MODEL,MOUNTPOINTS $(DRIVE)
+	@read -p "This will ERASE all data on $(DRIVE). Type YES to continue: " a; [ "$$a" = YES ] || { echo "Aborted."; exit 1; }
+	@for p in $(DRIVE)*; do sudo umount "$$p" 2>/dev/null || true; done
+	xz -dc $(IMAGE) | sudo dd of=$(DRIVE) bs=4M conv=fsync oflag=direct status=progress
+	sync
+	@echo "Done. Safe to remove $(DRIVE)."
 
