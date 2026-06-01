@@ -2,22 +2,35 @@ name: "Build Reflash"
 on:
   push:
     branches:
-      - main
-      - enhancement/*
+      - '**'
     tags:
       - 'v*'
 env:
   TERM: xterm-256color
 
 jobs:
-  package:
+  test:
     runs-on: self-hosted
     steps:
-    - name: Make filename
-      run: echo "VERSION=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
+    - uses: actions/checkout@v3
+    - name: Use Node.js '18'
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
 
-    - name: Use tag if tagged
-      if: startsWith(github.ref, 'refs/tags/')
+    - name: Install client deps
+      working-directory: ./client
+      run: npm ci
+
+    - name: Run tests
+      run: make test
+
+  package:
+    runs-on: self-hosted
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+    - name: Use tag as version
       run: echo "VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
 
     - uses: actions/checkout@v3
@@ -32,21 +45,17 @@ jobs:
         npm ci
         npm run build
 
-    - name: Run tests
-      run: make test
-
     - name: Make archive with version file
       run: |
         make build-go
-        
+
     - name: Make image
       run: |
         make docker
         mv output/*.img.xz .
-  
+
     - name: Release if tagged
       uses: ncipollo/release-action@v1
-      if: startsWith(github.ref, 'refs/tags/')
       with:
         allowUpdates: true
         artifacts: "reflash-*.img.xz"
