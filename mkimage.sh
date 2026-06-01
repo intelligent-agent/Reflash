@@ -82,12 +82,11 @@ echo 'debian:temppwd' | chpasswd
 echo 'root:temppwd' | chpasswd
 
 cat <<EOF > /etc/udev/rules.d/99-recore-otg.rules
-# Trigger the ConfigFS script only when the role is 'device'
-SUBSYSTEM=="usb_role", ATTR{role}=="device", RUN+="/usr/bin/systemctl start usb-gadget-setup.service"
-
-# Tear down the gadget if the cable is removed or switched to host
-SUBSYSTEM=="usb_role", ATTR{role}=="none", RUN+="/usr/bin/systemctl stop usb-gadget-setup.service"
-SUBSYSTEM=="usb_role", ATTR{role}=="host", RUN+="/usr/bin/systemctl stop usb-gadget-setup.service"
+# Reflash boots a universal dr_mode=peripheral DTB (model "Recore-all") with no
+# Type-C role-switch, so a usb_role role==device event never fires. Bring the
+# gadget up when the USB device controller (UDC) appears instead — this works on
+# every Recore revision regardless of DTB.
+SUBSYSTEM=="udc", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-gadget-setup.service"
 
 # Start the login prompt only when the serial node appears
 KERNEL=="ttyGS0", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="serial-getty@ttyGS0.service"
@@ -97,11 +96,23 @@ cat <<EOF > /usr/local/bin/usb-gadget-init.sh
 #!/bin/bash
 
 GADGET_DIR="/sys/kernel/config/usb_gadget/g1"
-UDC_NAME="musb-hdrc.4.auto"
 
 case "\$1" in
     start)
-        modprobe libcomposite
+        # Pulls in libcomposite + u_serial and registers the usb_gadget configfs subsystem.
+        modprobe usb_f_acm || { echo "modprobe usb_f_acm failed" >&2; exit 1; }
+
+        # configfs registration is asynchronous; wait for the gadget subsystem to appear.
+        for i in \$(seq 1 50); do
+            [ -d /sys/kernel/config/usb_gadget ] && break
+            sleep 0.1
+        done
+        [ -d /sys/kernel/config/usb_gadget ] || { echo "usb_gadget configfs unavailable" >&2; exit 1; }
+
+        # Bind to the first available UDC (musb-hdrc.4.auto on the A64).
+        UDC_NAME="\$(ls /sys/class/udc 2>/dev/null | head -1)"
+        [ -n "\$UDC_NAME" ] || { echo "no UDC available" >&2; exit 1; }
+
         mkdir -p \$GADGET_DIR
         cd \$GADGET_DIR
 
@@ -122,7 +133,7 @@ case "\$1" in
         ln -s functions/acm.usb0 configs/c.1/ 2>/dev/null
 
         # Bind to hardware
-        echo \$UDC_NAME > UDC
+        echo "\$UDC_NAME" > UDC
         ;;
     stop)
         if [ -d "\$GADGET_DIR" ]; then
