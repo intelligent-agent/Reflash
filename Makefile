@@ -33,7 +33,11 @@ test-bats:
 test-go:
 	cd reflash; go test ./...
 
-test: test-go test-bats
+# Run the Vue client unit tests (vitest).
+test-vue:
+	cd client; npm test
+
+test: test-go test-bats test-vue
 
 dev-clean:
 	rm -rf .tmp
