@@ -109,13 +109,12 @@ type Chunk struct {
 	Encoded string `json:"chunk"`
 }
 
-
 type WifiStatus struct {
-    Connected bool   `json:"connected"`
-    SSID      string `json:"ssid"`
-    IP        string `json:"ip"`
-    Device    string `json:"device"`
-    State     string `json:"state"`
+	Connected bool   `json:"connected"`
+	SSID      string `json:"ssid"`
+	IP        string `json:"ip"`
+	Device    string `json:"device"`
+	State     string `json:"state"`
 }
 
 const (
@@ -129,7 +128,7 @@ const (
 	FINISHED        = "FINISHED"
 	CANCELLED       = "CANCELLED"
 	ERROR           = "ERROR"
-	SAVING			= "SAVING"
+	SAVING          = "SAVING"
 )
 
 const (
@@ -158,15 +157,16 @@ var isDirty bool
 var env string
 var optionsLock sync.Mutex
 var (
-    cachedAccessPoints []AccessPoint
-    isScanning         bool
-    scanMutex          sync.Mutex
+	cachedAccessPoints []AccessPoint
+	isScanning         bool
+	scanMutex          sync.Mutex
 )
 var (
-    isConnecting   bool
-    connectError   error
-    connectMutex   sync.Mutex
+	isConnecting bool
+	connectError error
+	connectMutex sync.Mutex
 )
+
 func ServerInit() {
 	env = os.Getenv("APP_ENV")
 	if env == "dev" {
@@ -258,7 +258,7 @@ func ServerInit() {
 	http.HandleFunc("/api/wifi_poll_scan", getWifiScanResults)
 	http.HandleFunc("/api/wifi_start_connect", startConnectWifi)
 	http.HandleFunc("/api/wifi_poll_connect", pollConnectWifi)
-	
+
 	log.Fatal(http.ListenAndServe(http_port, nil))
 }
 
@@ -293,162 +293,161 @@ func getWifi(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(get_wifi)
 }
 
-func bringupWifi(){
+func bringupWifi() {
 	// If we have saved credentials, try to connect immediately
-    if options.WifiSSID != "" && options.WifiPSK != "" {
-        logInfo("Boot: Attempting auto-connect to " + options.WifiSSID)
+	if options.WifiSSID != "" && options.WifiPSK != "" {
+		logInfo("Boot: Attempting auto-connect to " + options.WifiSSID)
 		runCommand2("wifi-connect", options.WifiSSID, options.WifiPSK)
-    } else {
+	} else {
 		logInfo("Boot: No SSID found, trying auto bring-up")
 		runCommand2("wifi-bringup")
 	}
 }
 func startScanWifi(w http.ResponseWriter, r *http.Request) {
-    scanMutex.Lock()
-    if isScanning {
-        scanMutex.Unlock()
-        w.WriteHeader(http.StatusAccepted) // 202: Already working on it
-        return
-    }
-    isScanning = true
-    scanMutex.Unlock()
+	scanMutex.Lock()
+	if isScanning {
+		scanMutex.Unlock()
+		w.WriteHeader(http.StatusAccepted) // 202: Already working on it
+		return
+	}
+	isScanning = true
+	scanMutex.Unlock()
 
-    // Kick off the heavy lifting in a goroutine
-    go func() {
-        logInfo("WiFi Scan triggered...")
-        
-        // This is your existing logic, moved into a background task
-        scan_results := runCommandReturnString("wifi-scan")
-        
-        var temp_aps []AccessPoint
-        lines := strings.Split(scan_results, "\n")
-        isDataZone := false
-        
-        for _, line := range lines {
-            line = strings.TrimSpace(line)
-            if line == "---SCAN_RESULTS_START---" {
-                isDataZone = true
-                continue
-            }
-            if line == "---SCAN_RESULTS_END---" {
-                isDataZone = false
-                break
-            }
-            if isDataZone && line != "" {
-                parts := strings.Split(line, "|")
-                if len(parts) >= 3 {
-                    temp_aps = append(temp_aps, AccessPoint{
-                        SSID:   parts[0],
-                        Flags:  parts[1],
-                        Signal: parts[2],
-                    })
-                }
-            }
-        }
+	// Kick off the heavy lifting in a goroutine
+	go func() {
+		logInfo("WiFi Scan triggered...")
 
-        // Update the cache and flip the flag
-        scanMutex.Lock()
-        cachedAccessPoints = temp_aps
-        isScanning = false
-        scanMutex.Unlock()
-        logInfo("WiFi Scan complete.")
-    }()
+		// This is your existing logic, moved into a background task
+		scan_results := runCommandReturnString("wifi-scan")
 
-    // Return immediately so the UI stays responsive
-    w.WriteHeader(http.StatusAccepted)
+		var temp_aps []AccessPoint
+		lines := strings.Split(scan_results, "\n")
+		isDataZone := false
+
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "---SCAN_RESULTS_START---" {
+				isDataZone = true
+				continue
+			}
+			if line == "---SCAN_RESULTS_END---" {
+				isDataZone = false
+				break
+			}
+			if isDataZone && line != "" {
+				parts := strings.Split(line, "|")
+				if len(parts) >= 3 {
+					temp_aps = append(temp_aps, AccessPoint{
+						SSID:   parts[0],
+						Flags:  parts[1],
+						Signal: parts[2],
+					})
+				}
+			}
+		}
+
+		// Update the cache and flip the flag
+		scanMutex.Lock()
+		cachedAccessPoints = temp_aps
+		isScanning = false
+		scanMutex.Unlock()
+		logInfo("WiFi Scan complete.")
+	}()
+
+	// Return immediately so the UI stays responsive
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func getWifiScanResults(w http.ResponseWriter, r *http.Request) {
-    scanMutex.Lock()
-    defer scanMutex.Unlock()
+	scanMutex.Lock()
+	defer scanMutex.Unlock()
 
-    if isScanning {
-        // HTTP 204 No Content tells the frontend "nothing yet, keep waiting"
-        w.WriteHeader(http.StatusNoContent)
-        return
-    }
+	if isScanning {
+		// HTTP 204 No Content tells the frontend "nothing yet, keep waiting"
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(cachedAccessPoints)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cachedAccessPoints)
 }
 
 func getWifiStatus(w http.ResponseWriter, r *http.Request) {
-    result := runCommandReturnString("wifi-present")
-    w.Header().Set("Content-Type", "application/json")
-    w.Write([]byte(result))
+	result := runCommandReturnString("wifi-present")
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(result))
 }
 
 func startConnectWifi(w http.ResponseWriter, r *http.Request) {
-    reqBody, _ := io.ReadAll(r.Body)
-    var get_wifi GetWifi
-    if err := json.Unmarshal(reqBody, &get_wifi); err != nil {
-        http.Error(w, "Invalid JSON", 400)
-        return
-    }
+	reqBody, _ := io.ReadAll(r.Body)
+	var get_wifi GetWifi
+	if err := json.Unmarshal(reqBody, &get_wifi); err != nil {
+		http.Error(w, "Invalid JSON", 400)
+		return
+	}
 
 	if len(strings.TrimSpace(get_wifi.Password)) < 8 {
 		http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
 		return
 	}
 
-    // 1. Update Global Options and lock memory
-    optionsLock.Lock()
-    options.WifiSSID = strings.TrimSpace(get_wifi.SSID)
-    options.WifiPSK = strings.TrimSpace(get_wifi.Password)
-    isDirty = true
-    optionsLock.Unlock()
+	// 1. Update Global Options and lock memory
+	optionsLock.Lock()
+	options.WifiSSID = strings.TrimSpace(get_wifi.SSID)
+	options.WifiPSK = strings.TrimSpace(get_wifi.Password)
+	isDirty = true
+	optionsLock.Unlock()
 
-    // 2. Prepare Connection State
-    connectMutex.Lock()
-    if isConnecting {
-        connectMutex.Unlock()
-        w.WriteHeader(http.StatusAccepted)
-        return
-    }
-    isConnecting = true
-    connectError = nil // Reset previous errors
-    connectMutex.Unlock()
+	// 2. Prepare Connection State
+	connectMutex.Lock()
+	if isConnecting {
+		connectMutex.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	isConnecting = true
+	connectError = nil // Reset previous errors
+	connectMutex.Unlock()
 
-    // 3. Run connection in background
-    go func() {
-        logInfo("Attempting to connect to: " + options.WifiSSID)
-        
-        // This command usually takes down the AP and brings up the Station
-        _, _, err := runCommand2("wifi-connect", options.WifiSSID, options.WifiPSK)
-        
-        connectMutex.Lock()
-        connectError = err
-        isConnecting = false
-        connectMutex.Unlock()
-        
-        if err != nil {
-            logError("WiFi Connection failed: " + err.Error())
-        } else {
-            logInfo("WiFi Connection successful")
-        }
-    }()
+	// 3. Run connection in background
+	go func() {
+		logInfo("Attempting to connect to: " + options.WifiSSID)
 
-    // Respond immediately so Vue knows the process started
-    w.WriteHeader(http.StatusAccepted)
+		// This command usually takes down the AP and brings up the Station
+		_, _, err := runCommand2("wifi-connect", options.WifiSSID, options.WifiPSK)
+
+		connectMutex.Lock()
+		connectError = err
+		isConnecting = false
+		connectMutex.Unlock()
+
+		if err != nil {
+			logError("WiFi Connection failed: " + err.Error())
+		} else {
+			logInfo("WiFi Connection successful")
+		}
+	}()
+
+	// Respond immediately so Vue knows the process started
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func pollConnectWifi(w http.ResponseWriter, r *http.Request) {
-    connectMutex.Lock()
-    defer connectMutex.Unlock()
+	connectMutex.Lock()
+	defer connectMutex.Unlock()
 
-    response := map[string]interface{}{
-        "isConnecting": isConnecting,
-        "error":        nil,
-    }
+	response := map[string]interface{}{
+		"isConnecting": isConnecting,
+		"error":        nil,
+	}
 
-    if connectError != nil {
-        response["error"] = connectError.Error()
-    }
+	if connectError != nil {
+		response["error"] = connectError.Error()
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(response)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
-
 
 func getOptions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(options)
@@ -511,6 +510,7 @@ func startDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func goDownload(ctx context.Context, filename string, url string) {
+	disarmReboot()
 	out, err := os.Create(images_folder + "/" + filename)
 	if err != nil {
 		panic(err)
@@ -592,6 +592,7 @@ func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func goUploadMagic() {
+	disarmReboot()
 	timeStart = time.Now()
 	logInfo("Starting magic upload at " + timeStart.Format("15:04:05"))
 	logInfo("Filename: " + state.Filename)
@@ -730,6 +731,7 @@ func startMagic(w http.ResponseWriter, r *http.Request) {
 }
 
 func goMagic(url string) {
+	disarmReboot()
 	timeStart = time.Now()
 	logInfo(fmt.Sprintf("Starting magic at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Url %s", url))
@@ -746,6 +748,7 @@ func goMagic(url string) {
 	logInfo(fmt.Sprintf("Magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 
 	state.State = FINISHED
+	armReboot()
 }
 
 func cancelMagic(w http.ResponseWriter, r *http.Request) {
@@ -776,6 +779,7 @@ func startBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func goBackup() {
+	disarmReboot()
 	path := images_folder + "/" + state.Filename
 
 	timeStart = time.Now()
@@ -906,6 +910,7 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 }
 
 func goInstall(filename string) {
+	disarmReboot()
 	path := images_folder + "/" + filename
 
 	timeStart = time.Now()
@@ -924,6 +929,7 @@ func goInstall(filename string) {
 	logInfo(fmt.Sprintf("Installation finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 
 	state.State = FINISHED
+	armReboot()
 }
 
 func getUncompressedSize(path string) int {
@@ -996,7 +1002,7 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 		"SSH_TIMEOUT=60\n" +
 		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10) + "\n" +
 		"WIFI_SSID='" + options.WifiSSID + "'\n" +
-		"WIFI_PSK='" + options.WifiPSK+"'"
+		"WIFI_PSK='" + options.WifiPSK + "'"
 
 	runCommand2("save-settings", settings)
 	err = unmountUsb()
@@ -1203,7 +1209,7 @@ func saveOptions() error {
 
 func loadOptions() {
 	optionsLock.Lock()
-    defer optionsLock.Unlock()
+	defer optionsLock.Unlock()
 
 	content, err := os.ReadFile(options_file)
 	if err != nil {
@@ -1225,73 +1231,125 @@ func expandUsb() {
 	runCommand2("expand-usb")
 }
 
-
 func lockSetOptions(opts []byte) error {
-    optionsLock.Lock()
-    defer optionsLock.Unlock()
+	optionsLock.Lock()
+	defer optionsLock.Unlock()
 
-    err := json.Unmarshal(opts, &options)
-    if err != nil {
-        return err
-    }
+	err := json.Unmarshal(opts, &options)
+	if err != nil {
+		return err
+	}
 
-    isDirty = true
-    logInfo("Options updated in memory and marked dirty")
-    
-    return nil
+	isDirty = true
+	logInfo("Options updated in memory and marked dirty")
+
+	return nil
 }
 
-
 func lockSaveOptions() {
-    // 1. Pre-check: Is there actually work to do?
-    optionsLock.Lock()
-    if !isDirty {
-        optionsLock.Unlock()
-        return // Nothing changed, go back to sleep
-    }
-    optionsLock.Unlock()
+	// 1. Pre-check: Is there actually work to do?
+	optionsLock.Lock()
+	if !isDirty {
+		optionsLock.Unlock()
+		return // Nothing changed, go back to sleep
+	}
+	optionsLock.Unlock()
 
-    // 2. State-check: Is the system busy with something else?
-    state.Lock()
-    if state.State != IDLE {
-        state.Unlock()
-        // We leave isDirty = true so the watchdog tries again next tick
-        return 
-    }
+	// 2. State-check: Is the system busy with something else?
+	state.Lock()
+	if state.State != IDLE {
+		state.Unlock()
+		// We leave isDirty = true so the watchdog tries again next tick
+		return
+	}
 
-    // 3. Begin the Save Sequence
-    state.State = SAVING // Lock the state so others know the disk is busy
-    state.Unlock()
+	// 3. Begin the Save Sequence
+	state.State = SAVING // Lock the state so others know the disk is busy
+	state.Unlock()
 
-    logInfo("Starting thread-safe save operation...")
+	logInfo("Starting thread-safe save operation...")
 
-    // 4. Perform the Hardware I/O
-    // This calls your existing logic: mount RW -> write -> mount RO
-    err := saveOptions() 
+	// 4. Perform the Hardware I/O
+	// This calls your existing logic: mount RW -> write -> mount RO
+	err := saveOptions()
 
-    // 5. Cleanup and Reset
-    state.Lock()
-    if err != nil {
-        logError("Save failed: " + err.Error())
-        // Note: we don't reset isDirty here so it retries later
-    } else {
-        isDirty = false 
-        logInfo("Save successful, dirty flag cleared.")
-    }
-    
-    state.State = IDLE
-    state.Unlock()
-	updateDisplay()	
+	// 5. Cleanup and Reset
+	state.Lock()
+	if err != nil {
+		logError("Save failed: " + err.Error())
+		// Note: we don't reset isDirty here so it retries later
+	} else {
+		isDirty = false
+		logInfo("Save successful, dirty flag cleared.")
+	}
+
+	state.State = IDLE
+	state.Unlock()
+	updateDisplay()
 }
 
 func startWatchdog() {
-    // Check every 2 seconds
-    ticker := time.NewTicker(2 * time.Second) 
-    
-    go func() {
-        for range ticker.C {
-            // This is the function we built in the previous step
-            lockSaveOptions() 
-        }
-    }()
+	// Check every 2 seconds
+	ticker := time.NewTicker(2 * time.Second)
+
+	go func() {
+		for range ticker.C {
+			// This is the function we built in the previous step
+			lockSaveOptions()
+			// Reboot into the freshly flashed image once the USB is pulled.
+			checkAutoReboot()
+		}
+	}()
+}
+
+// rebootArmed is set when a flash to the eMMC (magic or file install) finishes
+// successfully. The watchdog then reboots the board once the user removes the
+// USB drive — so the post-flash reboot no longer depends on a browser polling
+// is_usb_present from the web UI.
+var (
+	rebootMutex sync.Mutex
+	rebootArmed bool
+)
+
+func armReboot()    { rebootMutex.Lock(); rebootArmed = true; rebootMutex.Unlock() }
+func disarmReboot() { rebootMutex.Lock(); rebootArmed = false; rebootMutex.Unlock() }
+func isRebootArmed() bool {
+	rebootMutex.Lock()
+	defer rebootMutex.Unlock()
+	return rebootArmed
+}
+
+func usbPresent() bool {
+	return runCommandReturnBool("is-usb-present")
+}
+
+// checkAutoReboot reboots the board when a flash has finished, the user opted
+// into "reboot when done", and the USB drive has been removed. It fires at most
+// once per flash (disarmed immediately before rebooting).
+func checkAutoReboot() {
+	if !isRebootArmed() {
+		return
+	}
+
+	optionsLock.Lock()
+	rebootWhenDone := options.RebootWhenDone
+	optionsLock.Unlock()
+	if !rebootWhenDone {
+		return
+	}
+
+	state.Lock()
+	finished := state.State == FINISHED
+	state.Unlock()
+	if !finished {
+		return
+	}
+
+	if usbPresent() {
+		return // wait for the user to remove the USB drive
+	}
+
+	disarmReboot()
+	logInfo("Flash finished and USB removed; rebooting into the new image")
+	runCommand2("reboot-board")
 }

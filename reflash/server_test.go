@@ -165,6 +165,100 @@ func TestSetThenGetOptions(t *testing.T) {
 	}
 }
 
+func TestCheckAutoReboot(t *testing.T) {
+	// reboot-board stub records its invocation by creating a marker file.
+	arm := func(dir string) string {
+		marker := filepath.Join(dir, "rebooted")
+		fakeBin(t, dir, "reboot-board", "touch "+marker)
+		return marker
+	}
+	rebooted := func(marker string) bool {
+		_, err := os.Stat(marker)
+		return err == nil
+	}
+
+	t.Run("armed + rebootWhenDone + usb removed -> reboots once", func(t *testing.T) {
+		dir := setupTest(t)
+		marker := arm(dir)
+		fakeBin(t, dir, "is-usb-present", `echo false`)
+		options.RebootWhenDone = true
+		state = &State{State: FINISHED}
+		armReboot()
+
+		checkAutoReboot()
+
+		if !rebooted(marker) {
+			t.Error("expected reboot-board to be called")
+		}
+		if isRebootArmed() {
+			t.Error("expected disarm after rebooting")
+		}
+	})
+
+	t.Run("usb still present -> no reboot, stays armed", func(t *testing.T) {
+		dir := setupTest(t)
+		marker := arm(dir)
+		fakeBin(t, dir, "is-usb-present", `echo true`)
+		options.RebootWhenDone = true
+		state = &State{State: FINISHED}
+		armReboot()
+
+		checkAutoReboot()
+
+		if rebooted(marker) {
+			t.Error("must not reboot while USB is present")
+		}
+		if !isRebootArmed() {
+			t.Error("should stay armed until USB is removed")
+		}
+	})
+
+	t.Run("not armed -> no reboot", func(t *testing.T) {
+		dir := setupTest(t)
+		marker := arm(dir)
+		fakeBin(t, dir, "is-usb-present", `echo false`)
+		options.RebootWhenDone = true
+		state = &State{State: FINISHED}
+		disarmReboot()
+
+		checkAutoReboot()
+
+		if rebooted(marker) {
+			t.Error("must not reboot when not armed (e.g. after a backup/download)")
+		}
+	})
+
+	t.Run("rebootWhenDone disabled -> no reboot", func(t *testing.T) {
+		dir := setupTest(t)
+		marker := arm(dir)
+		fakeBin(t, dir, "is-usb-present", `echo false`)
+		options.RebootWhenDone = false
+		state = &State{State: FINISHED}
+		armReboot()
+
+		checkAutoReboot()
+
+		if rebooted(marker) {
+			t.Error("must not reboot when user opted out")
+		}
+	})
+
+	t.Run("state not FINISHED -> no reboot", func(t *testing.T) {
+		dir := setupTest(t)
+		marker := arm(dir)
+		fakeBin(t, dir, "is-usb-present", `echo false`)
+		options.RebootWhenDone = true
+		state = &State{State: BACKUPING}
+		armReboot()
+
+		checkAutoReboot()
+
+		if rebooted(marker) {
+			t.Error("must not reboot mid-operation")
+		}
+	})
+}
+
 func TestParseXzUncompressedSize(t *testing.T) {
 	// `xz --robot -l` totals line: tab-separated, uncompressed bytes in field 4.
 	// Exact regardless of size — a 2 MiB file reports 2097152, not "2.0 MiB".
