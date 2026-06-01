@@ -1,13 +1,15 @@
 #!/bin/bash
 
-INTERFACE="wlan0"
+# Defaults match the on-board layout; tests override via env to run hermetically.
+INTERFACE="${WIFI_INTERFACE:-wlan0}"
+SYS_NET="${SYS_NET:-/sys/class/net}"
 EMMC="/dev/mmcblk2p2"
 MOUNT_POINT="/mnt/emmc"
 # Set this to the actual path you want to use
-CONFIG_FILE="/mnt/usb/options.cfg"
-IWD_DIR="/var/lib/iwd"
+CONFIG_FILE="${WIFI_CONFIG_FILE:-/mnt/usb/options.cfg}"
+IWD_DIR="${IWD_DIR:-/var/lib/iwd}"
 AP_PROFILE="Recore"
-LOG_FILE="/var/log/reflash.log"
+LOG_FILE="${LOG_FILE:-/var/log/reflash.log}"
 
 info() {
     echo "[info] $1" >> "$LOG_FILE"
@@ -16,7 +18,7 @@ info() {
 
 # 0. Fail gracefully when no WiFi adapter is present (e.g. no USB dongle fitted).
 #    The board is fully usable over Ethernet without WiFi, so this is not an error.
-if [ ! -d "/sys/class/net/$INTERFACE" ]; then
+if [ ! -d "$SYS_NET/$INTERFACE" ]; then
     info "No WiFi adapter ($INTERFACE) present. Skipping bring-up."
     exit 0
 fi

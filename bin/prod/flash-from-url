@@ -1,8 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
+# Paths default to the on-board locations; tests override them via env so the
+# script can run hermetically without root or a real eMMC.
+LOG_FILE="${LOG_FILE:-/var/log/reflash.log}"
+OUTFILE="${REFLASH_TARGET:-/dev/mmcblk2}"
+CONFIG_DIR="${REFLASH_CONFIG_DIR:-/mnt/config}"
+EMMC_MNT="${REFLASH_EMMC_MNT:-/mnt/emmc}"
+
 info() {
-    echo "[info] $1" >> /var/log/reflash.log
+    echo "[info] $1" >> "$LOG_FILE"
     echo "$1"
 }
 
@@ -11,10 +18,9 @@ info "Starting magic script"
 info "---------------------"
 
 URL=$1
-OUTFILE="/dev/mmcblk2"
 
 mount-config
-CONFIG=$(ls /mnt/config/*.json)
+CONFIG=$(ls "$CONFIG_DIR"/*.json)
 REVISION=$(grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]')
 unmount-config
 
@@ -44,16 +50,16 @@ tune2fs -U random ${OUTFILE}p2
 UUID1=$(blkid -s UUID -o value ${OUTFILE}p1)
 UUID2=$(blkid -s UUID -o value ${OUTFILE}p2)
 
-mkdir -p /mnt/emmc
+mkdir -p $EMMC_MNT
 # mount and exchange UUID
-mount ${OUTFILE}p2 /mnt/emmc
+mount ${OUTFILE}p2 $EMMC_MNT
 info "Updating fstab with new UUIDs"
-sed -i "s:UUID=.* \/ :UUID=${UUID2} / :" /mnt/emmc/etc/fstab
-sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" /mnt/emmc/etc/fstab
+sed -i "s:UUID=.* \/ :UUID=${UUID2} / :" $EMMC_MNT/etc/fstab
+sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" $EMMC_MNT/etc/fstab
 
 # Copy config file, if one is not already present
-if test -d /mnt/emmc/home/printer; then
-  cd /mnt/emmc/home/printer || exit
+if test -d $EMMC_MNT/home/printer; then
+  cd $EMMC_MNT/home/printer || exit
   if test -f klipper/config/generic-recore-"$REVISION".cfg; then
     info "Installing Klipper config file"
     cp klipper/config/generic-recore-"$REVISION".cfg printer_data/config/printer.cfg
@@ -76,12 +82,12 @@ fi
 cd /
 umount ${OUTFILE}p2
 
-mount ${OUTFILE}p1 /mnt/emmc
-sed -i "/^rootdev=.*/d" /mnt/emmc/armbianEnv.txt
-sed -i '/^$/d' /mnt/emmc/armbianEnv.txt
-echo "rootdev=UUID=${UUID2}" >> /mnt/emmc/armbianEnv.txt
+mount ${OUTFILE}p1 $EMMC_MNT
+sed -i "/^rootdev=.*/d" $EMMC_MNT/armbianEnv.txt
+sed -i '/^$/d' $EMMC_MNT/armbianEnv.txt
+echo "rootdev=UUID=${UUID2}" >> $EMMC_MNT/armbianEnv.txt
 
-cd /mnt/emmc/dtb/allwinner/ || exit
+cd $EMMC_MNT/dtb/allwinner/ || exit
 if test -f sun50i-a64-recore-"$REVISION".dtb; then
   info "Symlinking device tree"
   ln -sf sun50i-a64-recore-"$REVISION".dtb sun50i-a64-recore.dtb

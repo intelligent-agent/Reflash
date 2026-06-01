@@ -1,8 +1,10 @@
 #!/bin/bash
 
-INTERFACE="wlan0"
-IWD_DIR="/var/lib/iwd"
-LOG_FILE="/var/log/reflash.log"
+# Defaults match the on-board layout; tests override via env to run hermetically.
+INTERFACE="${WIFI_INTERFACE:-wlan0}"
+SYS_NET="${SYS_NET:-/sys/class/net}"
+IWD_DIR="${IWD_DIR:-/var/lib/iwd}"
+LOG_FILE="${LOG_FILE:-/var/log/reflash.log}"
 
 SSID="$1"
 PASS="$2"
@@ -19,7 +21,7 @@ fi
 
 # No WiFi adapter present (e.g. no USB dongle): a connection is impossible, so
 # fail with a non-zero status the server can surface to the user.
-if [ ! -d "/sys/class/net/$INTERFACE" ]; then
+if [ ! -d "$SYS_NET/$INTERFACE" ]; then
     info "No WiFi adapter ($INTERFACE) present. Cannot connect to $SSID."
     exit 1
 fi

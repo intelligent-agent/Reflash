@@ -1,8 +1,10 @@
 #!/bin/bash
 
-INTERFACE="wlan0"
+# Defaults match the on-board layout; tests override via env to run hermetically.
+INTERFACE="${WIFI_INTERFACE:-wlan0}"
+SYS_NET="${SYS_NET:-/sys/class/net}"
 AP_PROFILE="Recore"
-LOG_FILE="/var/log/reflash.log"
+LOG_FILE="${LOG_FILE:-/var/log/reflash.log}"
 
 info() {
     echo "[info] $1" >> "$LOG_FILE"
@@ -10,7 +12,7 @@ info() {
 }
 
 # 0. No WiFi adapter present (e.g. no USB dongle): return an empty result set.
-if [ ! -d "/sys/class/net/$INTERFACE" ]; then
+if [ ! -d "$SYS_NET/$INTERFACE" ]; then
     info "No WiFi adapter ($INTERFACE) present. No networks to scan."
     echo "---SCAN_RESULTS_START---"
     echo "---SCAN_RESULTS_END---"

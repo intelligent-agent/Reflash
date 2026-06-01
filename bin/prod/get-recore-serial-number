@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+CONFIG_DIR="${REFLASH_CONFIG_DIR:-/mnt/config}"
+
 mount-config
-cat /mnt/config/serial_number
-umount /mnt/config/
+cat "$CONFIG_DIR/serial_number"
+umount "$CONFIG_DIR/"

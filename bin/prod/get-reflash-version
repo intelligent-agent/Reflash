@@ -1,3 +1,3 @@
 #!/bin/bash
 
-cat /etc/reflash-version
+cat "${REFLASH_VERSION_FILE:-/etc/reflash-version}"

@@ -25,6 +25,16 @@ install_bins:
 upload-bins:
 	scp bin/prod/* debian@recore.local:/usr/local/bin
 
+# Run the bash-helper test suite (bats-core). Install with: apt-get install bats
+test-bats:
+	bats test/bats
+
+# Run the Go server unit tests.
+test-go:
+	cd reflash; go test ./...
+
+test: test-go test-bats
+
 dev-clean:
 	rm -rf .tmp
 	mkdir -p .tmp/opt/reflash/images

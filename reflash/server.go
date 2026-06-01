@@ -144,6 +144,7 @@ var oldState *State
 var oldRotation int
 
 var static_dir string
+var binDir string
 var images_folder string
 var options_file string
 var log_file string
@@ -170,16 +171,22 @@ func ServerInit() {
 	env = os.Getenv("APP_ENV")
 	if env == "dev" {
 		static_dir = "../client/dist"
+		binDir = "../bin/dev"
 		images_folder = "/opt/reflash/images"
 		options_file = "../.tmp/opt/options.cfg"
 		log_file = "/var/log/reflash.log"
 		http_port = ":8080"
 	} else {
 		static_dir = "/var/www/html/reflash/dist"
+		binDir = "/usr/local/bin"
 		images_folder = "/mnt/usb/images"
 		options_file = "/mnt/usb/options.cfg"
 		log_file = "/var/log/reflash.log"
 		http_port = ":80"
+	}
+	// Allow tests (and ad-hoc runs) to point the helper scripts elsewhere.
+	if d := os.Getenv("REFLASH_BIN_DIR"); d != "" {
+		binDir = d
 	}
 
 	state = &State{
@@ -290,10 +297,10 @@ func bringupWifi(){
 	// If we have saved credentials, try to connect immediately
     if options.WifiSSID != "" && options.WifiPSK != "" {
         logInfo("Boot: Attempting auto-connect to " + options.WifiSSID)
-		runCommand2("/usr/local/bin/wifi-connect", options.WifiSSID, options.WifiPSK)
+		runCommand2("wifi-connect", options.WifiSSID, options.WifiPSK)
     } else {
 		logInfo("Boot: No SSID found, trying auto bring-up")
-		runCommand2("/usr/local/bin/wifi-bringup")
+		runCommand2("wifi-bringup")
 	}
 }
 func startScanWifi(w http.ResponseWriter, r *http.Request) {
@@ -311,7 +318,7 @@ func startScanWifi(w http.ResponseWriter, r *http.Request) {
         logInfo("WiFi Scan triggered...")
         
         // This is your existing logic, moved into a background task
-        scan_results := runCommandReturnString("/usr/local/bin/wifi-scan")
+        scan_results := runCommandReturnString("wifi-scan")
         
         var temp_aps []AccessPoint
         lines := strings.Split(scan_results, "\n")
@@ -366,7 +373,7 @@ func getWifiScanResults(w http.ResponseWriter, r *http.Request) {
 }
 
 func getWifiStatus(w http.ResponseWriter, r *http.Request) {
-    result := runCommandReturnString("/usr/local/bin/wifi-present")
+    result := runCommandReturnString("wifi-present")
     w.Header().Set("Content-Type", "application/json")
     w.Write([]byte(result))
 }
@@ -407,7 +414,7 @@ func startConnectWifi(w http.ResponseWriter, r *http.Request) {
         logInfo("Attempting to connect to: " + options.WifiSSID)
         
         // This command usually takes down the AP and brings up the Station
-        _, _, err := runCommand2("/usr/local/bin/wifi-connect", options.WifiSSID, options.WifiPSK)
+        _, _, err := runCommand2("wifi-connect", options.WifiSSID, options.WifiPSK)
         
         connectMutex.Lock()
         connectError = err
@@ -589,7 +596,7 @@ func goUploadMagic() {
 	logInfo("Starting magic upload at " + timeStart.Format("15:04:05"))
 	logInfo("Filename: " + state.Filename)
 
-	stdout, _, err := runCommand2("/usr/local/bin/flash-mkfifo")
+	stdout, _, err := runCommand2("flash-mkfifo")
 	if err != nil {
 		logError("Error encountered when setting up pipe: \n" + stdout)
 	}
@@ -642,7 +649,7 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	revision := runCommandReturnString("get-recore-revision")
-	stdout, _, err := runCommand2("/usr/local/bin/flash-cleanup", revision)
+	stdout, _, err := runCommand2("flash-cleanup", revision)
 	if err != nil {
 		logError("Error encountered during cleanup: \n" + stdout)
 		state.State = ERROR
@@ -727,7 +734,7 @@ func goMagic(url string) {
 	logInfo(fmt.Sprintf("Starting magic at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Url %s", url))
 
-	stdout, _, err := runCommand2("/usr/local/bin/flash-from-url", url)
+	stdout, _, err := runCommand2("flash-from-url", url)
 	if err != nil {
 		logError("Error encountered during magic: \n" + stdout)
 		state.State = ERROR
@@ -774,7 +781,7 @@ func goBackup() {
 	timeStart = time.Now()
 	logInfo(fmt.Sprintf("starting backup of %s at time %s", state.Filename, timeStart.Format("15:04:05")))
 
-	stdout, _, err := runCommand2("/usr/local/bin/backup-emmc", path)
+	stdout, _, err := runCommand2("backup-emmc", path)
 	if err != nil {
 		logError("Error encountered during backup: \n" + stdout)
 		mountUsb(MODE_RO)
@@ -905,7 +912,7 @@ func goInstall(filename string) {
 	logInfo(fmt.Sprintf("starting install at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Filename %s", filename))
 
-	stdout, _, err := runCommand2("/usr/local/bin/flash-from-file", path)
+	stdout, _, err := runCommand2("flash-from-file", path)
 	if err != nil {
 		logError("Error encountered during install: \n" + stdout)
 		state.State = ERROR
@@ -928,11 +935,22 @@ func getUncompressedSize(path string) int {
 			return 1
 		}
 	}
-	trimmed := string(stdout[:])
-	trimmed = strings.ReplaceAll(trimmed, " ", "")
+	return parseXzUncompressedSize(string(stdout[:]))
+}
+
+// parseXzUncompressedSize extracts the uncompressed byte count from `xz -l`
+// output. NOTE: it relies on the uncompressed value rendering in MiB (which it
+// does for real ~250 MiB Recore images, where the compressed size is also in
+// MiB); smaller files render in KiB and yield 0 here. See the TODO to move to
+// `xz --robot -l`, which emits exact byte counts.
+func parseXzUncompressedSize(out string) int {
+	trimmed := strings.ReplaceAll(out, " ", "")
 	trimmed = strings.ReplaceAll(trimmed, ",", "")
 	strs := strings.Split(trimmed, "MiB")
-	ret, err := strconv.ParseFloat(strs[1], 32)
+	if len(strs) < 2 {
+		return 0
+	}
+	ret, _ := strconv.ParseFloat(strs[1], 32)
 	return int(ret * 1024 * 1024)
 }
 
@@ -977,7 +995,7 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 		"WIFI_SSID='" + options.WifiSSID + "'\n" +
 		"WIFI_PSK='" + options.WifiPSK+"'"
 
-	runCommand2("/usr/local/bin/save-settings", settings)
+	runCommand2("save-settings", settings)
 	err = unmountUsb()
 	sendResponse(w, err)
 }
@@ -994,8 +1012,22 @@ func sendResponse(w http.ResponseWriter, err error) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// resolveCmd maps a Reflash helper-script name to its full path under binDir.
+// System utilities already on PATH (and any name given as an explicit path) are
+// returned unchanged.
+func resolveCmd(name string) string {
+	switch name {
+	case "pkill", "xz", "tail", "lsblk", "sync":
+		return name
+	}
+	if strings.ContainsRune(name, '/') {
+		return name
+	}
+	return filepath.Join(binDir, name)
+}
+
 func runCommandReturnBool(cmd_str string) bool {
-	cmd := exec.Command(cmd_str)
+	cmd := exec.Command(resolveCmd(cmd_str))
 	stdout, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
@@ -1019,17 +1051,17 @@ func runCommandReturnString(cmd_str string) string {
 }
 
 func rebootBoard(w http.ResponseWriter, r *http.Request) {
-	_, _, err := runCommand2("/usr/local/bin/reboot-board")
+	_, _, err := runCommand2("reboot-board")
 	sendResponse(w, err)
 }
 
 func shutdownBoard(w http.ResponseWriter, r *http.Request) {
-	_, _, err := runCommand2("/usr/local/bin/shutdown-board")
+	_, _, err := runCommand2("shutdown-board")
 	sendResponse(w, err)
 }
 
 func isConfigPresent(w http.ResponseWriter, r *http.Request) {
-	_, _, err := runCommand2("/usr/local/bin/get-recore-revision")
+	_, _, err := runCommand2("get-recore-revision")
 	sendResponse(w, err)
 }
 
@@ -1046,18 +1078,18 @@ func updateConfig(w http.ResponseWriter, r *http.Request) {
 	var data *UpdateConfigCommand = &UpdateConfigCommand{}
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
-	_, _, err := runCommand2("/usr/local/bin/create-recore-config", strconv.Itoa(data.Snr))
+	_, _, err := runCommand2("create-recore-config", strconv.Itoa(data.Snr))
 	sendResponse(w, err)
 }
 
 func cmdRotateScreen(rotation int, place string) error {
-	_, _, err := runCommand2("/usr/local/bin/rotate-screen", strconv.Itoa(rotation), place)
+	_, _, err := runCommand2("rotate-screen", strconv.Itoa(rotation), place)
 	return err
 }
 
 func setSshEnabled(is_enabled bool) error {
 	var err error
-	cmd := exec.Command("/usr/local/bin/set-ssh-enabled", strconv.FormatBool(is_enabled))
+	cmd := exec.Command(resolveCmd("set-ssh-enabled"), strconv.FormatBool(is_enabled))
 	if err := cmd.Run(); err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
 			log.Fatalf("Command returned exit code %v\n", exitError.ExitCode())
@@ -1067,7 +1099,7 @@ func setSshEnabled(is_enabled bool) error {
 }
 
 func isUsbPresent(w http.ResponseWriter, r *http.Request) {
-	result := runCommandReturnBool("/usr/local/bin/is-usb-present")
+	result := runCommandReturnBool("is-usb-present")
 	var response *BinaryCommandResult = &BinaryCommandResult{
 		Result: result,
 	}
@@ -1112,7 +1144,7 @@ func clearLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func expandUSB() error {
-	cmd := exec.Command("expand-usb")
+	cmd := exec.Command(resolveCmd("expand-usb"))
 	err := cmd.Run()
 	if err == nil {
 		logInfo("expand-usb returned error")
@@ -1121,7 +1153,7 @@ func expandUSB() error {
 }
 
 func runCommand2(cmds ...string) (string, string, error) {
-	cmd := exec.Command(cmds[0], cmds[1:]...)
+	cmd := exec.Command(resolveCmd(cmds[0]), cmds[1:]...)
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
@@ -1187,7 +1219,7 @@ func loadOptions() {
 }
 
 func expandUsb() {
-	runCommand2("/usr/local/bin/expand-usb")
+	runCommand2("expand-usb")
 }
 
 
