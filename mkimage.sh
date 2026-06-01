@@ -88,8 +88,9 @@ cat <<EOF > /etc/udev/rules.d/99-recore-otg.rules
 # every Recore revision regardless of DTB.
 SUBSYSTEM=="udc", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-gadget-setup.service"
 
-# Start the login prompt only when the serial node appears
-KERNEL=="ttyGS0", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="serial-getty@ttyGS0.service"
+# ttyGS0 is owned by the Reflash server's USB control protocol (flasher-pi sees
+# it as /dev/ttyACM0), so we do NOT start a login getty on it. Use SSH over the
+# network for an interactive console.
 EOF
 
 cat <<EOF > /usr/local/bin/usb-gadget-init.sh

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -207,6 +208,9 @@ func ServerInit() {
 	bringupWifi()
 	updateDisplay()
 	startWatchdog()
+	if env != "dev" {
+		go serveSerialControl("/dev/ttyGS0")
+	}
 
 	timer1 := time.NewTimer(3 * time.Second)
 	go func() {
@@ -1352,4 +1356,97 @@ func checkAutoReboot() {
 	disarmReboot()
 	logInfo("Flash finished and USB removed; rebooting into the new image")
 	runCommand2("reboot-board")
+}
+
+// handleSerialCommand parses one line of the USB control protocol (spoken over
+// the ACM gadget on /dev/ttyGS0) and returns the response line(s) to write
+// back. It drives the same flash state machine the HTTP API uses, so there is
+// no duplicate flashing logic.
+//
+//	LIST          -> "IMG <name> <bytes>" per local image, then "OK"
+//	STATUS        -> "STATE <state> PROGRESS <pct>"
+//	FLASH <file>  -> starts a file install; "OK flashing <file>" or "ERR ..."
+//	CANCEL        -> cancels an in-progress flash; "OK"
+//
+// startInstall launches a file install in the background. It's a package var so
+// tests can stub it without spawning the real flashing goroutine.
+var startInstall = func(filename string) { go goInstall(filename) }
+
+// serveSerialControl runs the USB control protocol over the ACM gadget tty.
+// flasher-pi sees this as /dev/ttyACM0 and can list/flash/poll without the
+// network. The tty only exists once the gadget has bound, and goes away when
+// the host disconnects, so we (re)open it in a retry loop.
+func serveSerialControl(devPath string) {
+	for {
+		f, err := os.OpenFile(devPath, os.O_RDWR, 0)
+		if err != nil {
+			time.Sleep(2 * time.Second) // wait for the gadget tty to appear
+			continue
+		}
+		logInfo("USB control channel open on " + devPath)
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			for _, resp := range handleSerialCommand(line) {
+				fmt.Fprintf(f, "%s\r\n", resp)
+			}
+		}
+		f.Close() // EOF / host disconnected — reopen.
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func handleSerialCommand(line string) []string {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return nil
+	}
+
+	switch strings.ToUpper(fields[0]) {
+	case "LIST":
+		out := []string{}
+		for _, img := range getLocalImages() {
+			out = append(out, fmt.Sprintf("IMG %s %d", img.Name, img.Size))
+		}
+		return append(out, "OK")
+
+	case "STATUS":
+		state.Lock()
+		s, p := state.State, state.Progress
+		state.Unlock()
+		return []string{fmt.Sprintf("STATE %s PROGRESS %d", s, int(p))}
+
+	case "FLASH":
+		if len(fields) < 2 {
+			return []string{"ERR missing filename"}
+		}
+		filename := fields[1]
+		if _, err := os.Stat(images_folder + "/" + filename); err != nil {
+			return []string{"ERR no such image: " + filename}
+		}
+		state.Lock()
+		busy := state.State != IDLE && state.State != FINISHED &&
+			state.State != ERROR && state.State != CANCELLED
+		if busy {
+			s := state.State
+			state.Unlock()
+			return []string{"ERR busy: " + s}
+		}
+		state.Filename = filename
+		state.BytesTotal = getUncompressedSize(images_folder + "/" + filename)
+		state.State = INSTALLING
+		state.Unlock()
+		startInstall(filename)
+		return []string{"OK flashing " + filename}
+
+	case "CANCEL":
+		runCommand2("pkill", "-f", "xz", "-9")
+		return []string{"OK"}
+
+	default:
+		return []string{"ERR unknown command: " + fields[0]}
+	}
 }

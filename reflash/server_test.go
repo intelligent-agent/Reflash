@@ -259,6 +259,91 @@ func TestCheckAutoReboot(t *testing.T) {
 	})
 }
 
+func TestHandleSerialCommand(t *testing.T) {
+	joined := func(lines []string) string { return strings.Join(lines, "\n") }
+
+	t.Run("LIST returns images then OK", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE}
+		os.WriteFile(filepath.Join(images_folder, "a.img.xz"), []byte("x"), 0o644)
+
+		out := handleSerialCommand("LIST")
+		if !strings.Contains(joined(out), "IMG a.img.xz 1") {
+			t.Errorf("LIST missing image line: %v", out)
+		}
+		if out[len(out)-1] != "OK" {
+			t.Errorf("LIST should end with OK: %v", out)
+		}
+	})
+
+	t.Run("STATUS reports state and progress", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: MAGIC, Progress: 42}
+		out := handleSerialCommand("status") // case-insensitive
+		if joined(out) != "STATE MAGIC PROGRESS 42" {
+			t.Errorf("got %q", joined(out))
+		}
+	})
+
+	t.Run("FLASH without filename errors", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE}
+		if got := handleSerialCommand("FLASH"); got[0] != "ERR missing filename" {
+			t.Errorf("got %v", got)
+		}
+	})
+
+	t.Run("FLASH unknown file errors", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE}
+		got := handleSerialCommand("FLASH ghost.img.xz")
+		if !strings.HasPrefix(got[0], "ERR no such image") {
+			t.Errorf("got %v", got)
+		}
+	})
+
+	t.Run("FLASH when busy is refused", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: BACKUPING}
+		os.WriteFile(filepath.Join(images_folder, "a.img.xz"), []byte("x"), 0o644)
+		got := handleSerialCommand("FLASH a.img.xz")
+		if !strings.HasPrefix(got[0], "ERR busy") {
+			t.Errorf("got %v", got)
+		}
+	})
+
+	t.Run("FLASH valid starts install", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE}
+		os.WriteFile(filepath.Join(images_folder, "a.img.xz"), []byte("x"), 0o644)
+
+		// Stub the launcher so the test stays synchronous (no real goroutine).
+		var flashed string
+		orig := startInstall
+		startInstall = func(f string) { flashed = f }
+		defer func() { startInstall = orig }()
+
+		got := handleSerialCommand("FLASH a.img.xz")
+		if got[0] != "OK flashing a.img.xz" {
+			t.Errorf("got %v", got)
+		}
+		if flashed != "a.img.xz" {
+			t.Errorf("install not started for %q (got %q)", "a.img.xz", flashed)
+		}
+		if state.State != INSTALLING {
+			t.Errorf("state = %q, want INSTALLING", state.State)
+		}
+	})
+
+	t.Run("unknown command errors", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE}
+		if got := handleSerialCommand("WIBBLE"); !strings.HasPrefix(got[0], "ERR unknown command") {
+			t.Errorf("got %v", got)
+		}
+	})
+}
+
 func TestParseXzUncompressedSize(t *testing.T) {
 	// `xz --robot -l` totals line: tab-separated, uncompressed bytes in field 4.
 	// Exact regardless of size — a 2 MiB file reports 2097152, not "2.0 MiB".
