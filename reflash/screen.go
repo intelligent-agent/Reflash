@@ -93,6 +93,12 @@ func ScreenClose() {
 
 // TODO: This is horrobly inefficient and should be optimized.
 func Draw(progress float32, state string, rot int, ips []string) {
+	// No framebuffer mapped → ScreenInit either failed (headless) or was
+	// never called (tests). Skip rendering entirely; updateDisplay still
+	// keeps its bookkeeping in sync.
+	if fbMem == nil {
+		return
+	}
 	img = image.NewRGBA(image.Rect(0, 0, fb_min, fb_min))
 	clear(img)
 

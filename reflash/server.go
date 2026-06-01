@@ -464,6 +464,11 @@ func setOptions(w http.ResponseWriter, r *http.Request) {
 }
 
 func updateDisplay() {
+	// Lazy init for paths that touch updateDisplay without going through
+	// ServerInit (e.g. tests that drive handleSerialCommand directly).
+	if oldState == nil {
+		oldState = &State{}
+	}
 	state.Lock()
 	if oldState.State != state.State || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
 		Draw(float32(state.Progress)/100, state.State, options.ScreenRotation, state.IPs)
@@ -828,7 +833,12 @@ func getBlockSize(file string) int {
 	return runCommandReturnInt("lsblk", "-n", "-d", "-o", "SIZE", "--bytes", file)
 }
 
-func getProgress(w http.ResponseWriter, r *http.Request) {
+// refreshProgress reads the active progress source (the flash-progress file
+// while installing/backing up/magicking, or the downloading file's size),
+// recomputes state.Progress + state.Bandwidth, and redraws the embedded
+// screen. Called from both the HTTP getProgress handler and the USB STATUS
+// dispatcher so both paths keep the on-board display alive.
+func refreshProgress() {
 	if state.State == INSTALLING || state.State == BACKUPING || state.State == MAGIC {
 		bytes := lastLine("/tmp/recore-flash-progress")
 		i, err := strconv.Atoi(bytes)
@@ -843,7 +853,9 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	state.Progress = (float64(state.BytesNow) / float64(state.BytesTotal)) * 100.0
+	if state.BytesTotal > 0 {
+		state.Progress = (float64(state.BytesNow) / float64(state.BytesTotal)) * 100.0
+	}
 	elapsed := time.Now().Sub(last_size_check).Seconds()
 	last_size_check = time.Now()
 	bytes_diff_mb := float32(state.BytesNow-bytes_last) / (1024 * 1024)
@@ -851,7 +863,10 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 	state.Bandwidth = bytes_diff_mb / float32(elapsed)
 
 	updateDisplay()
+}
 
+func getProgress(w http.ResponseWriter, r *http.Request) {
+	refreshProgress()
 	json.NewEncoder(w).Encode(state)
 	if state.State == FINISHED {
 		state.State = IDLE
@@ -1421,6 +1436,9 @@ func handleSerialCommand(line string) []string {
 		return append(out, "OK")
 
 	case "STATUS":
+		// Refresh the same way the HTTP getProgress handler does so the
+		// embedded screen keeps updating when only the USB protocol is in use.
+		refreshProgress()
 		state.Lock()
 		s, p := state.State, state.Progress
 		state.Unlock()
