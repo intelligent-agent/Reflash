@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -165,25 +166,36 @@ func TestSetThenGetOptions(t *testing.T) {
 }
 
 func TestParseXzUncompressedSize(t *testing.T) {
-	// Real `xz -l` output for a 2 MiB file: rendered in KiB, so the MiB-based
-	// parser yields 0. This pins the known limitation (fix: `xz --robot -l`).
-	kib := "Strms  Blocks   Compressed Uncompressed  Ratio  Check   Filename\n" +
-		"    1       1        448 B  2,048.0 KiB  0.000  CRC64   z.bin.xz\n"
-	if got := parseXzUncompressedSize(kib); got != 0 {
-		t.Errorf("KiB-rendered size: got %d, want 0 (documents the MiB-only limitation)", got)
+	// `xz --robot -l` totals line: tab-separated, uncompressed bytes in field 4.
+	// Exact regardless of size — a 2 MiB file reports 2097152, not "2.0 MiB".
+	robot := "name\tz.bin.xz\n" +
+		"file\t1\t1\t448\t2097152\t0.000\tCRC64\t0\n" +
+		"totals\t1\t1\t448\t2097152\t0.000\tCRC64\t0\t1\n"
+	if got := parseXzUncompressedSize(robot); got != 2097152 {
+		t.Errorf("robot totals: got %d, want 2097152", got)
 	}
 
-	// A real Recore image: both compressed and uncompressed render in MiB, so
-	// the uncompressed value lands where the parser looks.
-	mib := "Strms  Blocks   Compressed Uncompressed  Ratio  Check   Filename\n" +
-		"    1       1      250.0 MiB  1,463.5 MiB  0.171  CRC64   image.img.xz\n"
-	want := int(1463.5 * 1024 * 1024)
-	if got := parseXzUncompressedSize(mib); got != want {
-		t.Errorf("MiB-rendered size: got %d, want %d", got, want)
-	}
-
-	// Garbage / empty input must not panic.
+	// Garbage / empty input must not panic and must return 0.
 	if got := parseXzUncompressedSize(""); got != 0 {
 		t.Errorf("empty input: got %d, want 0", got)
+	}
+}
+
+// End-to-end against the real xz binary: a small file used to panic the old
+// MiB-splitting parser; now it returns the exact uncompressed size.
+func TestGetUncompressedSizeRealXz(t *testing.T) {
+	dir := t.TempDir()
+	raw := filepath.Join(dir, "payload.bin")
+	const size = 2 * 1024 * 1024
+	if err := os.WriteFile(raw, make([]byte, size), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	xzPath := raw + ".xz"
+	cmd := exec.Command("xz", "-k", "-f", raw)
+	if err := cmd.Run(); err != nil {
+		t.Skipf("xz not available: %v", err)
+	}
+	if got := getUncompressedSize(xzPath); got != size {
+		t.Errorf("getUncompressedSize = %d, want %d", got, size)
 	}
 }

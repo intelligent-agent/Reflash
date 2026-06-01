@@ -927,31 +927,34 @@ func goInstall(filename string) {
 }
 
 func getUncompressedSize(path string) int {
-	cmd := exec.Command("xz", "-l", path)
+	cmd := exec.Command("xz", "--robot", "-l", path)
 	stdout, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
-			logError(fmt.Sprintf("Command 'xz -l %s' returned exit code %v\n", path, exitError.ExitCode()))
+			logError(fmt.Sprintf("Command 'xz --robot -l %s' returned exit code %v\n", path, exitError.ExitCode()))
 			return 1
 		}
 	}
 	return parseXzUncompressedSize(string(stdout[:]))
 }
 
-// parseXzUncompressedSize extracts the uncompressed byte count from `xz -l`
-// output. NOTE: it relies on the uncompressed value rendering in MiB (which it
-// does for real ~250 MiB Recore images, where the compressed size is also in
-// MiB); smaller files render in KiB and yield 0 here. See the TODO to move to
-// `xz --robot -l`, which emits exact byte counts.
+// parseXzUncompressedSize extracts the uncompressed byte count from
+// `xz --robot -l` output. The "totals" line is tab-separated with the
+// uncompressed size (exact bytes) in field 4, e.g.:
+//
+//	totals\t1\t1\t448\t2097152\t0.000\tCRC64\t0\t1
+//
+// This is unit-agnostic, unlike the human-readable `xz -l` table.
 func parseXzUncompressedSize(out string) int {
-	trimmed := strings.ReplaceAll(out, " ", "")
-	trimmed = strings.ReplaceAll(trimmed, ",", "")
-	strs := strings.Split(trimmed, "MiB")
-	if len(strs) < 2 {
-		return 0
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 5 && fields[0] == "totals" {
+			if n, err := strconv.Atoi(fields[4]); err == nil {
+				return n
+			}
+		}
 	}
-	ret, _ := strconv.ParseFloat(strs[1], 32)
-	return int(ret * 1024 * 1024)
+	return 0
 }
 
 func lastLine(file string) string {
