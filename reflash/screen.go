@@ -96,7 +96,15 @@ func Draw(progress float32, state string, rot int, ips []string) {
 	img = image.NewRGBA(image.Rect(0, 0, fb_min, fb_min))
 	clear(img)
 
-	if state == "IDLE" {
+	if isRebootArmed() {
+		// A flash finished; prompt the user to pull the USB drive (the board
+		// reboots into the new image on removal). Keyed off the arm flag, not
+		// the state, because getProgress flips FINISHED->IDLE on the first poll.
+		drawLogo(img, (fb_min/2)-95)
+		drawText(img, "REFLASH", 50, (fb_min/2)+55)
+		drawText(img, "Flash complete", 28, (fb_min/2)+110)
+		drawText(img, "Remove USB drive", 28, (fb_min/2)+145)
+	} else if state == "IDLE" {
 		drawLogo(img, (fb_min/2)-95)
 		drawText(img, "REFLASH", 50, (fb_min/2)+55)
 		for i, s := range ips {

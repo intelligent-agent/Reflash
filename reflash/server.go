@@ -753,6 +753,7 @@ func goMagic(url string) {
 
 	state.State = FINISHED
 	armReboot()
+	updateDisplay()
 }
 
 func cancelMagic(w http.ResponseWriter, r *http.Request) {
@@ -934,6 +935,7 @@ func goInstall(filename string) {
 
 	state.State = FINISHED
 	armReboot()
+	updateDisplay()
 }
 
 func getUncompressedSize(path string) int {
@@ -1342,10 +1344,15 @@ func checkAutoReboot() {
 		return
 	}
 
+	// Only reboot from a resting state. A flash finishes as FINISHED, but
+	// getProgress flips that to IDLE on the first poll, so accept both; any
+	// active operation (MAGIC/INSTALLING/...) must block the reboot. The arm
+	// flag (set on flash success, cleared on every operation start) is the real
+	// guard against rebooting after a non-flash op.
 	state.Lock()
-	finished := state.State == FINISHED
+	resting := state.State == FINISHED || state.State == IDLE
 	state.Unlock()
-	if !finished {
+	if !resting {
 		return
 	}
 

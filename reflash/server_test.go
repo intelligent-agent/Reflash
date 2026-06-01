@@ -169,7 +169,7 @@ func TestCheckAutoReboot(t *testing.T) {
 	// reboot-board stub records its invocation by creating a marker file.
 	arm := func(dir string) string {
 		marker := filepath.Join(dir, "rebooted")
-		fakeBin(t, dir, "reboot-board", "touch "+marker)
+		fakeBin(t, dir, "reboot-board", "touch '"+marker+"'") // path may contain ()
 		return marker
 	}
 	rebooted := func(marker string) bool {
@@ -243,7 +243,7 @@ func TestCheckAutoReboot(t *testing.T) {
 		}
 	})
 
-	t.Run("state not FINISHED -> no reboot", func(t *testing.T) {
+	t.Run("active operation blocks reboot", func(t *testing.T) {
 		dir := setupTest(t)
 		marker := arm(dir)
 		fakeBin(t, dir, "is-usb-present", `echo false`)
@@ -255,6 +255,21 @@ func TestCheckAutoReboot(t *testing.T) {
 
 		if rebooted(marker) {
 			t.Error("must not reboot mid-operation")
+		}
+	})
+
+	t.Run("IDLE still reboots (getProgress reset FINISHED->IDLE)", func(t *testing.T) {
+		dir := setupTest(t)
+		marker := arm(dir)
+		fakeBin(t, dir, "is-usb-present", `echo false`)
+		options.RebootWhenDone = true
+		state = &State{State: IDLE}
+		armReboot()
+
+		checkAutoReboot()
+
+		if !rebooted(marker) {
+			t.Error("should still reboot after getProgress flips state to IDLE")
 		}
 	})
 }
