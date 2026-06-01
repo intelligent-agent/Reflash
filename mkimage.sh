@@ -93,29 +93,33 @@ SUBSYSTEM=="udc", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-gadget-
 # network for an interactive console.
 EOF
 
-cat <<EOF > /usr/local/bin/usb-gadget-init.sh
+# Quoted heredoc — the body is written verbatim, so $1, $(seq 1 50), $UDC_NAME
+# etc. land in the generated script as-is. (An unquoted heredoc here has bitten
+# us in a build env that ate the backslash escapes, producing `case ""` and
+# an unrolled `for` list, and the gadget never came up.)
+cat <<'EOF' > /usr/local/bin/usb-gadget-init.sh
 #!/bin/bash
 
 GADGET_DIR="/sys/kernel/config/usb_gadget/g1"
 
-case "\$1" in
+case "$1" in
     start)
         # Pulls in libcomposite + u_serial and registers the usb_gadget configfs subsystem.
         modprobe usb_f_acm || { echo "modprobe usb_f_acm failed" >&2; exit 1; }
 
         # configfs registration is asynchronous; wait for the gadget subsystem to appear.
-        for i in \$(seq 1 50); do
+        for i in $(seq 1 50); do
             [ -d /sys/kernel/config/usb_gadget ] && break
             sleep 0.1
         done
         [ -d /sys/kernel/config/usb_gadget ] || { echo "usb_gadget configfs unavailable" >&2; exit 1; }
 
         # Bind to the first available UDC (musb-hdrc.4.auto on the A64).
-        UDC_NAME="\$(ls /sys/class/udc 2>/dev/null | head -1)"
-        [ -n "\$UDC_NAME" ] || { echo "no UDC available" >&2; exit 1; }
+        UDC_NAME="$(ls /sys/class/udc 2>/dev/null | head -1)"
+        [ -n "$UDC_NAME" ] || { echo "no UDC available" >&2; exit 1; }
 
-        mkdir -p \$GADGET_DIR
-        cd \$GADGET_DIR
+        mkdir -p $GADGET_DIR
+        cd $GADGET_DIR
 
         echo 0x1d6b > idVendor
         echo 0x0104 > idProduct
@@ -134,11 +138,11 @@ case "\$1" in
         ln -s functions/acm.usb0 configs/c.1/ 2>/dev/null
 
         # Bind to hardware
-        echo "\$UDC_NAME" > UDC
+        echo "$UDC_NAME" > UDC
         ;;
     stop)
-        if [ -d "\$GADGET_DIR" ]; then
-            cd \$GADGET_DIR
+        if [ -d "$GADGET_DIR" ]; then
+            cd $GADGET_DIR
             echo "" > UDC
             rm -f configs/c.1/acm.usb0
             [ -d "configs/c.1/strings/0x409" ] && rmdir configs/c.1/strings/0x409
