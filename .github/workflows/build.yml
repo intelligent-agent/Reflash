@@ -32,6 +32,9 @@ jobs:
         npm ci
         npm run build
 
+    - name: Run tests
+      run: make test
+
     - name: Make archive with version file
       run: |
         make build-go
