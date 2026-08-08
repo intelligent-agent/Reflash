@@ -20,6 +20,7 @@ update_settings(){
     mount "${EMMC}p2" /mnt/emmc
 
     echo -e "$CONTENT" > "$SETTINGS_FILE"
+    chmod 600 "$SETTINGS_FILE"
     umount /mnt/emmc
 }
 

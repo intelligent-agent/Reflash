@@ -17,3 +17,4 @@ else
     echo "key does not exists"
     echo "${KEY}=${VALUE}" >> $SETTINGS_FILE
 fi
+chmod 600 "$SETTINGS_FILE"

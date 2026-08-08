@@ -21,4 +21,5 @@ if [ $(grep "${KEY}=" $SETTINGS_FILE) ]; then
 else
     echo "${KEY}=${VALUE}" >> $SETTINGS_FILE
 fi
+chmod 600 "$SETTINGS_FILE"
 umount /mnt/emmc
