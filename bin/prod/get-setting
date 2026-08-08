@@ -1,6 +1,6 @@
 #!/bin/bash
 
-CONTENT=$1
+KEY=$1
 
 EMMC=/dev/mmcblk2
 SETTINGS_FILE="/mnt/emmc/etc/rebuild-settings"
@@ -11,19 +11,17 @@ info() {
 }
 
 usage(){
-    echo "Usage: $0 <content>"
+    echo "Usage: $0 <key>"
 }
 
-update_settings(){
+get_setting(){
     mkdir -p /mnt/emmc
     umount -q /mnt/emmc/
     mount "${EMMC}p2" /mnt/emmc
 
-    echo -e "$CONTENT" > "$SETTINGS_FILE"
-    chmod 600 "$SETTINGS_FILE"
+    cat /etc/rebuild-settings | grep "${KEY}"
+
     umount /mnt/emmc
 }
 
-info "Updating settings"
-
-update_settings
+get_setting

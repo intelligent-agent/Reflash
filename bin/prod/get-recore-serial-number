@@ -2,12 +2,8 @@
 
 set -euo pipefail
 
-partprobe
+CONFIG_DIR="${REFLASH_CONFIG_DIR:-/mnt/config}"
 
-DEV=mmcblk2
-
-mkdir -p /mnt/config
-umount -q /mnt/config/ || true
-mount -r "/dev/${DEV}boot0p1" /mnt/config/
-cat /mnt/config/serial_number
-umount /mnt/config/
+mount-config
+cat "$CONFIG_DIR/serial_number"
+umount "$CONFIG_DIR/"

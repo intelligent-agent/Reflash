@@ -2,4 +2,8 @@
 reflash/dist
 reflash/reflash
 reflash_rootfs
+docker-reflash
+output
+.tmp
+.tmp-test
 rootfs_files/debs

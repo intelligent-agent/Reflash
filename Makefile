@@ -22,8 +22,22 @@ install_bins:
 	chmod +x /usr/local/bin/flash-cleanup
 	chmod +x /usr/local/bin/flash-mkfifo
 
-upload_bins:
-	scp bin/prod/* root@recore.local:/usr/local/bin
+upload-bins:
+	scp bin/prod/* debian@recore.local:/usr/local/bin
+
+# Run the bash-helper test suite (bats-core). Install with: apt-get install bats
+test-bats:
+	bats test/bats
+
+# Run the Go server unit tests.
+test-go:
+	cd reflash; go test ./...
+
+# Run the Vue client unit tests (vitest).
+test-vue:
+	cd client; npm test
+
+test: test-go test-bats test-vue
 
 dev-clean:
 	rm -rf .tmp
@@ -36,14 +50,14 @@ dev-clean:
 	touch /opt/reflash/fbcon
 	touch /opt/reflash/
 
-dev-client:
+run-vue:
 	cd client; npm run serve
 
-build:
+build-vue:
 	cd client; npm run build
 
-upload:
-	scp -r client/dist root@recore.local:/var/www/html/reflash
+upload-vue:
+	scp -r client/dist debian@recore.local:/var/www/html/reflash
 
 build-go:
 	cd reflash; GOOS=linux GOARCH=arm64 go build -o reflash main.go server.go screen.go
@@ -53,59 +67,7 @@ run-go:
 	cd reflash; APP_ENV=dev go run main.go server.go screen.go
 
 upload-go:
-	scp reflash/reflash root@${REMOTE}:/usr/local/bin
-
-tar:
-	cd zip; tar -zcvf reflash.tar.gz reflash/
-	mv zip/reflash.tar.gz .
-	rm -rf zip
-
-package:
-	rm -rf zip
-	mkdir -p zip/reflash/bin
-	mkdir -p zip/reflash/reflash
-	cp reflash/*.py zip/reflash/reflash
-	mkdir -p zip/reflash/server
-	cp -r server/*.py zip/reflash/server
-	cp -r client/dist zip/reflash/server
-	cp bin/prod/* zip/reflash/bin
-	cp -r systemd zip/reflash
-	cp -r scripts zip/reflash
-	cp -r curses zip/reflash
-	echo "Unknown version" > zip/reflash/reflash.version
-
-tar-board:
-	cd zip; tar -zcvf reflash.tar.gz reflash/
-	mv zip/reflash.tar.gz ./reflash-board.tar.gz
-	rm -rf zip
-
-package-board:
-	rm -rf zip
-	mkdir -p zip/reflash/bin
-	mkdir -p zip/reflash/reflash
-	cp reflash/*.py zip/reflash/reflash
-	mkdir -p zip/reflash/server
-	cp -r server/*.py zip/reflash/server
-	cp -r board/dist zip/reflash/server
-	cp bin/prod/* zip/reflash/bin
-	cp -r systemd zip/reflash
-	mkdir zip/reflash/scripts
-	cp scripts/install_reflash_board.sh zip/reflash/scripts
-	echo "v0.2.0" > zip/reflash/reflash.version
-
-upload-tar:
-	scp reflash.tar.gz debian@recore.local:/usr/src/
-
-upload-tar-board:
-	scp reflash-board.tar.gz debian@recore.local:/home/debian
-
-tests:
-	python3 -m pytest tests
-
-image:
-	make build
-	make build-go
-	sudo ./mkimage.sh
+	scp reflash/reflash debian@${REMOTE}:/usr/local/bin
 
 docker:
 	mkdir -p output
@@ -120,6 +82,24 @@ docker:
 	cp reflash/Roboto-Light.ttf docker-reflash/reflash
 	docker container prune -f
 	cd docker-reflash; docker build -t docker-reflash .
-	cd docker-reflash; docker container run -v /dev/:/dev -v $(PWD)/output:/output --privileged=true --name reflash docker-reflash
+	cd docker-reflash; docker container run --rm -v /dev/:/dev -v $(PWD)/output:/output --privileged=true --name reflash docker-reflash
 
-.PHONY: tests
+# Flash the most recently built image to a USB drive (replaces Balena Etcher).
+# Defaults to /dev/sdb; override with: make flash DRIVE=/dev/sdX
+DRIVE ?= /dev/sda
+IMAGE := $(shell ls -t output/*.img.xz 2>/dev/null | head -1)
+
+flash:
+	@test -n "$(IMAGE)" || { echo "No image found in output/ — run 'make docker' first"; exit 1; }
+	@test -b "$(DRIVE)" || { echo "$(DRIVE) is not a block device"; exit 1; }
+	@test "$$(cat /sys/block/$(notdir $(DRIVE))/removable 2>/dev/null)" = "1" || \
+		{ echo "Refusing: $(DRIVE) is not a removable drive"; exit 1; }
+	@echo "Flashing $(IMAGE)"
+	@echo "      to $(DRIVE):"
+	@lsblk -o NAME,SIZE,TRAN,MODEL,MOUNTPOINTS $(DRIVE)
+	@read -p "This will ERASE all data on $(DRIVE). Type YES to continue: " a; [ "$$a" = YES ] || { echo "Aborted."; exit 1; }
+	@for p in $(DRIVE)*; do sudo umount "$$p" 2>/dev/null || true; done
+	xz -dc $(IMAGE) | sudo dd of=$(DRIVE) bs=4M conv=fsync oflag=direct status=progress
+	sync
+	@echo "Done. Safe to remove $(DRIVE)."
+

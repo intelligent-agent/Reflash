@@ -21,3 +21,13 @@ To start the npm client/Vue frontend
 make run-go
 make dev-client
 ```
+
+### Tests to run on a new version
+- [x] A Rebuild file can be uploaded
+- [x] A Rebuild file can be installed from github
+- [x] A Rebuild file can be downloaded
+- [x] A Rebuild file can be installed from local/USB
+- [x] A fresh OS comes up as an Access Point
+- [x] A Wifi access point can be connected to
+- [x] Storing settings works
+

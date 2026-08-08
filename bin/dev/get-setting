@@ -1,0 +1,16 @@
+#!/bin/bash
+
+KEY=$1
+
+SETTINGS_FILE="/opt/reflash/rebuild-settings"
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+get_setting(){
+    cat "${SETTINGS_FILE}" | grep "${KEY}" | cut -d '=' -f 2
+}
+
+get_setting

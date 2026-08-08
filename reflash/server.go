@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -43,12 +44,26 @@ type GetSerialNumber struct {
 	SerialNumber string `json:"serial_number"`
 }
 
+type GetWifi struct {
+	SSID     string `json:"SSID"`
+	Password string `json:"password"`
+}
+
+type AccessPoint struct {
+	Frequency string `json:"frequency"`
+	Signal    string `json:"signal"`
+	Flags     string `json:"flags"`
+	SSID      string `json:"SSID"`
+}
+
 type Options struct {
-	Darkmode       bool `json:"darkmode"`
-	RebootWhenDone bool `json:"rebootWhenDone"`
-	EnableSsh      bool `json:"enableSsh"`
-	Magicmode      bool `json:"magicmode"`
-	ScreenRotation int  `json:"screenRotation"`
+	Darkmode       bool   `json:"darkmode"`
+	RebootWhenDone bool   `json:"rebootWhenDone"`
+	EnableSsh      bool   `json:"enableSsh"`
+	Magicmode      bool   `json:"magicmode"`
+	ScreenRotation int    `json:"screenRotation"`
+	WifiSSID       string `json:"SSID"`
+	WifiPSK        string `json:"PSK"`
 }
 
 type Download struct {
@@ -88,13 +103,19 @@ type State struct {
 	Error      string   `json:"error"`
 	IPs        []string `json:"ips"`
 	File       *os.File
+	sync.Mutex
 }
 
 type Chunk struct {
 	Encoded string `json:"chunk"`
 }
 
-type Settings struct {
+type WifiStatus struct {
+	Connected bool   `json:"connected"`
+	SSID      string `json:"ssid"`
+	IP        string `json:"ip"`
+	Device    string `json:"device"`
+	State     string `json:"state"`
 }
 
 const (
@@ -108,6 +129,7 @@ const (
 	FINISHED        = "FINISHED"
 	CANCELLED       = "CANCELLED"
 	ERROR           = "ERROR"
+	SAVING          = "SAVING"
 )
 
 const (
@@ -122,6 +144,7 @@ var oldState *State
 var oldRotation int
 
 var static_dir string
+var binDir string
 var images_folder string
 var options_file string
 var log_file string
@@ -131,24 +154,40 @@ var last_size_check time.Time
 var bytes_last int
 var timeStart time.Time
 var cancelFunc context.CancelFunc
-var stateMutex sync.Mutex
-var saveOptionsWhenIdle bool
+var isDirty bool
 var env string
+var optionsLock sync.Mutex
+var (
+	cachedAccessPoints []AccessPoint
+	isScanning         bool
+	scanMutex          sync.Mutex
+)
+var (
+	isConnecting bool
+	connectError error
+	connectMutex sync.Mutex
+)
 
 func ServerInit() {
 	env = os.Getenv("APP_ENV")
 	if env == "dev" {
 		static_dir = "../client/dist"
+		binDir = "../bin/dev"
 		images_folder = "/opt/reflash/images"
 		options_file = "../.tmp/opt/options.cfg"
 		log_file = "/var/log/reflash.log"
 		http_port = ":8080"
 	} else {
 		static_dir = "/var/www/html/reflash/dist"
+		binDir = "/usr/local/bin"
 		images_folder = "/mnt/usb/images"
 		options_file = "/mnt/usb/options.cfg"
 		log_file = "/var/log/reflash.log"
 		http_port = ":80"
+	}
+	// Allow tests (and ad-hoc runs) to point the helper scripts elsewhere.
+	if d := os.Getenv("REFLASH_BIN_DIR"); d != "" {
+		binDir = d
 	}
 
 	state = &State{
@@ -166,9 +205,14 @@ func ServerInit() {
 	expandUsb()
 	mountUsb(MODE_RO)
 	loadOptions()
+	bringupWifi()
 	updateDisplay()
+	startWatchdog()
+	if env != "dev" {
+		go serveSerialControl("/dev/ttyGS0")
+	}
 
-	timer1 := time.NewTimer(10 * time.Second)
+	timer1 := time.NewTimer(3 * time.Second)
 	go func() {
 		<-timer1.C
 		logInfo("Updating IPs")
@@ -211,6 +255,14 @@ func ServerInit() {
 	http.HandleFunc("/api/update_config", updateConfig)
 	http.HandleFunc("/api/is_config_present", isConfigPresent)
 	http.HandleFunc("/api/get_serial_number", getSerialNumber)
+
+	http.HandleFunc("/api/get_wifi", getWifi)
+	http.HandleFunc("/api/get_wifi_status", getWifiStatus)
+	http.HandleFunc("/api/wifi_start_scan", startScanWifi)
+	http.HandleFunc("/api/wifi_poll_scan", getWifiScanResults)
+	http.HandleFunc("/api/wifi_start_connect", startConnectWifi)
+	http.HandleFunc("/api/wifi_poll_connect", pollConnectWifi)
+
 	log.Fatal(http.ListenAndServe(http_port, nil))
 }
 
@@ -235,32 +287,196 @@ func getSerialNumber(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(get_serial_number)
 }
 
+func getWifi(w http.ResponseWriter, r *http.Request) {
+
+	ssid, _, _ := runCommand2("get-setting", "WIFI_SSID")
+
+	var get_wifi *GetWifi = &GetWifi{
+		SSID: strings.TrimSpace(ssid),
+	}
+	json.NewEncoder(w).Encode(get_wifi)
+}
+
+func bringupWifi() {
+	// If we have saved credentials, try to connect immediately
+	if options.WifiSSID != "" && options.WifiPSK != "" {
+		logInfo("Boot: Attempting auto-connect to " + options.WifiSSID)
+		runCommand2("wifi-connect", options.WifiSSID, options.WifiPSK)
+	} else {
+		logInfo("Boot: No SSID found, trying auto bring-up")
+		runCommand2("wifi-bringup")
+	}
+}
+func startScanWifi(w http.ResponseWriter, r *http.Request) {
+	scanMutex.Lock()
+	if isScanning {
+		scanMutex.Unlock()
+		w.WriteHeader(http.StatusAccepted) // 202: Already working on it
+		return
+	}
+	isScanning = true
+	scanMutex.Unlock()
+
+	// Kick off the heavy lifting in a goroutine
+	go func() {
+		logInfo("WiFi Scan triggered...")
+
+		// This is your existing logic, moved into a background task
+		scan_results := runCommandReturnString("wifi-scan")
+
+		var temp_aps []AccessPoint
+		lines := strings.Split(scan_results, "\n")
+		isDataZone := false
+
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "---SCAN_RESULTS_START---" {
+				isDataZone = true
+				continue
+			}
+			if line == "---SCAN_RESULTS_END---" {
+				isDataZone = false
+				break
+			}
+			if isDataZone && line != "" {
+				parts := strings.Split(line, "|")
+				if len(parts) >= 3 {
+					temp_aps = append(temp_aps, AccessPoint{
+						SSID:   parts[0],
+						Flags:  parts[1],
+						Signal: parts[2],
+					})
+				}
+			}
+		}
+
+		// Update the cache and flip the flag
+		scanMutex.Lock()
+		cachedAccessPoints = temp_aps
+		isScanning = false
+		scanMutex.Unlock()
+		logInfo("WiFi Scan complete.")
+	}()
+
+	// Return immediately so the UI stays responsive
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func getWifiScanResults(w http.ResponseWriter, r *http.Request) {
+	scanMutex.Lock()
+	defer scanMutex.Unlock()
+
+	if isScanning {
+		// HTTP 204 No Content tells the frontend "nothing yet, keep waiting"
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cachedAccessPoints)
+}
+
+func getWifiStatus(w http.ResponseWriter, r *http.Request) {
+	result := runCommandReturnString("wifi-present")
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(result))
+}
+
+func startConnectWifi(w http.ResponseWriter, r *http.Request) {
+	reqBody, _ := io.ReadAll(r.Body)
+	var get_wifi GetWifi
+	if err := json.Unmarshal(reqBody, &get_wifi); err != nil {
+		http.Error(w, "Invalid JSON", 400)
+		return
+	}
+
+	if len(strings.TrimSpace(get_wifi.Password)) < 8 {
+		http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
+
+	// 1. Update Global Options and lock memory
+	optionsLock.Lock()
+	options.WifiSSID = strings.TrimSpace(get_wifi.SSID)
+	options.WifiPSK = strings.TrimSpace(get_wifi.Password)
+	isDirty = true
+	optionsLock.Unlock()
+
+	// 2. Prepare Connection State
+	connectMutex.Lock()
+	if isConnecting {
+		connectMutex.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	isConnecting = true
+	connectError = nil // Reset previous errors
+	connectMutex.Unlock()
+
+	// 3. Run connection in background
+	go func() {
+		logInfo("Attempting to connect to: " + options.WifiSSID)
+
+		// This command usually takes down the AP and brings up the Station
+		_, _, err := runCommand2("wifi-connect", options.WifiSSID, options.WifiPSK)
+
+		connectMutex.Lock()
+		connectError = err
+		isConnecting = false
+		connectMutex.Unlock()
+
+		if err != nil {
+			logError("WiFi Connection failed: " + err.Error())
+		} else {
+			logInfo("WiFi Connection successful")
+		}
+	}()
+
+	// Respond immediately so Vue knows the process started
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func pollConnectWifi(w http.ResponseWriter, r *http.Request) {
+	connectMutex.Lock()
+	defer connectMutex.Unlock()
+
+	response := map[string]interface{}{
+		"isConnecting": isConnecting,
+		"error":        nil,
+	}
+
+	if connectError != nil {
+		response["error"] = connectError.Error()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
 func getOptions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(options)
 }
 
 func setOptions(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
-	json.Unmarshal(reqBody, &options)
-	if state.State == IDLE {
-		saveOptions()
-	} else {
-		logInfo("Options not saved because the disk is in use")
-		saveOptionsWhenIdle = true
-	}
-	updateDisplay()
+	lockSetOptions(reqBody)
 	json.NewEncoder(w).Encode(options)
 }
 
 func updateDisplay() {
-	stateMutex.Lock()
+	// Lazy init for paths that touch updateDisplay without going through
+	// ServerInit (e.g. tests that drive handleSerialCommand directly).
+	if oldState == nil {
+		oldState = &State{}
+	}
+	state.Lock()
 	if oldState.State != state.State || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
 		Draw(float32(state.Progress)/100, state.State, options.ScreenRotation, state.IPs)
 		oldState.State = state.State
 		oldState.Progress = state.Progress
 		oldRotation = options.ScreenRotation
 	}
-	stateMutex.Unlock()
+	state.Unlock()
 }
 
 func streamLog(w http.ResponseWriter, r *http.Request) {
@@ -303,6 +519,7 @@ func startDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func goDownload(ctx context.Context, filename string, url string) {
+	disarmReboot()
 	out, err := os.Create(images_folder + "/" + filename)
 	if err != nil {
 		panic(err)
@@ -384,11 +601,12 @@ func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func goUploadMagic() {
+	disarmReboot()
 	timeStart = time.Now()
 	logInfo("Starting magic upload at " + timeStart.Format("15:04:05"))
 	logInfo("Filename: " + state.Filename)
 
-	stdout, _, err := runCommand2("/usr/local/bin/flash-mkfifo")
+	stdout, _, err := runCommand2("flash-mkfifo")
 	if err != nil {
 		logError("Error encountered when setting up pipe: \n" + stdout)
 	}
@@ -441,16 +659,13 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	revision := runCommandReturnString("get-recore-revision")
-	stdout, _, err := runCommand2("/usr/local/bin/flash-cleanup", revision)
+	stdout, _, err := runCommand2("flash-cleanup", revision)
 	if err != nil {
 		logError("Error encountered during cleanup: \n" + stdout)
 		state.State = ERROR
 		state.Error = "An error was encountered during magic. Check log for details"
 	} else {
 		state.State = FINISHED
-	}
-	if saveOptionsWhenIdle {
-		saveOptions()
 	}
 }
 
@@ -491,9 +706,6 @@ func uploadFinish(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	state.State = FINISHED
-	if saveOptionsWhenIdle {
-		saveOptions()
-	}
 }
 
 func uploadCancel(w http.ResponseWriter, r *http.Request) {
@@ -528,11 +740,12 @@ func startMagic(w http.ResponseWriter, r *http.Request) {
 }
 
 func goMagic(url string) {
+	disarmReboot()
 	timeStart = time.Now()
 	logInfo(fmt.Sprintf("Starting magic at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Url %s", url))
 
-	stdout, _, err := runCommand2("/usr/local/bin/flash-direct", url)
+	stdout, _, err := runCommand2("flash-from-url", url)
 	if err != nil {
 		logError("Error encountered during magic: \n" + stdout)
 		state.State = ERROR
@@ -544,6 +757,8 @@ func goMagic(url string) {
 	logInfo(fmt.Sprintf("Magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 
 	state.State = FINISHED
+	armReboot()
+	updateDisplay()
 }
 
 func cancelMagic(w http.ResponseWriter, r *http.Request) {
@@ -574,12 +789,13 @@ func startBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func goBackup() {
+	disarmReboot()
 	path := images_folder + "/" + state.Filename
 
 	timeStart = time.Now()
 	logInfo(fmt.Sprintf("starting backup of %s at time %s", state.Filename, timeStart.Format("15:04:05")))
 
-	stdout, _, err := runCommand2("/usr/local/bin/backup-emmc", path)
+	stdout, _, err := runCommand2("backup-emmc", path)
 	if err != nil {
 		logError("Error encountered during backup: \n" + stdout)
 		mountUsb(MODE_RO)
@@ -617,7 +833,12 @@ func getBlockSize(file string) int {
 	return runCommandReturnInt("lsblk", "-n", "-d", "-o", "SIZE", "--bytes", file)
 }
 
-func getProgress(w http.ResponseWriter, r *http.Request) {
+// refreshProgress reads the active progress source (the flash-progress file
+// while installing/backing up/magicking, or the downloading file's size),
+// recomputes state.Progress + state.Bandwidth, and redraws the embedded
+// screen. Called from both the HTTP getProgress handler and the USB STATUS
+// dispatcher so both paths keep the on-board display alive.
+func refreshProgress() {
 	if state.State == INSTALLING || state.State == BACKUPING || state.State == MAGIC {
 		bytes := lastLine("/tmp/recore-flash-progress")
 		i, err := strconv.Atoi(bytes)
@@ -632,7 +853,9 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	state.Progress = (float64(state.BytesNow) / float64(state.BytesTotal)) * 100.0
+	if state.BytesTotal > 0 {
+		state.Progress = (float64(state.BytesNow) / float64(state.BytesTotal)) * 100.0
+	}
 	elapsed := time.Now().Sub(last_size_check).Seconds()
 	last_size_check = time.Now()
 	bytes_diff_mb := float32(state.BytesNow-bytes_last) / (1024 * 1024)
@@ -640,7 +863,10 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 	state.Bandwidth = bytes_diff_mb / float32(elapsed)
 
 	updateDisplay()
+}
 
+func getProgress(w http.ResponseWriter, r *http.Request) {
+	refreshProgress()
 	json.NewEncoder(w).Encode(state)
 	if state.State == FINISHED {
 		state.State = IDLE
@@ -704,13 +930,14 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 }
 
 func goInstall(filename string) {
+	disarmReboot()
 	path := images_folder + "/" + filename
 
 	timeStart = time.Now()
 	logInfo(fmt.Sprintf("starting install at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Filename %s", filename))
 
-	stdout, _, err := runCommand2("/usr/local/bin/flash-recore", path)
+	stdout, _, err := runCommand2("flash-from-file", path)
 	if err != nil {
 		logError("Error encountered during install: \n" + stdout)
 		state.State = ERROR
@@ -722,23 +949,39 @@ func goInstall(filename string) {
 	logInfo(fmt.Sprintf("Installation finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 
 	state.State = FINISHED
+	armReboot()
+	updateDisplay()
 }
 
 func getUncompressedSize(path string) int {
-	cmd := exec.Command("xz", "-l", path)
+	cmd := exec.Command("xz", "--robot", "-l", path)
 	stdout, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
-			logError(fmt.Sprintf("Command 'xz -l %s' returned exit code %v\n", path, exitError.ExitCode()))
+			logError(fmt.Sprintf("Command 'xz --robot -l %s' returned exit code %v\n", path, exitError.ExitCode()))
 			return 1
 		}
 	}
-	trimmed := string(stdout[:])
-	trimmed = strings.ReplaceAll(trimmed, " ", "")
-	trimmed = strings.ReplaceAll(trimmed, ",", "")
-	strs := strings.Split(trimmed, "MiB")
-	ret, err := strconv.ParseFloat(strs[1], 32)
-	return int(ret * 1024 * 1024)
+	return parseXzUncompressedSize(string(stdout[:]))
+}
+
+// parseXzUncompressedSize extracts the uncompressed byte count from
+// `xz --robot -l` output. The "totals" line is tab-separated with the
+// uncompressed size (exact bytes) in field 4, e.g.:
+//
+//	totals\t1\t1\t448\t2097152\t0.000\tCRC64\t0\t1
+//
+// This is unit-agnostic, unlike the human-readable `xz -l` table.
+func parseXzUncompressedSize(out string) int {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 5 && fields[0] == "totals" {
+			if n, err := strconv.Atoi(fields[4]); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 func lastLine(file string) string {
@@ -778,9 +1021,11 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	settings := "# Settings from Reflash\n" +
 		"SSH_ENABLED_ON_BOOT=" + strconv.FormatBool(options.EnableSsh) + "\n" +
 		"SSH_TIMEOUT=60\n" +
-		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10)
+		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10) + "\n" +
+		"WIFI_SSID='" + options.WifiSSID + "'\n" +
+		"WIFI_PSK='" + options.WifiPSK + "'"
 
-	runCommand2("/usr/local/bin/save-settings", settings)
+	runCommand2("save-settings", settings)
 	err = unmountUsb()
 	sendResponse(w, err)
 }
@@ -797,8 +1042,22 @@ func sendResponse(w http.ResponseWriter, err error) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// resolveCmd maps a Reflash helper-script name to its full path under binDir.
+// System utilities already on PATH (and any name given as an explicit path) are
+// returned unchanged.
+func resolveCmd(name string) string {
+	switch name {
+	case "pkill", "xz", "tail", "lsblk", "sync":
+		return name
+	}
+	if strings.ContainsRune(name, '/') {
+		return name
+	}
+	return filepath.Join(binDir, name)
+}
+
 func runCommandReturnBool(cmd_str string) bool {
-	cmd := exec.Command(cmd_str)
+	cmd := exec.Command(resolveCmd(cmd_str))
 	stdout, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
@@ -822,17 +1081,17 @@ func runCommandReturnString(cmd_str string) string {
 }
 
 func rebootBoard(w http.ResponseWriter, r *http.Request) {
-	_, _, err := runCommand2("/usr/local/bin/reboot-board")
+	_, _, err := runCommand2("reboot-board")
 	sendResponse(w, err)
 }
 
 func shutdownBoard(w http.ResponseWriter, r *http.Request) {
-	_, _, err := runCommand2("/usr/local/bin/shutdown-board")
+	_, _, err := runCommand2("shutdown-board")
 	sendResponse(w, err)
 }
 
 func isConfigPresent(w http.ResponseWriter, r *http.Request) {
-	_, _, err := runCommand2("/usr/local/bin/get-recore-revision")
+	_, _, err := runCommand2("get-recore-revision")
 	sendResponse(w, err)
 }
 
@@ -849,18 +1108,18 @@ func updateConfig(w http.ResponseWriter, r *http.Request) {
 	var data *UpdateConfigCommand = &UpdateConfigCommand{}
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
-	_, _, err := runCommand2("/usr/local/bin/create-recore-config", strconv.Itoa(data.Snr))
+	_, _, err := runCommand2("create-recore-config", strconv.Itoa(data.Snr))
 	sendResponse(w, err)
 }
 
 func cmdRotateScreen(rotation int, place string) error {
-	_, _, err := runCommand2("/usr/local/bin/rotate-screen", strconv.Itoa(rotation), place)
+	_, _, err := runCommand2("rotate-screen", strconv.Itoa(rotation), place)
 	return err
 }
 
 func setSshEnabled(is_enabled bool) error {
 	var err error
-	cmd := exec.Command("/usr/local/bin/set-ssh-enabled", strconv.FormatBool(is_enabled))
+	cmd := exec.Command(resolveCmd("set-ssh-enabled"), strconv.FormatBool(is_enabled))
 	if err := cmd.Run(); err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
 			log.Fatalf("Command returned exit code %v\n", exitError.ExitCode())
@@ -870,7 +1129,7 @@ func setSshEnabled(is_enabled bool) error {
 }
 
 func isUsbPresent(w http.ResponseWriter, r *http.Request) {
-	result := runCommandReturnBool("/usr/local/bin/is-usb-present")
+	result := runCommandReturnBool("is-usb-present")
 	var response *BinaryCommandResult = &BinaryCommandResult{
 		Result: result,
 	}
@@ -915,7 +1174,7 @@ func clearLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func expandUSB() error {
-	cmd := exec.Command("expand-usb")
+	cmd := exec.Command(resolveCmd("expand-usb"))
 	err := cmd.Run()
 	if err == nil {
 		logInfo("expand-usb returned error")
@@ -924,7 +1183,7 @@ func expandUSB() error {
 }
 
 func runCommand2(cmds ...string) (string, string, error) {
-	cmd := exec.Command(cmds[0], cmds[1:]...)
+	cmd := exec.Command(resolveCmd(cmds[0]), cmds[1:]...)
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
@@ -962,7 +1221,7 @@ func getRecoreRevision() string {
 func saveOptions() error {
 	var err error
 	mountUsb(MODE_RW)
-	content, err := toml.Marshal(options)
+	content, _ := toml.Marshal(options)
 	err = os.WriteFile(options_file, content, 0644)
 	logInfo("Options saved")
 	mountUsb(MODE_RO)
@@ -970,21 +1229,249 @@ func saveOptions() error {
 }
 
 func loadOptions() {
+	optionsLock.Lock()
+	defer optionsLock.Unlock()
+
 	content, err := os.ReadFile(options_file)
 	if err != nil {
 		logInfo("No options file found, creating default")
 		options = &Options{
 			Darkmode:       true,
-			RebootWhenDone: false,
-			EnableSsh:      false,
+			RebootWhenDone: true,
+			EnableSsh:      true,
 			ScreenRotation: 0,
 		}
-		saveOptions()
+		isDirty = true
 	} else {
 		toml.Unmarshal(content, &options)
+		logInfo("Options loaded from disk successfully")
 	}
 }
 
 func expandUsb() {
-	runCommand2("/usr/local/bin/expand-usb")
+	runCommand2("expand-usb")
+}
+
+func lockSetOptions(opts []byte) error {
+	optionsLock.Lock()
+	defer optionsLock.Unlock()
+
+	err := json.Unmarshal(opts, &options)
+	if err != nil {
+		return err
+	}
+
+	isDirty = true
+	logInfo("Options updated in memory and marked dirty")
+
+	return nil
+}
+
+func lockSaveOptions() {
+	// 1. Pre-check: Is there actually work to do?
+	optionsLock.Lock()
+	if !isDirty {
+		optionsLock.Unlock()
+		return // Nothing changed, go back to sleep
+	}
+	optionsLock.Unlock()
+
+	// 2. State-check: Is the system busy with something else?
+	state.Lock()
+	if state.State != IDLE {
+		state.Unlock()
+		// We leave isDirty = true so the watchdog tries again next tick
+		return
+	}
+
+	// 3. Begin the Save Sequence
+	state.State = SAVING // Lock the state so others know the disk is busy
+	state.Unlock()
+
+	logInfo("Starting thread-safe save operation...")
+
+	// 4. Perform the Hardware I/O
+	// This calls your existing logic: mount RW -> write -> mount RO
+	err := saveOptions()
+
+	// 5. Cleanup and Reset
+	state.Lock()
+	if err != nil {
+		logError("Save failed: " + err.Error())
+		// Note: we don't reset isDirty here so it retries later
+	} else {
+		isDirty = false
+		logInfo("Save successful, dirty flag cleared.")
+	}
+
+	state.State = IDLE
+	state.Unlock()
+	updateDisplay()
+}
+
+func startWatchdog() {
+	// Check every 2 seconds
+	ticker := time.NewTicker(2 * time.Second)
+
+	go func() {
+		for range ticker.C {
+			// This is the function we built in the previous step
+			lockSaveOptions()
+			// Reboot into the freshly flashed image once the USB is pulled.
+			checkAutoReboot()
+		}
+	}()
+}
+
+// rebootArmed is set when a flash to the eMMC (magic or file install) finishes
+// successfully. The watchdog then reboots the board once the user removes the
+// USB drive — so the post-flash reboot no longer depends on a browser polling
+// is_usb_present from the web UI.
+var (
+	rebootMutex sync.Mutex
+	rebootArmed bool
+)
+
+func armReboot()    { rebootMutex.Lock(); rebootArmed = true; rebootMutex.Unlock() }
+func disarmReboot() { rebootMutex.Lock(); rebootArmed = false; rebootMutex.Unlock() }
+func isRebootArmed() bool {
+	rebootMutex.Lock()
+	defer rebootMutex.Unlock()
+	return rebootArmed
+}
+
+func usbPresent() bool {
+	return runCommandReturnBool("is-usb-present")
+}
+
+// checkAutoReboot reboots the board when a flash has finished, the user opted
+// into "reboot when done", and the USB drive has been removed. It fires at most
+// once per flash (disarmed immediately before rebooting).
+func checkAutoReboot() {
+	if !isRebootArmed() {
+		return
+	}
+
+	optionsLock.Lock()
+	rebootWhenDone := options.RebootWhenDone
+	optionsLock.Unlock()
+	if !rebootWhenDone {
+		return
+	}
+
+	// Only reboot from a resting state. A flash finishes as FINISHED, but
+	// getProgress flips that to IDLE on the first poll, so accept both; any
+	// active operation (MAGIC/INSTALLING/...) must block the reboot. The arm
+	// flag (set on flash success, cleared on every operation start) is the real
+	// guard against rebooting after a non-flash op.
+	state.Lock()
+	resting := state.State == FINISHED || state.State == IDLE
+	state.Unlock()
+	if !resting {
+		return
+	}
+
+	if usbPresent() {
+		return // wait for the user to remove the USB drive
+	}
+
+	disarmReboot()
+	logInfo("Flash finished and USB removed; rebooting into the new image")
+	runCommand2("reboot-board")
+}
+
+// handleSerialCommand parses one line of the USB control protocol (spoken over
+// the ACM gadget on /dev/ttyGS0) and returns the response line(s) to write
+// back. It drives the same flash state machine the HTTP API uses, so there is
+// no duplicate flashing logic.
+//
+//	LIST          -> "IMG <name> <bytes>" per local image, then "OK"
+//	STATUS        -> "STATE <state> PROGRESS <pct>"
+//	FLASH <file>  -> starts a file install; "OK flashing <file>" or "ERR ..."
+//	CANCEL        -> cancels an in-progress flash; "OK"
+//
+// startInstall launches a file install in the background. It's a package var so
+// tests can stub it without spawning the real flashing goroutine.
+var startInstall = func(filename string) { go goInstall(filename) }
+
+// serveSerialControl runs the USB control protocol over the ACM gadget tty.
+// flasher-pi sees this as /dev/ttyACM0 and can list/flash/poll without the
+// network. The tty only exists once the gadget has bound, and goes away when
+// the host disconnects, so we (re)open it in a retry loop.
+func serveSerialControl(devPath string) {
+	for {
+		f, err := os.OpenFile(devPath, os.O_RDWR, 0)
+		if err != nil {
+			time.Sleep(2 * time.Second) // wait for the gadget tty to appear
+			continue
+		}
+		logInfo("USB control channel open on " + devPath)
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			for _, resp := range handleSerialCommand(line) {
+				fmt.Fprintf(f, "%s\r\n", resp)
+			}
+		}
+		f.Close() // EOF / host disconnected — reopen.
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func handleSerialCommand(line string) []string {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return nil
+	}
+
+	switch strings.ToUpper(fields[0]) {
+	case "LIST":
+		out := []string{}
+		for _, img := range getLocalImages() {
+			out = append(out, fmt.Sprintf("IMG %s %d", img.Name, img.Size))
+		}
+		return append(out, "OK")
+
+	case "STATUS":
+		// Refresh the same way the HTTP getProgress handler does so the
+		// embedded screen keeps updating when only the USB protocol is in use.
+		refreshProgress()
+		state.Lock()
+		s, p := state.State, state.Progress
+		state.Unlock()
+		return []string{fmt.Sprintf("STATE %s PROGRESS %d", s, int(p))}
+
+	case "FLASH":
+		if len(fields) < 2 {
+			return []string{"ERR missing filename"}
+		}
+		filename := fields[1]
+		if _, err := os.Stat(images_folder + "/" + filename); err != nil {
+			return []string{"ERR no such image: " + filename}
+		}
+		state.Lock()
+		busy := state.State != IDLE && state.State != FINISHED &&
+			state.State != ERROR && state.State != CANCELLED
+		if busy {
+			s := state.State
+			state.Unlock()
+			return []string{"ERR busy: " + s}
+		}
+		state.Filename = filename
+		state.BytesTotal = getUncompressedSize(images_folder + "/" + filename)
+		state.State = INSTALLING
+		state.Unlock()
+		startInstall(filename)
+		return []string{"OK flashing " + filename}
+
+	case "CANCEL":
+		runCommand2("pkill", "-f", "xz", "-9")
+		return []string{"OK"}
+
+	default:
+		return []string{"ERR unknown command: " + fields[0]}
+	}
 }

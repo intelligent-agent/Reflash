@@ -1,0 +1,42 @@
+#!/bin/bash
+
+EMMC=/dev/mmcblk2
+PROVISIONING_FILE="/mnt/emmc/root/provisioning.sh"
+
+info() {
+    echo "[info] $1" >> /var/log/reflash.log
+    echo "$1"
+}
+
+usage(){
+    echo "Usage: $0"
+}
+
+update_provisioning(){
+    mkdir -p /mnt/emmc
+    umount -q /mnt/emmc/
+    mount "${EMMC}p2" /mnt/emmc
+
+cat > $PROVISIONING_FILE <<EOF
+#!/bin/bash
+set -e
+echo "Provisioning started"
+
+sudo -u printer bash <<'INNER_EOF'
+  cd /home/debian
+  if [ ! -d klipper-led_effect ]; then
+    git clone https://github.com/julianschill/klipper-led_effect.git
+  fi
+  cd klipper-led_effect
+  ./install-led_effect.sh
+INNER_EOF
+EOF
+
+    chmod +x $PROVISIONING_FILE
+
+    umount /mnt/emmc
+}
+
+info "Adding provisioning script"
+
+update_provisioning

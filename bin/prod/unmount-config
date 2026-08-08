@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -euo pipefail
+
+MOUNT_POINT="/mnt/config"
+
+if mountpoint -q "$MOUNT_POINT"; then
+    systemd-umount -q "$MOUNT_POINT"
+else
+    exit 0
+fi

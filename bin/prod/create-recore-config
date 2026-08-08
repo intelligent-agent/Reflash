@@ -45,7 +45,7 @@ info "Hardware revision: ${HW_REV}"
 info "Serial number: ${SNR}"
 
 if [[ ! `wget -NS --spider $URL 2>&1 | grep 'HTTP/1.1 200 OK'` ]]; then
-  echo "Unable to find the calibration file at the remote location: $URL". 
+  echo "Unable to find the calibration file at the remote location: $URL".
   exit 2
 fi
 
@@ -62,17 +62,13 @@ printf "g\nn\n\n\n\nw\n" | fdisk /dev/${DEV}boot0
 partprobe
 mkfs.ext4 -E nodiscard /dev/${DEV}boot0p1
 
-mkdir -p /mnt/config
-if ! grep -qs '/mnt/config ' /proc/mounts; then
-    echo "Mounting /mnt/config"
-    mount /dev/${DEV}boot0p1 /mnt/config/
-fi
+mount-config
 echo "$SNR" > /mnt/config/serial_number
 
 info "Downloading calibration file ${FILE}"
 wget $URL
 mv ${FILE} /mnt/config
 
-umount -q /mnt/config/
+unmount-config
 echo 1 > "/sys/block/${DEV}boot0/force_ro"
 info "Done"

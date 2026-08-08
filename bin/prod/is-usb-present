@@ -2,7 +2,11 @@
 
 set -e
 
-if [ -b /dev/sda1 ]; then
+# Check for the whole USB disk rather than a specific partition: the data
+# partition is /dev/sda2 on current images and partition numbering can vary,
+# but the disk node (/dev/sda) appears whenever a USB drive is attached and
+# disappears as soon as it is removed.
+if [ -b /dev/sda ]; then
     echo "true"
 else
     echo "false"

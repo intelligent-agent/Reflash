@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# Defaults match the on-board layout; tests override via env to run hermetically.
+INTERFACE="${WIFI_INTERFACE:-wlan0}"
+SYS_NET="${SYS_NET:-/sys/class/net}"
+IWD_DIR="${IWD_DIR:-/var/lib/iwd}"
+LOG_FILE="${LOG_FILE:-/var/log/reflash.log}"
+
+SSID="$1"
+PASS="$2"
+
+info() {
+    echo "[info] $1" >> "$LOG_FILE"
+    echo "$1"
+}
+
+if [ -z "$SSID" ] || [ -z "$PASS" ]; then
+    echo "Usage: $0 <SSID> <Password>"
+    exit 1
+fi
+
+# No WiFi adapter present (e.g. no USB dongle): a connection is impossible, so
+# fail with a non-zero status the server can surface to the user.
+if [ ! -d "$SYS_NET/$INTERFACE" ]; then
+    info "No WiFi adapter ($INTERFACE) present. Cannot connect to $SSID."
+    exit 1
+fi
+
+info "Attempting to connect to SSID: $SSID"
+
+# 1. Ensure we are in Station mode
+CURRENT_MODE=$(iwctl device "$INTERFACE" show | grep "Mode" | awk '{print $NF}' | sed $'s/\x1b\[[0-9;]*m//g')
+
+if [ "$CURRENT_MODE" == "ap" ]; then
+    info "Switching from AP to Station mode..."
+    iwctl ap "$INTERFACE" stop 2>/dev/null
+    iwctl device "$INTERFACE" set-property Mode station
+    sleep 2
+fi
+
+# 2. Create the iwd profile
+info "Provisioning iwd profile for $SSID..."
+mkdir -p "$IWD_DIR"
+cat <<IWD_EOF > "$IWD_DIR/$SSID.psk"
+[Settings]
+AutoConnect=true
+
+[Security]
+Passphrase=$PASS
+IWD_EOF
+
+# 3. PRIMING: Trigger a scan so iwd "discovers" the new network
+info "Scanning to discover $SSID..."
+iwctl station "$INTERFACE" scan
+sleep 3 # Give the hardware time to find the beacon
+
+# 4. Trigger the connection
+info "Requesting iwd to connect..."
+# We try up to 3 times in case the scan was slow
+for i in {1..3}; do
+    if iwctl station "$INTERFACE" connect "$SSID"; then
+        info "Connection command accepted."
+        break
+    fi
+    info "Attempt $i: Network not ready yet, retrying..."
+    sleep 2
+    if [ $i -eq 3 ]; then
+        info "Connection command failed after 3 attempts."
+        exit 1
+    fi
+done
+
+# 5. Wait and verify IP address
+info "Waiting for DHCP..."
+MAX_RETRIES=10
+COUNT=0
+while [ $COUNT -lt $MAX_RETRIES ]; do
+    IP=$(ip addr show "$INTERFACE" | grep "inet " | awk '{print $2}')
+    if [ -n "$IP" ]; then
+        info "Success! Connected with IP: $IP"
+        exit 0
+    fi
+    sleep 1
+    ((COUNT++))
+done
+
+info "Timed out waiting for IP address."
+exit 1
+

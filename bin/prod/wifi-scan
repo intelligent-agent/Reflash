@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# Defaults match the on-board layout; tests override via env to run hermetically.
+INTERFACE="${WIFI_INTERFACE:-wlan0}"
+SYS_NET="${SYS_NET:-/sys/class/net}"
+AP_PROFILE="Recore"
+LOG_FILE="${LOG_FILE:-/var/log/reflash.log}"
+
+info() {
+    echo "[info] $1" >> "$LOG_FILE"
+    echo "$1"
+}
+
+# 0. No WiFi adapter present (e.g. no USB dongle): return an empty result set.
+if [ ! -d "$SYS_NET/$INTERFACE" ]; then
+    info "No WiFi adapter ($INTERFACE) present. No networks to scan."
+    echo "---SCAN_RESULTS_START---"
+    echo "---SCAN_RESULTS_END---"
+    exit 0
+fi
+
+# 1. Detect mode
+ORIGINAL_MODE=$(iwctl device "$INTERFACE" show | grep "Mode" | awk '{print $NF}')
+info "WiFi Scan initiated. Current mode: $ORIGINAL_MODE"
+
+# 2. Switch mode if needed
+if [ "$ORIGINAL_MODE" == "ap" ]; then
+    info "Temporarily stopping AP to perform scan..."
+    iwctl ap "$INTERFACE" stop 2>/dev/null
+    iwctl device "$INTERFACE" set-property Mode station
+    sleep 2
+fi
+
+# 3. Perform scan
+info "Scanning for networks..."
+iwctl station "$INTERFACE" scan 2>/dev/null
+sleep 3
+
+# 4. Structured Output
+echo "---SCAN_RESULTS_START---"
+# This pipeline:
+# 1. sed: Nukes ANSI escape codes (the \x1B[...m stuff)
+# 2. sed: Removes the > marker
+# 3. awk: Parses the columns safely
+iwctl station "$INTERFACE" get-networks | \
+    sed $'s/\x1b\[[0-9;]*m//g' | \
+    sed 's/>//g' | \
+    awk '
+    /---/ || /Available networks/ || /Network name/ {next}
+    NF >= 3 {
+        sig = $NF
+        sec = $(NF-1)
+        $NF=""; $(NF-1)=""
+        gsub(/[ \t]+$/, "", $0)
+        gsub(/^[ \t]+/, "", $0)
+        if ($0 != "") print $0 "|" sec "|" sig
+    }'
+echo "---SCAN_RESULTS_END---"
+
+# 5. Restore mode
+if [ "$ORIGINAL_MODE" == "ap" ]; then
+    info "Restoring AP mode..."
+    iwctl device "$INTERFACE" set-property Mode ap
+    iwctl ap "$INTERFACE" start-profile "$AP_PROFILE" 2>/dev/null
+    info "AP mode restored."
+fi
+

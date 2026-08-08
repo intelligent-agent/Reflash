@@ -11,6 +11,7 @@ info() {
 
 update_settings(){
     echo -e "$CONTENT" > "$SETTINGS_FILE"
+    chmod 600 "$SETTINGS_FILE"
 }
 
 info "Updating settings"

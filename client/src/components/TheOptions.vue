@@ -50,6 +50,13 @@
           </w-button>
         </div>
         <w-divider class="my6 mx-3"></w-divider>
+        <h4>Wi-Fi credentials</h4>
+        <div>
+          <w-button xl outline class="ma2" @click="$emit('open-wifi')">
+            <span>Set Wi-Fi credentials</span>
+          </w-button>
+        </div>
+        <w-divider class="my6 mx-3"></w-divider>
         <h4>Actions</h4>
         <div>
           <w-button xl outline class="ma2" @click="$emit('reboot-board')">

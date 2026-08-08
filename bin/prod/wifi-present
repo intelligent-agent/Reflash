@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# 1. Get the device line and strip terminal formatting codes
+# 2. We look for the line containing the MAC address (5 colons)
+RAW_LINE=$(iwctl device list | sed 's/\x1b\[[0-9;]*m//g' | grep -E "([0-9a-fA-F]{2}:){5}" | head -n 1)
+
+if [ -z "$RAW_LINE" ]; then
+    echo '{"present": false}'
+    exit 1
+fi
+
+# 3. Use awk to extract the specific columns
+# iwd columns are: Name(1) Address(2) Powered(3) Adapter(4) Mode(5)
+NAME=$(echo "$RAW_LINE" | awk '{print $1}')
+ADDR=$(echo "$RAW_LINE" | awk '{print $2}')
+POWR=$(echo "$RAW_LINE" | awk '{print $3}')
+ADPT=$(echo "$RAW_LINE" | awk '{print $4}')
+MODE=$(echo "$RAW_LINE" | awk '{print $5}')
+
+# 4. Output as a JSON object
+printf '{"present": true, "name": "%s", "mac": "%s", "powered": "%s", "adapter": "%s", "mode": "%s"}\n' \
+    "$NAME" "$ADDR" "$POWR" "$ADPT" "$MODE"
+
+exit 0
