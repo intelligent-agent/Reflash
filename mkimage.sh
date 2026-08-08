@@ -93,17 +93,19 @@ SUBSYSTEM=="udc", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-gadget-
 # network for an interactive console.
 EOF
 
-# This heredoc is nested inside the outer, unquoted `<<ENDOFDEB` block below
-# (which needs to stay unquoted - it expands ${KERNEL_DEB} from mkimage.sh's
-# own scope). An unquoted outer heredoc expands its *entire* body, including
-# text that looks like a nested quoted heredoc, before any of it reaches the
-# chroot'd bash that would otherwise honor that inner quoting. So $1,
-# $(seq 1 50), $GADGET_DIR, $UDC_NAME etc. below are backslash-escaped to
-# survive that outer pass as literal text; the (still-quoted) `<<'EOF'` then
-# ensures nothing else in this block gets expanded either. Dropping the
-# escapes here previously produced `case ""` (from unbound $1) and an
-# unrolled `for` list (from $(seq 1 50) actually running), and the gadget
-# never came up.
+# Careful: this heredoc is nested inside the outer, unquoted ENDOFDEB block
+# below (which must stay unquoted, since it expands the KERNEL_DEB variable
+# from mkimage.sh's own scope). An unquoted outer heredoc expands its entire
+# body - including text that looks like a nested quoted heredoc, and even
+# text inside shell comment lines like this one - before any of it reaches
+# the chroot'd bash that would otherwise treat this block as fully literal.
+# Do not write a bare dollar sign or a backtick anywhere in this comment or
+# in the script body below: both trigger expansion (variable substitution or
+# command substitution) during that outer pass. Every intentional variable
+# or command-substitution reference in the body below is backslash-escaped
+# so it survives that pass as literal text instead. Getting this wrong
+# previously produced an empty case pattern and an unrolled for-loop list,
+# and the gadget never came up.
 cat <<'EOF' > /usr/local/bin/usb-gadget-init.sh
 #!/bin/bash
 

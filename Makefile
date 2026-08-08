@@ -86,7 +86,7 @@ docker:
 
 # Flash the most recently built image to a USB drive (replaces Balena Etcher).
 # Defaults to /dev/sdb; override with: make flash DRIVE=/dev/sdX
-DRIVE ?= /dev/sdb
+DRIVE ?= /dev/sda
 IMAGE := $(shell ls -t output/*.img.xz 2>/dev/null | head -1)
 
 flash:
