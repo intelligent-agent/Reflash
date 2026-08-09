@@ -578,7 +578,11 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	timeStart = time.Now()
 	logInfo("Starting upload at " + timeStart.Format("15:04:05"))
 	logInfo("Filename: " + state.Filename)
-	os.Create(images_folder + "/" + state.Filename)
+	f, err := os.Create(images_folder + "/" + state.Filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	state.File = f
 
 	sendResponse(w, nil)
 }
@@ -674,25 +678,26 @@ func uploadChunk(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &chunk)
 
-	decoded, err := base64.StdEncoding.DecodeString(chunk.Encoded[37:len(chunk.Encoded)])
-
-	path := images_folder + "/" + state.Filename
-
 	if state.State == CANCELLED {
 		response := map[string]bool{"success": false}
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	decoded, err := base64.StdEncoding.DecodeString(chunk.Encoded[37:len(chunk.Encoded)])
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, "Failed to decode base64", http.StatusBadRequest)
+		return
 	}
-	if _, err := f.Write(decoded); err != nil {
-		log.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		log.Fatal(err)
+
+	// state.File is opened once in uploadStart and closed in
+	// uploadFinish/uploadCancel - opening, writing and closing it on
+	// every chunk here was real per-chunk overhead (syscalls plus an
+	// implicit flush on close), especially costly against the
+	// FAT-formatted USB target.
+	if _, err := state.File.Write(decoded); err != nil {
+		http.Error(w, "Failed to write chunk to file", http.StatusInternalServerError)
+		return
 	}
 	state.BytesNow += len(decoded)
 	state.Progress = float64(state.BytesNow) * 100 / float64(state.BytesTotal)
@@ -702,6 +707,12 @@ func uploadChunk(w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadFinish(w http.ResponseWriter, r *http.Request) {
+	if state.File != nil {
+		if err := state.File.Close(); err != nil {
+			log.Fatal(err)
+		}
+		state.File = nil
+	}
 	mountUsb(MODE_RO)
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
