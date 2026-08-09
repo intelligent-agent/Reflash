@@ -987,7 +987,12 @@ func parseXzUncompressedSize(out string) int {
 func lastLine(file string) string {
 	out, err := exec.Command("tail", "-n1", file).Output()
 	if err != nil {
-		log.Fatal(err)
+		// Expected before the progress file exists yet (e.g. right at
+		// the start of a flash, or in tests) - the caller already
+		// falls back to 0 on a non-numeric result. log.Fatal here
+		// used to kill the whole process on this, not just this one
+		// read.
+		return ""
 	}
 	return strings.TrimSpace(string(out[:]))
 }
