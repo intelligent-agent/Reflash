@@ -60,7 +60,7 @@ update_weston(){
         echo "Misssig file: ${CONFIG_FILE}"
     else
         case "$RELEASE" in
-            11 | 12)
+            11 | 12 | 13)
                 sed -i "s/transform.*/transform=${ROT_WESTON_11}/" "${CONFIG_FILE}"
                 ;;
             10)
