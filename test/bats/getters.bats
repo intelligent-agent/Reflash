@@ -22,7 +22,7 @@ teardown() { teardown_sandbox; }
   mkdir -p "$REFLASH_CONFIG_DIR"
   echo "RC-0001-XYZ" > "$REFLASH_CONFIG_DIR/serial_number"
   stub_silent mount-config
-  stub_silent umount
+  stub_silent unmount-config
   run "$PROD_BIN/get-recore-serial-number"
   [ "$status" -eq 0 ]
   [ "$output" = "RC-0001-XYZ" ]

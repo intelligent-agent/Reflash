@@ -1,6 +1,9 @@
 #!/bin/bash
 
+set -euo pipefail
+
 SERIAL_NR=$1
+OFFSET=17408
 
 info() {
     echo "[info] $1" >> /var/log/reflash.log
@@ -52,23 +55,38 @@ fi
 info "Calibration file valid"
 
 DEV=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
+DEV_BOOT="/dev/${DEV}boot0"
 
 echo 0 > "/sys/block/${DEV}boot0/force_ro"
 
-info "Creating boot partition"
-dd if=/dev/zero of=/dev/${DEV}boot0
-partprobe
-printf "g\nn\n\n\n\nw\n" | fdisk /dev/${DEV}boot0
-partprobe
-mkfs.ext4 -E nodiscard /dev/${DEV}boot0p1
+# The kernel doesn't create a child partition node for eMMC boot
+# partitions (there's no ${DEV_BOOT}p1), and mount-config/other readers
+# loop-mount the raw device directly at a byte offset - so the
+# filesystem has to be created the same way, not via fdisk/mkfs on a
+# nonexistent partition node.
+info "Creating config filesystem"
+# Zeroing the whole device this way always ends in "No space left on
+# device" once dd hits the end of the block device - that's the
+# expected way it finishes, not a real failure.
+dd if=/dev/zero of="$DEV_BOOT" bs=1M || true
+LOOP=$(losetup -f --show -o "$OFFSET" "$DEV_BOOT")
+# metadata_csum (default-on in e2fsprogs 1.47) leaves no room for the
+# dir-leaf checksum once the filesystem picks a 1K block size, which it
+# does at this size - reads then fail with "Bad message". Disable it.
+mkfs.ext4 -F -q -O ^metadata_csum,^64bit -E nodiscard "$LOOP"
 
-mount-config
+# mount-config always mounts read-only (it's meant for readers); the
+# create path needs to write, so mount the loop device directly rather
+# than going through mount-config/unmount-config here.
+mkdir -p /mnt/config
+mount "$LOOP" /mnt/config
 echo "$SNR" > /mnt/config/serial_number
 
 info "Downloading calibration file ${FILE}"
-wget $URL
-mv ${FILE} /mnt/config
+wget -O "/mnt/config/${FILE}" "$URL"
 
-unmount-config
+sync
+umount /mnt/config
+losetup -d "$LOOP"
 echo 1 > "/sys/block/${DEV}boot0/force_ro"
 info "Done"

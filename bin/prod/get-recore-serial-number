@@ -6,4 +6,4 @@ CONFIG_DIR="${REFLASH_CONFIG_DIR:-/mnt/config}"
 
 mount-config
 cat "$CONFIG_DIR/serial_number"
-umount "$CONFIG_DIR/"
+unmount-config
