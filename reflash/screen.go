@@ -83,7 +83,7 @@ func ScreenInit() {
 
 	img = image.NewRGBA(image.Rect(0, 0, fb_min, fb_min))
 	ips := make([]string, 0)
-	Draw(0, "IDLE", 0, ips)
+	Draw(0, "IDLE", 0, ips, "")
 }
 
 func ScreenClose() {
@@ -92,7 +92,7 @@ func ScreenClose() {
 }
 
 // TODO: This is horrobly inefficient and should be optimized.
-func Draw(progress float32, state string, rot int, ips []string) {
+func Draw(progress float32, state string, rot int, ips []string, version string) {
 	// No framebuffer mapped → ScreenInit either failed (headless) or was
 	// never called (tests). Skip rendering entirely; updateDisplay still
 	// keeps its bookkeeping in sync.
@@ -115,6 +115,12 @@ func Draw(progress float32, state string, rot int, ips []string) {
 		drawText(img, "REFLASH", 50, (fb_min/2)+55)
 		for i, s := range ips {
 			drawText(img, s, 20, (fb_min/2)+125+(20*i))
+		}
+		// The screen is sometimes the only information available (e.g. no
+		// network reachable yet) - show the running version so it's visible
+		// without needing the web UI.
+		if version != "" {
+			drawText(img, version, 16, (fb_min/2)+125+(20*len(ips))+20)
 		}
 	} else {
 		if fb_min > 700 {

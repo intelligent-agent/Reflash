@@ -149,6 +149,7 @@ var images_folder string
 var options_file string
 var log_file string
 var http_port string
+var reflashVersion string
 
 var last_size_check time.Time
 var bytes_last int
@@ -201,6 +202,8 @@ func ServerInit() {
 		BytesTotal: 1,
 	}
 
+	reflashVersion = runCommandReturnString("get-reflash-version")
+
 	logInfo("-- Server started at " + time.Now().Format("15:04:05") + " --")
 	expandUsb()
 	mountUsb(MODE_RO)
@@ -220,10 +223,8 @@ func ServerInit() {
 		updateDisplay()
 	}()
 
-	version := runCommandReturnString("get-reflash-version")
-
 	fs := http.FileServer(http.Dir(static_dir))
-	fmt.Println("Starting Reflash go server " + version + " env '" + env + "'")
+	fmt.Println("Starting Reflash go server " + reflashVersion + " env '" + env + "'")
 	http.Handle("/", fs)
 	http.HandleFunc("/api/get_info", getInfo)
 	http.HandleFunc("/api/stream_log", streamLog)
@@ -471,7 +472,7 @@ func updateDisplay() {
 	}
 	state.Lock()
 	if oldState.State != state.State || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
-		Draw(float32(state.Progress)/100, state.State, options.ScreenRotation, state.IPs)
+		Draw(float32(state.Progress)/100, state.State, options.ScreenRotation, state.IPs, reflashVersion)
 		oldState.State = state.State
 		oldState.Progress = state.Progress
 		oldRotation = options.ScreenRotation
