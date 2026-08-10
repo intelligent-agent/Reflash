@@ -31,7 +31,38 @@ info "Overwriting block device $OUTFILE"
 info "Umounting /dev/mmcblk*"
 mount | grep '/dev/mmcblk' | cut -f 1 -d' ' | xargs -t -r -n 1 umount || true
 info "Starting flashing..."
-(wget -q -O - "$URL" | pv -f -n -b | xz -T 0 -d -c > "$OUTFILE") 2> /tmp/recore-flash-progress
+# pv's progress goes to /tmp/recore-flash-progress for the UI to poll - but
+# redirecting the whole pipeline's stderr there swallowed wget's and xz's
+# real error output too, leaving only "an unknown error" for the operator
+# (#59). Capture each stage's stderr separately instead, and report whichever
+# stage actually failed via PIPESTATUS.
+WGET_ERR="$(mktemp)"
+XZ_ERR="$(mktemp)"
+# -q also suppresses wget's error output, not just its progress noise -
+# needs to be silent on stdout (that's the actual image data) but not
+# on stderr, where the real error message would otherwise go missing.
+if wget -O - "$URL" 2>"$WGET_ERR" | pv -f -n -b 2> /tmp/recore-flash-progress | xz -T 0 -d -c 2>"$XZ_ERR" > "$OUTFILE"; then
+  PIPE_STATUS=("${PIPESTATUS[@]}")
+  PIPE_OK=1
+else
+  PIPE_STATUS=("${PIPESTATUS[@]}")
+  PIPE_OK=0
+fi
+
+if [ "$PIPE_OK" -eq 0 ]; then
+  if [ "${PIPE_STATUS[0]}" -ne 0 ]; then
+    # tail -1 would grab wget's trailing blank line rather than the actual
+    # "ERROR 404: Not Found." line before it - take the last non-empty line.
+    info "Download failed: $(awk 'NF{line=$0} END{print line}' "$WGET_ERR")"
+  elif [ "${PIPE_STATUS[2]}" -ne 0 ]; then
+    info "Decompression failed: $(awk 'NF{line=$0} END{print line}' "$XZ_ERR")"
+  else
+    info "Flashing pipeline failed (exit codes: ${PIPE_STATUS[*]})"
+  fi
+  rm -f "$WGET_ERR" "$XZ_ERR"
+  exit 1
+fi
+rm -f "$WGET_ERR" "$XZ_ERR"
 info "Flashing done"
 sync
 

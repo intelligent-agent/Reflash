@@ -40,16 +40,12 @@ teardown() { teardown_sandbox; }
   [ "$status" -ne 0 ]
 }
 
-# Issue #59: the operator currently sees only "unknown error" because the
-# download pipeline's stderr is redirected into /tmp/recore-flash-progress
-# instead of being surfaced. Un-skip this once flash-from-url reports the real
-# cause on stdout/in the log.
-@test "flash-from-url: surfaces the real download error (#59 — pending fix)" {
-  skip "flash-from-url still redirects pipeline stderr to /tmp; un-skip when #59 is fixed"
-  stub wget 1 <<'ERR'
+@test "flash-from-url: surfaces the real download error (#59)" {
+  stub_stderr wget 1 <<'ERR'
 wget: unable to resolve host address 'example'
 ERR
   stub_silent xz 0
   run "$PROD_BIN/flash-from-url" http://example/image.img.xz
+  [ "$status" -ne 0 ]
   [[ "$output" == *"unable to resolve host"* ]]
 }
