@@ -72,7 +72,7 @@ done
 
 # 5. Wait and verify IP address
 info "Waiting for DHCP..."
-MAX_RETRIES=10
+MAX_RETRIES=30
 COUNT=0
 while [ $COUNT -lt $MAX_RETRIES ]; do
     IP=$(ip addr show "$INTERFACE" | grep "inet " | awk '{print $2}')
