@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
@@ -426,10 +425,8 @@ func TestUploadChunkRoundTrip(t *testing.T) {
 		if end > len(payload) {
 			end = len(payload)
 		}
-		encoded := "data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(payload[i:end])
-		chunkBody, _ := json.Marshal(map[string]string{"chunk": encoded})
 		w := httptest.NewRecorder()
-		uploadChunk(w, httptest.NewRequest("POST", "/api/upload_chunk", bytes.NewReader(chunkBody)))
+		uploadChunk(w, httptest.NewRequest("POST", "/api/upload_chunk", bytes.NewReader(payload[i:end])))
 
 		var resp map[string]bool
 		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
