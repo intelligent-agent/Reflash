@@ -1138,7 +1138,16 @@ func updateConfig(w http.ResponseWriter, r *http.Request) {
 	var data *UpdateConfigCommand = &UpdateConfigCommand{}
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
-	_, _, err := runCommand2("create-recore-config", strconv.Itoa(data.Snr))
+	out, _, err := runCommand2("create-recore-config", strconv.Itoa(data.Snr))
+	// create-recore-config prints a specific, user-facing reason (missing
+	// calibration file vs. no internet connection) before exiting non-zero -
+	// surface that instead of the generic "exit status N" from err.
+	if err != nil {
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if lastLine := lines[len(lines)-1]; lastLine != "" {
+			err = fmt.Errorf("%s", lastLine)
+		}
+	}
 	sendResponse(w, err)
 }
 
