@@ -47,6 +47,27 @@ stub() {
   chmod +x "$SHIMDIR/$name"
 }
 
+# stub_stderr NAME [EXIT_CODE]   (canned stderr read from this function's stdin)
+# Same as stub, but the heredoc body goes to stderr - for commands like wget
+# that write their real diagnostics there, not stdout.
+#
+#   stub_stderr wget 1 <<'ERR'
+#   wget: unable to resolve host address 'example'
+#   ERR
+stub_stderr() {
+  local name="$1" code="${2:-0}" body
+  body="$(cat)"
+  {
+    echo '#!/usr/bin/env bash'
+    echo "echo \"$name \$*\" >> \"$CALLS\""
+    echo "cat <<'__STUB_ERR__' >&2"
+    printf '%s\n' "$body"
+    echo '__STUB_ERR__'
+    echo "exit $code"
+  } > "$SHIMDIR/$name"
+  chmod +x "$SHIMDIR/$name"
+}
+
 # stub_silent NAME [EXIT_CODE] — a fake command with no stdout (records argv).
 # Handy for no-op system tools (mount, sleep, partprobe, ...) and for making a
 # command "fail" with a chosen exit code.

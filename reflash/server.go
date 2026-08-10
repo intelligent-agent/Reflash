@@ -770,7 +770,14 @@ func goMagic(url string) {
 	if err != nil {
 		logError("Error encountered during magic: \n" + stdout)
 		state.State = ERROR
-		state.Error = "An error was encountered during magic. Check log for details"
+		// flash-from-url prints the specific reason (e.g. the real download
+		// error, not just "an unknown error" - #59) as its last line before
+		// exiting non-zero. Surface that instead of a generic message.
+		state.Error = "An error was encountered during magic"
+		lines := strings.Split(strings.TrimSpace(stdout), "\n")
+		if lastLine := lines[len(lines)-1]; lastLine != "" {
+			state.Error = lastLine
+		}
 		return
 	}
 
