@@ -47,12 +47,26 @@ fi
 info "Hardware revision: ${HW_REV}"
 info "Serial number: ${SNR}"
 
-if [[ ! `wget -NS --spider $URL 2>&1 | grep 'HTTP/1.1 200 OK'` ]]; then
-  echo "Unable to find the calibration file at the remote location: $URL".
-  exit 2
+# wget's own exit codes distinguish "couldn't reach the server at all"
+# (4 - network failure: no internet, DNS, connection refused, etc.) from
+# "reached the server but it returned an error" (e.g. 8, a 404 - no
+# calibration file for this serial). Report those two cases separately
+# rather than a single generic "unable to find" message either way.
+if wget -q --spider "$URL"; then
+  WGET_STATUS=0
+else
+  WGET_STATUS=$?
 fi
 
-info "Calibration file valid"
+if [ "$WGET_STATUS" -eq 0 ]; then
+  info "Calibration file valid"
+elif [ "$WGET_STATUS" -eq 4 ]; then
+  echo "No internet connection. Setting the serial number requires internet access to download the calibration file."
+  exit 3
+else
+  echo "No calibration file found for serial number ${SNR}. Please check the serial number is correct."
+  exit 2
+fi
 
 DEV=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 DEV_BOOT="/dev/${DEV}boot0"
