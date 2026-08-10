@@ -180,6 +180,13 @@ RemainAfterExit=yes
 [Install]
 EOF
 
+# Installing openssh-server generated SSH host keys as a side effect - baked
+# into this one build, they'd be identical across every image and every
+# board flashed from it (#80). Delete them; ssh-keygen-boot.service (set up
+# below, outside the chroot) restores or generates them from USB storage
+# on boot instead.
+rm -f /etc/ssh/ssh_host_*
+
 # Clean up
 rm -rf /usr/sbin/policy-rc.d
 rm ./*.deb
@@ -252,6 +259,30 @@ cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/resolved.conf.d/mdns.conf
 [Resolve]
 MulticastDNS=yes
 EOF
+
+# This board's root fs runs from initrd and doesn't persist writes across
+# reboots, so keys generated straight into /etc/ssh would be regenerated
+# (and thus change) every boot. ssh-keygen-boot restores/saves them against
+# /mnt/usb instead - the one thing that actually persists - so a given board
+# keeps a stable identity while still not sharing a key with every other
+# image/board (#80). Ordered before both ssh.service and reflash.service so
+# it has /mnt/usb to itself - mount-unmount-usb has no locking of its own.
+cat <<EOF >"${ROOTFSDIR}"/initrd/etc/systemd/system/ssh-keygen-boot.service
+[Unit]
+Description=Restore or generate persistent SSH host keys from USB storage (see #80)
+Before=ssh.service reflash.service
+ConditionPathExists=!/etc/ssh/ssh_host_rsa_key
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ssh-keygen-boot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl enable ssh-keygen-boot --root="${ROOTFSDIR}"/initrd
 
 cat <<EOF >"${ROOTFSDIR}"/initrd/etc/systemd/system/reflash.service
 [Unit]
