@@ -7,7 +7,7 @@ PLACE=$2
 ROTATIONS=(0 90 180 270)
 
 # Valid places to update
-PLACES=(FBCON XORG CMDLINE WESTON)
+PLACES=(FBCON XORG CMDLINE WESTON PLYMOUTH)
 
 EMMC=/dev/mmcblk2
 
@@ -92,6 +92,29 @@ update_fbcon() {
     echo $ROT_FBCON > /sys/devices/virtual/graphics/fbcon/rotate
 }
 
+# Plymouth's DRM renderer ignores fbcon=rotate: entirely (that only
+# affects the legacy fbcon text console) - it reads the kernel's DRM
+# panel orientation instead, set via video=<connector>:panel_orientation=<value>
+# on the kernel command line.
+update_plymouth(){
+    mkdir -p /mnt/emmc
+    umount -q /mnt/emmc/ || true
+    mount "${EMMC}p1" /mnt/emmc
+
+    CONFIG_FILE="/mnt/emmc/armbianEnv.txt"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Misssig file: ${CONFIG_FILE}"
+    else
+        if [[ $(grep 'panel_orientation=' "$CONFIG_FILE") ]]; then
+            sed -i -E "s/panel_orientation=[a-z_]+/panel_orientation=${ROT_PLYMOUTH}/" "$CONFIG_FILE"
+        else
+            sed -i "/extraargs=/ s/\$/ video=HDMI-A-1:panel_orientation=${ROT_PLYMOUTH}/" "$CONFIG_FILE"
+        fi
+        cat "$CONFIG_FILE"
+    fi
+    umount /mnt/emmc
+}
+
 if [ "$ROTATION" == "" ]; then
     usage 
     exit 1
@@ -106,7 +129,8 @@ case "${ROTATION}" in
     0)
         ROT_XORG="normal"
         ROT_FBCON="0"
-        ROT_PLYMOUTH=""
+        # Confirmed empirically on real hardware.
+        ROT_PLYMOUTH="normal"
         ROT_WESTON_10="0"
         ROT_WESTON_11="normal"
         ROT_MATRIX="1 0 0 0 1 0 0 0 1"
@@ -114,7 +138,10 @@ case "${ROTATION}" in
     90)
         ROT_XORG="right"
         ROT_FBCON="1"
-        ROT_PLYMOUTH=""
+        # Not empirically confirmed - inferred by elimination
+        # from the four DRM panel-orientation values, given 0 and
+        # 270 are confirmed. Verify on hardware before trusting.
+        ROT_PLYMOUTH="right_side_up"
         ROT_WESTON_10="270"
         ROT_WESTON_11="rotate-270"
         ROT_MATRIX="0 1 0 -1 0 1 0 0 1"
@@ -122,7 +149,9 @@ case "${ROTATION}" in
     180)
         ROT_XORG="inverted"
         ROT_FBCON="2"
-        ROT_PLYMOUTH=""
+        # Not empirically confirmed - inferred by elimination, see
+        # the note on the 90 case above.
+        ROT_PLYMOUTH="upside_down"
         ROT_WESTON_10="180"
         ROT_WESTON_11="rotate-180"
         ROT_MATRIX="-1 0 1 0 -1 1 0 0 1"
@@ -130,7 +159,8 @@ case "${ROTATION}" in
     270)
         ROT_XORG="left"
         ROT_FBCON="3"
-        ROT_PLYMOUTH=""
+        # Confirmed empirically on real hardware.
+        ROT_PLYMOUTH="left_side_up"
         ROT_WESTON_10="90"
         ROT_WESTON_11="rotate-90"
         ROT_MATRIX="0 -1 1 1 0 0 0 0 1"
@@ -155,6 +185,9 @@ case "${PLACE}" in
         ;;
     WESTON)
         update_weston
+        ;;
+    PLYMOUTH)
+        update_plymouth
         ;;
     *)
         echo "$PLACE not in " "${PLACES[@]}"

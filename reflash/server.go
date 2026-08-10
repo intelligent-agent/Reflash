@@ -1017,6 +1017,10 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		sendResponse(w, err)
 	}
+	err = cmdRotateScreen(options.ScreenRotation, "PLYMOUTH")
+	if err != nil {
+		sendResponse(w, err)
+	}
 
 	settings := "# Settings from Reflash\n" +
 		"SSH_ENABLED_ON_BOOT=" + strconv.FormatBool(options.EnableSsh) + "\n" +
