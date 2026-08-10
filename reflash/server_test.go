@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
@@ -391,5 +393,67 @@ func TestGetUncompressedSizeRealXz(t *testing.T) {
 	}
 	if got := getUncompressedSize(xzPath); got != size {
 		t.Errorf("getUncompressedSize = %d, want %d", got, size)
+	}
+}
+
+// End-to-end against the real handlers: drives upload_start -> several
+// upload_chunk calls -> upload_finish exactly like the client does, and
+// checks the file on disk matches byte-for-byte. Exercises the real
+// state.File handle kept open across chunks (rather than the old
+// open/write/close-per-chunk code), so this would catch truncation,
+// overwriting, or interleaving bugs a build-only check can't.
+func TestUploadChunkRoundTrip(t *testing.T) {
+	setupTest(t)
+	state = &State{State: IDLE}
+
+	filename := "roundtrip-test.img.xz"
+	payload := bytes.Repeat([]byte("The quick brown fox jumps over the lazy dog. "), 5000) // ~225KB
+
+	startBody, _ := json.Marshal(map[string]any{
+		"filename":   filename,
+		"size":       len(payload),
+		"start_time": 0,
+	})
+	w := httptest.NewRecorder()
+	uploadStart(w, httptest.NewRequest("PUT", "/api/upload_start", bytes.NewReader(startBody)))
+	if state.File == nil {
+		t.Fatal("uploadStart did not open state.File")
+	}
+
+	const chunkSize = 10 * 1024 // small relative to payload so this genuinely exercises multiple sequential chunk writes, not just one
+	for i := 0; i < len(payload); i += chunkSize {
+		end := i + chunkSize
+		if end > len(payload) {
+			end = len(payload)
+		}
+		encoded := "data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(payload[i:end])
+		chunkBody, _ := json.Marshal(map[string]string{"chunk": encoded})
+		w := httptest.NewRecorder()
+		uploadChunk(w, httptest.NewRequest("POST", "/api/upload_chunk", bytes.NewReader(chunkBody)))
+
+		var resp map[string]bool
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("chunk at offset %d: bad response body: %v", i, err)
+		}
+		if !resp["success"] {
+			t.Fatalf("chunk at offset %d: server reported failure", i)
+		}
+	}
+
+	uploadFinish(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/upload_finish", nil))
+
+	if state.File != nil {
+		t.Error("uploadFinish did not clear state.File")
+	}
+
+	got, err := os.ReadFile(filepath.Join(images_folder, filename))
+	if err != nil {
+		t.Fatalf("reading uploaded file: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("uploaded file mismatch: got %d bytes, want %d bytes", len(got), len(payload))
+	}
+	if state.BytesNow != len(payload) {
+		t.Errorf("state.BytesNow = %d, want %d", state.BytesNow, len(payload))
 	}
 }
