@@ -470,39 +470,89 @@ export default {
     },
     async uploadLocalFile() {
       const CHUNK_SIZE = 3 * 1024 * 1024;
+      const MAX_CHUNK_RETRIES = 20;
+      const CHUNK_TIMEOUT_MS = 20000;
+      const RETRY_BACKOFF_MS = 2000;
+      const RETRY_BACKOFF_MAX_MS = 30000;
       let self = this;
-      var reader = new FileReader();
       var offset = 0;
       var filesize = this.file.size;
 
-      reader.onload = function () {
-        var result = reader.result;
-        var chunk = result;
+      // Chunks are posted as raw binary Blob slices, not base64-encoded
+      // inside a JSON body - base64 inflates the wire size by ~33%,
+      // which mattered a lot on the WiFi-constrained upload path. This
+      // also drops the FileReader/readAsDataURL round trip entirely.
+      //
+      // Chunks are sent one at a time, not pipelined. Concurrent chunks
+      // were tried and reverted - this board's USB hub has WiFi and
+      // storage sharing a single Transaction Translator (confirmed from
+      // the hub's datasheet), so simultaneous network-receive and
+      // disk-write transactions destabilize the connection rather than
+      // just being slower.
+      //
+      // This link also has occasional multi-minute dead spells (no
+      // error, no response, ever - axios has no default timeout for
+      // that case) that look like genuine WiFi/AP hiccups rather than
+      // one-off blips. Without an explicit timeout and a generous retry
+      // budget, one bad stretch used to freeze the whole upload forever
+      // with no feedback - see #61. Retries use exponential backoff
+      // (capped) so a real multi-minute dropout can be ridden out
+      // instead of giving up after a few seconds.
+      function sendChunk(retriesLeft = MAX_CHUNK_RETRIES) {
+        var slice = self.file.slice(offset, offset + CHUNK_SIZE);
         axios
-          .post(`/api/upload_chunk`, {
-            chunk: chunk,
+          .post(`/api/upload_chunk`, slice, {
+            headers: { "Content-Type": "application/octet-stream" },
+            timeout: CHUNK_TIMEOUT_MS,
           })
           .then(function (response) {
             const status = response.data;
             if (status.success && self.state == "UPLOADING") {
               offset += CHUNK_SIZE;
-              if (offset <= filesize) {
-                var slice = self.file.slice(offset, offset + CHUNK_SIZE);
-                reader.readAsDataURL(slice);
+              if (offset < filesize) {
+                sendChunk();
               } else {
-                offset = filesize;
                 self.apiCall("upload_finish");
               }
             } else {
               self.apiCall("upload_cancel");
             }
+          })
+          .catch(function (error) {
+            if (self.state != "UPLOADING") {
+              return;
+            }
+            if (retriesLeft > 0) {
+              const attempt = MAX_CHUNK_RETRIES - retriesLeft;
+              const backoff = Math.min(
+                RETRY_BACKOFF_MS * Math.pow(2, attempt),
+                RETRY_BACKOFF_MAX_MS
+              );
+              console.log(
+                "upload_chunk failed, retrying in " +
+                  backoff +
+                  "ms (" +
+                  retriesLeft +
+                  " left): " +
+                  error
+              );
+              setTimeout(function () {
+                sendChunk(retriesLeft - 1);
+              }, backoff);
+            } else {
+              self.$waveui.notify(
+                "Upload failed after repeated retries: " + error,
+                "error",
+                0
+              );
+              self.apiCall("upload_cancel");
+            }
           });
-      };
+      }
 
       if (this.file) {
-        var slice = this.file.slice(offset, offset + CHUNK_SIZE);
-        reader.readAsDataURL(slice);
         self.fileName = this.file.name;
+        sendChunk();
       }
     },
     onMagicButtonClick() {

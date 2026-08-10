@@ -674,19 +674,19 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadChunk(w http.ResponseWriter, r *http.Request) {
-	var chunk *Chunk = &Chunk{}
-	reqBody, _ := io.ReadAll(r.Body)
-	json.Unmarshal(reqBody, &chunk)
-
 	if state.State == CANCELLED {
 		response := map[string]bool{"success": false}
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	decoded, err := base64.StdEncoding.DecodeString(chunk.Encoded[37:len(chunk.Encoded)])
+	// The client posts the chunk as a raw binary body (not base64/JSON -
+	// that inflated the wire size by ~33% and cost real time on the
+	// WiFi-constrained upload path). Read it straight off the request
+	// body.
+	decoded, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed to decode base64", http.StatusBadRequest)
+		http.Error(w, "Failed to read chunk body", http.StatusBadRequest)
 		return
 	}
 
@@ -695,6 +695,15 @@ func uploadChunk(w http.ResponseWriter, r *http.Request) {
 	// every chunk here was real per-chunk overhead (syscalls plus an
 	// implicit flush on close), especially costly against the
 	// FAT-formatted USB target.
+	//
+	// Chunks are sent one at a time (not pipelined/concurrent) - this
+	// board's USB hub (WiFi NIC + storage share a single Transaction
+	// Translator, confirmed from the hub's datasheet) can't reliably
+	// handle simultaneous network-receive and disk-write transactions.
+	// Concurrent chunks caused a real disk-write pileup (kernel threads
+	// stuck in D-state) and, even after serializing the writes,
+	// intermittent connection resets - a hardware constraint, not
+	// something fixable by tuning the write path further.
 	if _, err := state.File.Write(decoded); err != nil {
 		http.Error(w, "Failed to write chunk to file", http.StatusInternalServerError)
 		return
