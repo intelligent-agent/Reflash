@@ -5,5 +5,10 @@ set -euo pipefail
 CONFIG_DIR="${REFLASH_CONFIG_DIR:-/mnt/config}"
 
 mount-config
+# A board with no serial number provisioned yet - the exact case this
+# script exists to detect - means serial_number doesn't exist, so cat
+# fails and set -e exits before reaching unmount-config, leaving the
+# mount (and its transient systemd unit) dangling. Make the unmount
+# unconditional instead.
+trap unmount-config EXIT
 cat "$CONFIG_DIR/serial_number"
-unmount-config

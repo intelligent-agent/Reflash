@@ -27,3 +27,15 @@ teardown() { teardown_sandbox; }
   [ "$status" -eq 0 ]
   [ "$output" = "RC-0001-XYZ" ]
 }
+
+@test "get-recore-serial-number: still unmounts when serial_number is missing (#83 fallout)" {
+  export REFLASH_CONFIG_DIR="$SANDBOX/config"
+  mkdir -p "$REFLASH_CONFIG_DIR"
+  # No serial_number file - this is exactly the state a not-yet-provisioned
+  # board is in, i.e. the case this script exists to detect.
+  stub_silent mount-config
+  stub_silent unmount-config
+  run "$PROD_BIN/get-recore-serial-number"
+  [ "$status" -ne 0 ]
+  assert_called_with "unmount-config"
+}
