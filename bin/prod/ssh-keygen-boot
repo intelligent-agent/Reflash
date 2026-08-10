@@ -1,0 +1,40 @@
+#!/bin/bash
+
+set -euo pipefail
+
+LOG_FILE="${LOG_FILE:-/var/log/reflash.log}"
+KEY_DIR="${REFLASH_SSH_KEY_DIR:-/mnt/usb/ssh_host_keys}"
+
+info() {
+    echo "[info] $1" >> "$LOG_FILE"
+    echo "$1"
+}
+
+# Build-time SSH host key generation (a side effect of installing
+# openssh-server) would bake identical keys into every image and every board
+# flashed from it. Keys are deleted at build time instead, and restored (or
+# generated once and saved) here from the USB drive - the one thing on this
+# board that actually persists across reboots, unlike the initrd root fs.
+
+# On a freshly-flashed drive, /mnt/usb's partition doesn't exist yet - it's
+# normally created by expand-usb, which the Go server calls on its own
+# startup. This unit runs before reflash.service specifically so it has
+# /mnt/usb to itself first, which means that hasn't happened yet here.
+# expand-usb is idempotent (a no-op once the partition already exists), so
+# calling it again from reflash.service afterward is harmless.
+expand-usb
+
+mount-unmount-usb mounted rw
+
+if [ -f "$KEY_DIR/ssh_host_rsa_key" ]; then
+    info "Restoring SSH host keys from USB storage"
+    cp "$KEY_DIR"/ssh_host_* /etc/ssh/
+else
+    info "No saved SSH host keys on USB storage - generating and saving new ones"
+    ssh-keygen -A
+    mkdir -p "$KEY_DIR"
+    cp /etc/ssh/ssh_host_* "$KEY_DIR/"
+fi
+
+mount-unmount-usb unmounted
+info "SSH host keys ready"
