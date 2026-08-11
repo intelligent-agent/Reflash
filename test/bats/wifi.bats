@@ -123,3 +123,45 @@ EOF
   assert_called_with "station wlan0 connect HomeNet"
   [[ "$output" == *"Connected with IP: 192.168.1.50/24"* ]]
 }
+
+# --- connect failure -> hotspot fallback (#90) ------------------------------
+
+@test "wifi-connect: restores hotspot if the connect command keeps failing" {
+  with_adapter
+  cat > "$SHIMDIR/iwctl" <<'EOF'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "$1 $2 $3" = "station wlan0 connect" ]; then exit 1; fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  run "$PROD_BIN/wifi-connect" HomeNet hunter2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Connection command failed after 3 attempts."* ]]
+  assert_called_with "device wlan0 set-property Mode ap"
+  assert_called_with "ap wlan0 start-profile Recore"
+}
+
+@test "wifi-connect: restores hotspot if DHCP never leases" {
+  with_adapter
+  cat > "$SHIMDIR/iwctl" <<'EOF'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+# No "inet " line in the output - no lease ever arrives.
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+  run "$PROD_BIN/wifi-connect" HomeNet hunter2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Timed out waiting for IP address."* ]]
+  assert_called_with "device wlan0 set-property Mode ap"
+  assert_called_with "ap wlan0 start-profile Recore"
+}
