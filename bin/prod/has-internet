@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -e
+
+# GitHub is what actually matters here, not internet access in general - the
+# Rebuild/Refactor image downloads and the release list the UI fetches both
+# depend on it specifically, and a generic reachability check could pass
+# while GitHub itself is unreachable.
+if wget -q --spider --timeout=5 --tries=1 https://github.com 2>/dev/null; then
+    echo "true"
+else
+    echo "false"
+fi

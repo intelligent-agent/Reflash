@@ -44,7 +44,7 @@
         <div class="xs1 pa1 align-self-center">
           <w-select
             v-model="selectedMethod"
-            :items="availableMethods"
+            :items="filteredMethods"
             no-unselect
             return-object
           >
@@ -269,6 +269,9 @@ export default {
       { id: 1, label: "Refactor", value: 1, image: "Cloud" },
       { id: 2, label: "File upload", value: 2, image: "File" },
     ],
+    // Optimistic default so the download options aren't shown then
+    // immediately hidden while the check is in flight - see checkInternet().
+    hasInternet: true,
     selectedMethod: 0,
     imageColor: "white",
     files: [],
@@ -280,7 +283,18 @@ export default {
     bytesAvailable: -1,
     sizeWarning: ""
   }),
-  computed: mapGetters(["options", "progress", "flash"]),
+  computed: {
+    ...mapGetters(["options", "progress", "flash"]),
+    // Rebuild/Refactor both download from GitHub via the board itself
+    // (flash-from-url) - without internet that can't work, so hide them and
+    // leave only the local-file paths (upload, magic, install) - #74.
+    filteredMethods() {
+      if (this.hasInternet) {
+        return this.availableMethods;
+      }
+      return this.availableMethods.filter((m) => m.id == 2);
+    },
+  },
   methods: {
     ...mapActions([
       "setProgress",
@@ -800,11 +814,19 @@ export default {
         .then((response) => response.json())
         .then((data) => this.populateRebuildImages(data));
     },
+    async checkInternet() {
+      const response = await axios.get(`/api/has_internet`);
+      this.hasInternet = response.data.result;
+      if (!this.hasInternet && this.selectedMethod.id != 2) {
+        this.selectedMethod = this.availableMethods[2];
+      }
+    },
   },
   created() {
     this.selectedMethod = this.availableMethods[0];
     this.getGithubImages();
     this.getInfo();
+    this.checkInternet();
     this.checkOnLoadProgress();
   },
 };

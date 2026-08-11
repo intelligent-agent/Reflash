@@ -241,6 +241,7 @@ func ServerInit() {
 	http.HandleFunc("/api/reboot_board", rebootBoard)
 	http.HandleFunc("/api/shutdown_board", shutdownBoard)
 	http.HandleFunc("/api/is_usb_present", isUsbPresent)
+	http.HandleFunc("/api/has_internet", hasInternet)
 	http.HandleFunc("/api/start_backup", startBackup)
 	http.HandleFunc("/api/cancel_backup", cancelBackup)
 	http.HandleFunc("/api/start_magic", startMagic)
@@ -1202,6 +1203,14 @@ func setSshEnabled(is_enabled bool) error {
 
 func isUsbPresent(w http.ResponseWriter, r *http.Request) {
 	result := runCommandReturnBool("is-usb-present")
+	var response *BinaryCommandResult = &BinaryCommandResult{
+		Result: result,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+func hasInternet(w http.ResponseWriter, r *http.Request) {
+	result := runCommandReturnBool("has-internet")
 	var response *BinaryCommandResult = &BinaryCommandResult{
 		Result: result,
 	}
