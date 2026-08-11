@@ -15,7 +15,23 @@ if [ -b /dev/sda2 ]; then
 fi
 
 info "Creating partition on unused space"
-printf "n\n\n\n\nw\n" | fdisk /dev/sda
+# fdisk's own in-place re-read of the table can fail with "Device or
+# resource busy" even though the write itself succeeded (seen live on a
+# fresh USB drive) - the kernel picks up the new partition via udev
+# shortly after regardless, so don't treat that as fatal; wait for the
+# device node to actually appear instead of trusting fdisk's exit code.
+printf "n\n\n\n\nw\n" | fdisk /dev/sda || true
+
+info "Waiting for /dev/sda2 to appear"
+for i in $(seq 1 10); do
+    [ -b /dev/sda2 ] && break
+    sleep 1
+done
+
+if [ ! -b /dev/sda2 ]; then
+    info "Partition 2 did not appear after creation"
+    exit 1
+fi
 
 info "Creating ext4 filesystem"
 mkfs.ext4 -F -E nodiscard /dev/sda2
