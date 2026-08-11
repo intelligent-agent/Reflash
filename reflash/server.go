@@ -824,9 +824,26 @@ func goBackup() {
 	logInfo(fmt.Sprintf("starting backup of %s at time %s", state.Filename, timeStart.Format("15:04:05")))
 
 	stdout, _, err := runCommand2("backup-emmc", path)
+	mountUsb(MODE_RO)
+
+	// Plain reads/writes of state.State here aren't enough to see
+	// cancelBackup()'s write reliably - without a shared lock, Go's memory
+	// model doesn't guarantee this goroutine observes that write just
+	// because it happened first in wall-clock time. state.Lock() gives the
+	// same guarantee cancelBackup()'s matching lock below relies on.
+	state.Lock()
+	defer state.Unlock()
 	if err != nil {
+		// cancelBackup() kills the backup subprocess to stop it, which makes
+		// runCommand2 return an error here too (exit 137 - SIGKILL) - that's
+		// the expected result of a deliberate cancel, not a real failure.
+		// cancelBackup() sets state to CANCELLED before killing specifically
+		// so this check can tell the two apart instead of overwriting the
+		// cancellation with a generic error.
+		if state.State == CANCELLED {
+			return
+		}
 		logError("Error encountered during backup: \n" + stdout)
-		mountUsb(MODE_RO)
 		state.State = ERROR
 		state.Error = "An error was encountered during backup. Check log for details"
 		return
@@ -834,13 +851,23 @@ func goBackup() {
 
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Backup finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
-	mountUsb(MODE_RO)
 	state.State = FINISHED
 }
 
 func cancelBackup(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Backup cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+
+	// Set before killing, not after - goBackup() is blocked waiting on the
+	// subprocess and wakes up as soon as the kill lands, so this needs to
+	// already be visible by then to avoid a race where it sees the kill's
+	// resulting error first and reports it as a generic failure instead.
+	// Locked so that guarantee actually holds under Go's memory model, not
+	// just in wall-clock time - see goBackup().
+	state.Lock()
+	state.State = CANCELLED
+	state.Error = ""
+	state.Unlock()
 
 	cmd := exec.Command("pkill", "-f", "xz", "-9")
 	err := cmd.Run()
@@ -850,7 +877,6 @@ func cancelBackup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	os.Remove(images_folder + "/" + state.Filename)
-	state.State = CANCELLED
 	sendResponse(w, err)
 }
 
