@@ -25,7 +25,9 @@ export default {
     open: Boolean
   },
   data: () => ({
-    log: []
+    log: [],
+    evtSource: null,
+    watchdog: null
   }),
   methods: {
     replaceWithBr() {
@@ -36,13 +38,48 @@ export default {
       const response = await axios.put(`/api/clear_log`)
       if(response.data.status != 0)
         this.$waveui.notify("Unable to clear log", "error", 0);
+    },
+    connectLogStream() {
+      const evtSource = new EventSource(`/api/stream_log`);
+      evtSource.onmessage = (event) => {
+        this.log.push(event.data);
+        this.resetWatchdog();
+      };
+      // The server sends one of these every 15s (see streamLog in
+      // server.go) purely so the watchdog below has something to reset
+      // on even when there's no real log activity.
+      evtSource.addEventListener('heartbeat', () => {
+        this.resetWatchdog();
+      });
+      // The board's WiFi interface disappears and reappears when
+      // switching between AP/hotspot and station mode (#95). Confirmed
+      // live: that kills the connection completely silently on both
+      // ends - no error, no data, nothing - so onerror is not enough on
+      // its own; the watchdog below is what actually catches this case.
+      evtSource.onerror = () => {
+        this.reconnect();
+      };
+      this.evtSource = evtSource;
+      this.resetWatchdog();
+    },
+    resetWatchdog() {
+      clearTimeout(this.watchdog);
+      // Twice the server's heartbeat interval, so one missed beat isn't
+      // treated as a dead connection.
+      this.watchdog = setTimeout(() => this.reconnect(), 30000);
+    },
+    reconnect() {
+      clearTimeout(this.watchdog);
+      if (this.evtSource) this.evtSource.close();
+      setTimeout(() => this.connectLogStream(), 3000);
     }
   },
   created() {
-    const evtSource = new EventSource(`/api/stream_log`);
-    evtSource.onmessage = (event) => {
-      this.log.push(event.data);
-    };
+    this.connectLogStream();
+  },
+  beforeUnmount() {
+    clearTimeout(this.watchdog);
+    if (this.evtSource) this.evtSource.close();
   }
 }
 
