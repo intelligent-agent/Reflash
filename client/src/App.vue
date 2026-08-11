@@ -44,7 +44,7 @@
         <div class="xs1 pa1 align-self-center">
           <w-select
             v-model="selectedMethod"
-            :items="availableMethods"
+            :items="filteredMethods"
             no-unselect
             return-object
           >
@@ -116,15 +116,6 @@
             v-model="selectedRebuildImage"
             return-object
             :items="rebuildImages"
-            item-label-key="name"
-            placeholder="Please select one"
-          >
-          </w-select>
-          <w-select
-            v-if="selectedMethod.id == 1"
-            v-model="selectedRefactorImage"
-            return-object
-            :items="refactorImages"
             item-label-key="name"
             placeholder="Please select one"
           >
@@ -201,7 +192,7 @@
         <TheWifiSetup
           :open="openWifi"
           ref="TheWifiSetup"
-          @close="openWifi = false"
+          @close="openWifi = false; this.checkInternet()"
         />
       </w-flex>
     </w-card>
@@ -249,12 +240,10 @@ export default {
     isInstalling: false,
     installProgress: 0,
     selectedGithubImage: undefined,
-    selectedRefactorImage: undefined,
     selectedRebuildImage: undefined,
     selectedUploadImage: [],
     selectedLocalImage: undefined,
     githubImages: [],
-    refactorImages: [],
     rebuildImages: [],
     localImages: [],
     uploadError: false,
@@ -266,9 +255,11 @@ export default {
     openWifi: false,
     availableMethods: [
       { id: 0, label: "Rebuild", value: 0, image: "Cloud" },
-      { id: 1, label: "Refactor", value: 1, image: "Cloud" },
       { id: 2, label: "File upload", value: 2, image: "File" },
     ],
+    // Optimistic default so the download options aren't shown then
+    // immediately hidden while the check is in flight - see checkInternet().
+    hasInternet: true,
     selectedMethod: 0,
     imageColor: "white",
     files: [],
@@ -280,7 +271,18 @@ export default {
     bytesAvailable: -1,
     sizeWarning: ""
   }),
-  computed: mapGetters(["options", "progress", "flash"]),
+  computed: {
+    ...mapGetters(["options", "progress", "flash"]),
+    // Rebuild downloads from GitHub via the board itself (flash-from-url) -
+    // without internet that can't work, so hide it and leave only the
+    // local-file paths (upload, magic, install) - #74.
+    filteredMethods() {
+      if (this.hasInternet) {
+        return this.availableMethods;
+      }
+      return this.availableMethods.filter((m) => m.id == 2);
+    },
+  },
   methods: {
     ...mapActions([
       "setProgress",
@@ -297,8 +299,6 @@ export default {
     },
     computeTransferButtonText() {
       if (this.selectedMethod.id == 0)
-        return this.state == "DOWNLOADING" ? "Cancel" : "Download";
-      if (this.selectedMethod.id == 1)
         return this.state == "DOWNLOADING" ? "Cancel" : "Download";
       if (this.selectedMethod.id == 2)
         return this.state == "UPLOADING" ? "Cancel" : "Upload";
@@ -333,8 +333,6 @@ export default {
     isMagicButtonVisible() {
       if (!this.options.magicmode) return false;
       if (this.selectedMethod.id == 0 && this.selectedRebuildImage) return true;
-      if (this.selectedMethod.id == 1 && this.selectedRefactorImage)
-        return true;
       if (this.selectedMethod.id == 2 && this.selectedUploadImage.file)
         return true;
       return false;
@@ -342,7 +340,6 @@ export default {
     isTransferButtonVisible() {
       if (this.options.magicmode) return false;
       if (this.selectedMethod.id == 0) return this.selectedRebuildImage;
-      if (this.selectedMethod.id == 1) return this.selectedRefactorImage;
       if (this.selectedMethod.id == 2) return this.selectedUploadImage.file;
       return "";
     },
@@ -360,13 +357,6 @@ export default {
         this.selectedGithubImage &&
         this.bytesAvailable > 0 &&
         this.bytesAvailable < this.selectedGithubImage.size
-      ) {
-        return "Not enough free space on USB";
-      } else if (
-        this.selectedMethod.id == 1 &&
-        this.selectedUploadImage.file &&
-        this.bytesAvailable > 0 &&
-        this.bytesAvailable < this.selectedUploadImage.size
       ) {
         return "Not enough free space on USB";
       } else {
@@ -559,9 +549,6 @@ export default {
       if (this.selectedMethod.id == 0) {
         this.selectedGithubImage = this.selectedRebuildImage;
         this.startMagic();
-      } else if (this.selectedMethod.id == 1) {
-        this.selectedGithubImage = this.selectedRefactorImage;
-        this.startMagic();
       } else if (this.selectedMethod.id == 2) {
         this.selectedGithubImage = this.selectedLocalImage;
         this.startMagicUpload();
@@ -602,7 +589,7 @@ export default {
         }
         // This method is called on page load. If a refresh happens during upload, we can not continue.
       } else if (data.state == "UPLOADING" || data.state == "UPLOADING_MAGIC") {
-        this.selectedMethod = this.availableMethods[2];
+        this.selectedMethod = this.availableMethods.find((m) => m.id == 2);
       }
       this.previousState = this.state;
       this.checkProgress();
@@ -637,7 +624,6 @@ export default {
           this.getInfo();
         } else if (this.previousState == "DOWNLOADING") {
           this.selectedRebuildImage = null;
-          this.selectedRefactorImage = null;
           await this.getInfo();
           this.selectedLocalImage = data.filename;
         } else if (this.previousState == "UPLOADING") {
@@ -646,7 +632,6 @@ export default {
           this.selectedLocalImage = data.filename;
         } else if (this.previousState == "MAGIC") {
           this.selectedRebuildImage = null;
-          this.selectedRefactorImage = null;
           await axios.get(`/api/run_install_finished_commands`);
           this.installFinished = true;
         } else if (this.previousState == "UPLOADING_MAGIC") {
@@ -667,9 +652,6 @@ export default {
     onTransferButtonClick() {
       if (this.selectedMethod.id == 0) {
         this.selectedGithubImage = this.selectedRebuildImage;
-        this.downloadSelected();
-      } else if (this.selectedMethod.id == 1) {
-        this.selectedGithubImage = this.selectedRefactorImage;
         this.downloadSelected();
       } else if (this.selectedMethod.id == 2) {
         this.uploadSelected();
@@ -754,20 +736,6 @@ export default {
         }
       }
     },
-    populateRefactorImages(releases) {
-      for (let release of releases) {
-        for (let asset of release.assets) {
-          if (asset.name.includes("Refactor-recore")) {
-            this.refactorImages.push({
-              name: asset.name,
-              id: asset.id,
-              url: asset.browser_download_url,
-              size: asset.size,
-            });
-          }
-        }
-      }
-    },
     populateRebuildImages(releases) {
       for (let release of releases) {
         for (let asset of release.assets) {
@@ -793,18 +761,32 @@ export default {
       this.openSerialNumber = (this.serial_number == "");
     },
     async getGithubImages() {
-      fetch("https://api.github.com/repos/intelligent-agent/Refactor/releases")
-        .then((response) => response.json())
-        .then((data) => this.populateRefactorImages(data));
+      // Reset first - this can now be called again (see checkInternet())
+      // after already having been called once, and populateRebuildImages
+      // appends rather than replaces.
+      this.rebuildImages = [];
       fetch("https://api.github.com/repos/intelligent-agent/Rebuild/releases")
         .then((response) => response.json())
         .then((data) => this.populateRebuildImages(data));
     },
+    async checkInternet() {
+      const response = await axios.get(`/api/has_internet`);
+      this.hasInternet = response.data.result;
+      if (this.hasInternet) {
+        // Refetch in case the initial page-load fetch happened before
+        // internet was available (e.g. connected via the WiFi setup
+        // window), which would otherwise leave rebuildImages empty.
+        this.getGithubImages();
+      } else if (this.selectedMethod.id != 2) {
+        this.selectedMethod = this.availableMethods.find((m) => m.id == 2);
+      }
+    },
   },
   created() {
-    this.selectedMethod = this.availableMethods[0];
+    this.selectedMethod = this.availableMethods.find((m) => m.id == 0);
     this.getGithubImages();
     this.getInfo();
+    this.checkInternet();
     this.checkOnLoadProgress();
   },
 };
