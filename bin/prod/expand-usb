@@ -16,15 +16,23 @@ fi
 
 info "Creating partition on unused space"
 # fdisk's own in-place re-read of the table can fail with "Device or
-# resource busy" even though the write itself succeeded (seen live on a
-# fresh USB drive) - the kernel picks up the new partition via udev
-# shortly after regardless, so don't treat that as fatal; wait for the
-# device node to actually appear instead of trusting fdisk's exit code.
+# resource busy" even though the write itself succeeded - a full
+# re-read (BLKRRPART) needs every partition on the disk free, and
+# partition 1 is normally still in use at this point in boot. Confirmed
+# live (twice - once in isolation, once on a genuinely fresh first boot
+# under real system load): the busy re-read is not a fluke, and how
+# long the kernel takes to pick up the new partition on its own varies
+# a lot with system load, so a short fixed wait is not reliable.
 printf "n\n\n\n\nw\n" | fdisk /dev/sda || true
 
 info "Waiting for /dev/sda2 to appear"
-for i in $(seq 1 10); do
+for i in $(seq 1 60); do
     [ -b /dev/sda2 ] && break
+    # partx adds a single new partition via BLKPG instead of
+    # invalidating the whole table, so it isn't blocked by partition 1
+    # being busy the way fdisk's own re-read (and blockdev --rereadpt)
+    # are - nudge it along instead of only waiting passively.
+    partx -a -n 2 /dev/sda >/dev/null 2>&1 || true
     sleep 1
 done
 
