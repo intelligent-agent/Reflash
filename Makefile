@@ -7,8 +7,6 @@ install_bins:
 	chmod +x /usr/local/bin/flash-recore
 	chmod +x /usr/local/bin/reboot-board
 	chmod +x /usr/local/bin/shutdown-board
-	chmod +x /usr/local/bin/set-boot-media
-	chmod +x /usr/local/bin/get-boot-media
 	chmod +x /usr/local/bin/get-emmc-version
 	chmod +x /usr/local/bin/get-recore-serial-number
 	chmod +x /usr/local/bin/rotate-screen
