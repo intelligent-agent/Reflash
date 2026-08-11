@@ -492,9 +492,37 @@ func streamLog(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic(err)
 	}
-	for line := range t.Lines {
-		fmt.Fprint(w, fmt.Sprintf("data: %s\n\n", line.Text))
-		flusher.Flush()
+	// Without watching the request context, this handler (and its tail
+	// follower) never returns once the client goes away - e.g. every
+	// time the log viewer's EventSource drops during a WiFi mode switch
+	// (#95) - leaking one goroutine per dropped connection forever.
+	defer t.Stop()
+
+	// Confirmed live (#95): when the board's WiFi interface disappears
+	// mid-stream (switching AP/station mode), the connection just goes
+	// silent on both ends - no RST, no read error, nothing - so neither
+	// side's error handling ever fires and the client waits forever. A
+	// periodic heartbeat lets the client notice the silence and
+	// reconnect on its own instead.
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, "event: heartbeat\ndata: \n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case line, ok := <-t.Lines:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(w, "data: %s\n\n", line.Text)
+			flusher.Flush()
+		}
 	}
 }
 
