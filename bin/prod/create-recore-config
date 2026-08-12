@@ -3,7 +3,8 @@
 set -euo pipefail
 
 SERIAL_NR=$1
-OFFSET=17408
+LOOP=""
+DISK_IMG=""
 
 info() {
     echo "[info] $1" >> /var/log/reflash.log
@@ -71,29 +72,50 @@ fi
 DEV=`lsblk -n -o NAME | grep 'mmcblk[0-2]$'`
 DEV_BOOT="/dev/${DEV}boot0"
 
+cleanup() {
+    if [ -n "$LOOP" ]; then
+        losetup -d "$LOOP" 2>/dev/null || true
+    fi
+    if [ -n "$DISK_IMG" ]; then
+        rm -f "$DISK_IMG"
+    fi
+}
+trap cleanup EXIT
+
 echo 0 > "/sys/block/${DEV}boot0/force_ro"
 
-# The kernel doesn't create a child partition node for eMMC boot
-# partitions (there's no ${DEV_BOOT}p1), and mount-config/other readers
-# loop-mount the raw device directly at a byte offset - so the
-# filesystem has to be created the same way, not via fdisk/mkfs on a
-# nonexistent partition node.
+# Whether the kernel auto-creates a child partition node for eMMC boot
+# partitions (${DEV_BOOT}p1) turns out to be kernel-version dependent -
+# it silently stopped working on Reflash's current kernel (#85), and
+# Reflash/Rebuild run different kernel branches entirely (confirmed
+# live: 6.12-current vs 6.18-edge), so this can't be assumed reliable
+# on either side going forward.
+#
+# The actual A8 factory provisioning script (test-recore-A8.py, still
+# in production use on the real test jig) sidesteps this rather than
+# working around it: build the partition table and filesystem inside a
+# loop-mounted plain file, where losetup -P's own partition scanning is
+# unaffected by whatever the eMMC-boot-partition quirk is, then dd the
+# finished image onto the real device as a single byte copy - no
+# partition-table awareness is ever needed against the real hardware
+# at all. Confirmed live: this produces a partition table identical to
+# every existing reader's expectation (partition 1 at byte 17408,
+# matching what fdisk-on-the-real-device produced for ~2.5 years, and
+# what Reflash's own offset-based readers already assume).
 info "Creating config filesystem"
-# Zeroing the whole device this way always ends in "No space left on
-# device" once dd hits the end of the block device - that's the
-# expected way it finishes, not a real failure.
-dd if=/dev/zero of="$DEV_BOOT" bs=1M || true
-LOOP=$(losetup -f --show -o "$OFFSET" "$DEV_BOOT")
+SIZE=$(blockdev --getsize64 "$DEV_BOOT")
+DISK_IMG=$(mktemp /tmp/recore-config-XXXXXX.img)
+dd if=/dev/zero of="$DISK_IMG" bs=1M count=$(( (SIZE + 1048575) / 1048576 )) status=none
+LOOP=$(losetup -f --show -P "$DISK_IMG")
+printf "g\nn\n\n\n\nw\n" | fdisk "$LOOP"
+
 # metadata_csum (default-on in e2fsprogs 1.47) leaves no room for the
 # dir-leaf checksum once the filesystem picks a 1K block size, which it
 # does at this size - reads then fail with "Bad message". Disable it.
-mkfs.ext4 -F -q -O ^metadata_csum,^64bit -E nodiscard "$LOOP"
+mkfs.ext4 -F -q -O ^metadata_csum,^64bit -E nodiscard "${LOOP}p1"
 
-# mount-config always mounts read-only (it's meant for readers); the
-# create path needs to write, so mount the loop device directly rather
-# than going through mount-config/unmount-config here.
 mkdir -p /mnt/config
-mount "$LOOP" /mnt/config
+mount "${LOOP}p1" /mnt/config
 echo "$SNR" > /mnt/config/serial_number
 
 info "Downloading calibration file ${FILE}"
@@ -102,5 +124,10 @@ wget -O "/mnt/config/${FILE}" "$URL"
 sync
 umount /mnt/config
 losetup -d "$LOOP"
+LOOP=""
+
+info "Writing config image to ${DEV_BOOT}"
+dd if="$DISK_IMG" of="$DEV_BOOT" status=none
+sync
 echo 1 > "/sys/block/${DEV}boot0/force_ro"
 info "Done"
