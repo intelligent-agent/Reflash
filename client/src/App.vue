@@ -573,81 +573,100 @@ export default {
       }
     },
     async checkOnLoadProgress() {
-      const response = await axios.get(`/api/get_progress`);
-      let data = response.data;
-      this.state = data.state;
-      if (data.state == "MAGIC") {
-        this.selectedGithubImage = this.getGithubImageFromName(data.filename);
-      } else if (data.state == "DOWNLOADING") {
-        this.selectedGithubImage = this.getGithubImageFromName(data.filename);
-      } else if (data.state == "INSTALLING") {
-        this.selectedLocalImage = data.filename;
-      } else if (data.state == "BACKUPING") {
-        if (this.flash.selectedMethod != 1) {
-          this.$refs.flashSelector.setSelection(1);
-          this.backupFile = data.filename;
+      // If this one-shot call fails (see checkProgress() below for why
+      // that's a real possibility), checkProgress() never even gets
+      // called, and the polling loop that's supposed to watch an
+      // in-progress operation never starts in the first place.
+      try {
+        const response = await axios.get(`/api/get_progress`);
+        let data = response.data;
+        this.state = data.state;
+        if (data.state == "MAGIC") {
+          this.selectedGithubImage = this.getGithubImageFromName(data.filename);
+        } else if (data.state == "DOWNLOADING") {
+          this.selectedGithubImage = this.getGithubImageFromName(data.filename);
+        } else if (data.state == "INSTALLING") {
+          this.selectedLocalImage = data.filename;
+        } else if (data.state == "BACKUPING") {
+          if (this.flash.selectedMethod != 1) {
+            this.$refs.flashSelector.setSelection(1);
+            this.backupFile = data.filename;
+          }
+          // This method is called on page load. If a refresh happens during upload, we can not continue.
+        } else if (data.state == "UPLOADING" || data.state == "UPLOADING_MAGIC") {
+          this.selectedMethod = this.availableMethods.find((m) => m.id == 2);
         }
-        // This method is called on page load. If a refresh happens during upload, we can not continue.
-      } else if (data.state == "UPLOADING" || data.state == "UPLOADING_MAGIC") {
-        this.selectedMethod = this.availableMethods.find((m) => m.id == 2);
+        this.previousState = this.state;
+      } catch (err) {
+        console.log("checkOnLoadProgress failed, starting polling anyway: " + err);
       }
-      this.previousState = this.state;
       this.checkProgress();
     },
     async checkProgress() {
-      const response = await axios.get(`/api/get_progress`);
-      let data = response.data;
-      this.state = data.state;
-      if (
-        [
-          "DOWNLOADING",
-          "UPLOADING",
-          "INSTALLING",
-          "BACKUPING",
-          "MAGIC",
-          "UPLOADING_MAGIC",
-        ].includes(this.state)
-      ) {
-        this.setProgress({ progress: data.progress });
-        this.setBandwidth({ bandwidth: data.bandwidth });
-        this.setTimeStarted({ time: data.start_time });
-        this.$refs.installprogressbar.update();
-        this.$refs.magicprogressbar.update();
-        this.$refs.transferprogressbar.update();
-      } else if (data.state == "FINISHED") {
-        if (this.previousState == "INSTALLING") {
-          this.selectedLocalImage = null;
-          await axios.get(`/api/run_install_finished_commands`);
-          this.installFinished = true;
-        } else if (this.previousState == "BACKUPING") {
-          this.backupFile = "";
+      // A timeout here (the server can legitimately take a while to
+      // respond while it's busy with heavy eMMC I/O mid-flash) used to
+      // throw out of this function entirely, skipping the
+      // setTimeout(...) below and silently killing the polling loop for
+      // good - the flash kept running server-side, but the UI stopped
+      // watching it and just looked frozen. Retry instead of dying.
+      try {
+        const response = await axios.get(`/api/get_progress`);
+        let data = response.data;
+        this.state = data.state;
+        if (
+          [
+            "DOWNLOADING",
+            "UPLOADING",
+            "INSTALLING",
+            "BACKUPING",
+            "MAGIC",
+            "UPLOADING_MAGIC",
+          ].includes(this.state)
+        ) {
+          this.setProgress({ progress: data.progress });
+          this.setBandwidth({ bandwidth: data.bandwidth });
+          this.setTimeStarted({ time: data.start_time });
+          this.$refs.installprogressbar.update();
+          this.$refs.magicprogressbar.update();
+          this.$refs.transferprogressbar.update();
+        } else if (data.state == "FINISHED") {
+          if (this.previousState == "INSTALLING") {
+            this.selectedLocalImage = null;
+            await axios.get(`/api/run_install_finished_commands`);
+            this.installFinished = true;
+          } else if (this.previousState == "BACKUPING") {
+            this.backupFile = "";
+            this.getInfo();
+          } else if (this.previousState == "DOWNLOADING") {
+            this.selectedRebuildImage = null;
+            await this.getInfo();
+            this.selectedLocalImage = data.filename;
+          } else if (this.previousState == "UPLOADING") {
+            this.selectedUploadImage = [];
+            await this.getInfo();
+            this.selectedLocalImage = data.filename;
+          } else if (this.previousState == "MAGIC") {
+            this.selectedRebuildImage = null;
+            await axios.get(`/api/run_install_finished_commands`);
+            this.installFinished = true;
+          } else if (this.previousState == "UPLOADING_MAGIC") {
+            this.selectedUploadImage = [];
+            await axios.get(`/api/run_install_finished_commands`);
+            this.installFinished = true;
+          }
+        } else if (data.state == "CANCELLED") {
+          this.selectedGithubImage = null;
           this.getInfo();
-        } else if (this.previousState == "DOWNLOADING") {
-          this.selectedRebuildImage = null;
-          await this.getInfo();
-          this.selectedLocalImage = data.filename;
-        } else if (this.previousState == "UPLOADING") {
-          this.selectedUploadImage = [];
-          await this.getInfo();
-          this.selectedLocalImage = data.filename;
-        } else if (this.previousState == "MAGIC") {
-          this.selectedRebuildImage = null;
-          await axios.get(`/api/run_install_finished_commands`);
-          this.installFinished = true;
-        } else if (this.previousState == "UPLOADING_MAGIC") {
-          this.selectedUploadImage = [];
-          await axios.get(`/api/run_install_finished_commands`);
-          this.installFinished = true;
+        } else if (data.state == "ERROR") {
+          this.$waveui.notify(data.error, "error", 0);
         }
-      } else if (data.state == "CANCELLED") {
-        this.selectedGithubImage = null;
-        this.getInfo();
-      } else if (data.state == "ERROR") {
-        this.$waveui.notify(data.error, "error", 0);
-      }
 
-      this.previousState = this.state;
-      if (data.state != "IDLE") setTimeout(this.checkProgress, 1000);
+        this.previousState = this.state;
+        if (data.state != "IDLE") setTimeout(this.checkProgress, 1000);
+      } catch (err) {
+        console.log("get_progress failed, retrying: " + err);
+        setTimeout(this.checkProgress, 1000);
+      }
     },
     onTransferButtonClick() {
       if (this.selectedMethod.id == 0) {
