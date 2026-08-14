@@ -93,9 +93,24 @@ update_fbcon() {
 }
 
 # Plymouth's DRM renderer ignores fbcon=rotate: entirely (that only
-# affects the legacy fbcon text console) - it reads the kernel's DRM
-# panel orientation instead, set via video=<connector>:panel_orientation=<value>
-# on the kernel command line.
+# affects the legacy fbcon text console - and note fbcon=rotate: is itself
+# a no-op unless CONFIG_FRAMEBUFFER_CONSOLE_ROTATION is set in the
+# kernel). Plymouth reads the kernel's DRM panel orientation instead, set
+# via video=<connector>:panel_orientation=<value> on the command line.
+#
+# Deliberately NO mode is pinned here. An earlier version detected the
+# panel's preferred mode and wrote video=HDMI-A-1:<w>x<h>, which did fix
+# an invisible boot splash: sun8i-dw-hdmi reports HPD low for ~600ms while
+# its PHY starts, DRM builds the fbdev console inside that window without
+# an EDID, and the console - and so Plymouth, which reuses the already-lit
+# mode - ended up in a mode the panel cannot display.
+#
+# But a pinned mode also overrides the EDID of whatever panel is attached
+# later, so swapping the screen would misconfigure the new one. The fix
+# belongs in the kernel and is now carried as a Rebuild patch
+# (drm-dw-hdmi-debounce-spurious-hpd-disconnect.patch), which re-reads HPD
+# before believing a disconnect so the EDID is read normally and every
+# panel gets its own preferred mode.
 update_plymouth(){
     mkdir -p /mnt/emmc
     umount -q /mnt/emmc/ || true
@@ -105,11 +120,11 @@ update_plymouth(){
     if [ ! -f "$CONFIG_FILE" ]; then
         echo "Misssig file: ${CONFIG_FILE}"
     else
-        if [[ $(grep 'panel_orientation=' "$CONFIG_FILE") ]]; then
-            sed -i -E "s/panel_orientation=[a-z_]+/panel_orientation=${ROT_PLYMOUTH}/" "$CONFIG_FILE"
-        else
-            sed -i "/extraargs=/ s/\$/ video=HDMI-A-1:panel_orientation=${ROT_PLYMOUTH}/" "$CONFIG_FILE"
-        fi
+        # Drop any previous video=HDMI-A-1 argument before re-adding it: a
+        # mode pinned by an older Reflash would otherwise survive a
+        # re-flash and keep overriding the panel's EDID.
+        sed -i -E "s/ *video=HDMI-A-1:[^ ]*//g" "$CONFIG_FILE"
+        sed -i "/extraargs=/ s|$| video=HDMI-A-1:panel_orientation=${ROT_PLYMOUTH}|" "$CONFIG_FILE"
         cat "$CONFIG_FILE"
     fi
     umount /mnt/emmc
