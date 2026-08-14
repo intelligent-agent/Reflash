@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -104,10 +103,6 @@ type State struct {
 	IPs        []string `json:"ips"`
 	File       *os.File
 	sync.Mutex
-}
-
-type Chunk struct {
-	Encoded string `json:"chunk"`
 }
 
 type WifiStatus struct {
@@ -610,7 +605,17 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	logInfo("Filename: " + state.Filename)
 	f, err := os.Create(images_folder + "/" + state.Filename)
 	if err != nil {
-		log.Fatal(err)
+		// Report the failure instead of log.Fatal. This runs on the USB
+		// drive, so a full disk or a drive that dropped off the bus is an
+		// ordinary, recoverable outcome - and log.Fatal here killed the
+		// whole Reflash server, taking the web UI and the log stream with
+		// it, so the user saw the browser die rather than an error.
+		logError("Could not create " + state.Filename + ": " + err.Error())
+		state.State = ERROR
+		state.Error = "Could not open the image file for writing. Check that the USB drive is present and has free space."
+		mountUsb(MODE_RO)
+		http.Error(w, state.Error, http.StatusInternalServerError)
+		return
 	}
 	state.File = f
 
@@ -648,34 +653,43 @@ func goUploadMagic() {
 }
 
 func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
-	var chunk *Chunk = &Chunk{}
 	var err error
-	reqBody, _ := io.ReadAll(r.Body)
-	json.Unmarshal(reqBody, &chunk)
 
 	if state.State == CANCELLED {
 		response := map[string]bool{"success": false}
 		json.NewEncoder(w).Encode(response)
 		return
-	} else {
-		path := "/tmp/mypipe"
-		if state.File == nil {
-			logInfo("Open file " + path)
-			state.File, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
-			if err != nil {
-				log.Fatal(err)
-			}
+	}
+
+	// Unlike the plain upload path, the destination here is a FIFO that
+	// the flashing process reads from, opened lazily on the first chunk
+	// rather than in a start handler.
+	path := "/tmp/mypipe"
+	if state.File == nil {
+		logInfo("Open file " + path)
+		state.File, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			// Same reasoning as uploadStart: failing to open the FIFO must
+			// not take the whole server down mid-flash.
+			logError("Could not open " + path + ": " + err.Error())
+			state.State = ERROR
+			state.Error = "Could not open the flash pipe. Reboot and try again."
+			http.Error(w, state.Error, http.StatusInternalServerError)
+			return
 		}
 	}
 
-	decoded, err := base64.StdEncoding.DecodeString(chunk.Encoded[37:])
+	// The client posts the chunk as a raw binary body, same as
+	// uploadChunk. This used to be base64 inside a JSON body, which
+	// inflated the wire size by ~33% - on a >1GB magic upload over this
+	// board's WiFi that is a lot of avoidable transfer.
+	decoded, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed to decode base64", http.StatusBadRequest)
+		http.Error(w, "Failed to read chunk body", http.StatusBadRequest)
 		return
 	}
-	_, err = state.File.Write(decoded)
-	if err != nil {
-		http.Error(w, "Failed to write decompressed data to file", http.StatusInternalServerError)
+	if _, err := state.File.Write(decoded); err != nil {
+		http.Error(w, "Failed to write chunk to file", http.StatusInternalServerError)
 		return
 	}
 
@@ -687,8 +701,15 @@ func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
+	// Closing the FIFO is what signals end-of-stream to the decompressor, so
+	// a failure here means the flash is incomplete - but it is still an
+	// error to report, not a reason to kill the server.
 	if err := state.File.Close(); err != nil {
-		log.Fatal(err)
+		logError("Could not close the flash pipe: " + err.Error())
+		state.State = ERROR
+		state.Error = "The flash did not complete cleanly. Reboot and try again."
+		http.Error(w, state.Error, http.StatusInternalServerError)
+		return
 	}
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
