@@ -380,9 +380,21 @@ export default {
         }
       });
     },
+    // Clear the throughput history so a new operation charts from scratch
+    // rather than inheriting the tail of the previous one.
+    resetProgressBars() {
+      ["installprogressbar", "magicprogressbar", "transferprogressbar"].forEach(
+        (ref) => {
+          if (this.$refs[ref]) {
+            this.$refs[ref].reset();
+          }
+        }
+      );
+    },
     async startMagicUpload() {
       let self = this;
       if (this.state == "IDLE") {
+        this.resetProgressBars();
         this.state = "UPLOADING_MAGIC";
         await axios
           .put(`/api/upload_magic_start`, {
@@ -401,25 +413,50 @@ export default {
     },
     async magicUploadLocalFile() {
       const CHUNK_SIZE = 3 * 1024 * 1024;
+      // Five minutes, because a slow chunk here is normal rather than a
+      // fault: the server writes into a FIFO that the flashing process
+      // drains at eMMC speed, so once the pipe buffer fills the upload
+      // is deliberately throttled and a single 3MB chunk can take a
+      // long time. A 20s timeout treated that backpressure as an error
+      // and killed the upload at ~1GB in, reproducibly; 60s got a flash
+      // through but still stalled visibly for a long stretch, close
+      // enough to the limit to be worth more headroom.
+      //
+      // This is not a latency budget, it is a deadlock guard - the only
+      // thing it needs to catch is a server that will never drain the
+      // pipe at all. Erring long is cheap; erring short corrupts the
+      // flash, since there is no safe retry (see below).
+      const CHUNK_TIMEOUT_MS = 300000;
       let self = this;
-      var reader = new FileReader();
       var offset = 0;
       var filesize = this.file.size;
 
-      reader.onload = function () {
-        var result = reader.result;
-        var chunk = result;
+      // Chunks are posted as raw binary Blob slices rather than base64
+      // inside JSON, matching uploadLocalFile - base64 inflated the wire
+      // size by ~33%, which is a lot of avoidable transfer on a >1GB
+      // image over this board's WiFi.
+      //
+      // Deliberately NO retry here, unlike uploadLocalFile. The
+      // destination is a stream that cannot be rewound: if a request
+      // times out client-side the server may already have written those
+      // bytes into the pipe, so re-posting the chunk duplicates data and
+      // xz dies with "Compressed data is corrupt" - which is exactly
+      // what retrying caused. Retries would only be safe if the server
+      // tracked chunk indices and ignored ones it had already consumed.
+      // Until then, fail loudly and let the user start over.
+      function postChunk() {
+        var slice = self.file.slice(offset, offset + CHUNK_SIZE);
         axios
-          .post(`/api/upload_magic_chunk`, {
-            chunk: chunk,
+          .post(`/api/upload_magic_chunk`, slice, {
+            headers: { "Content-Type": "application/octet-stream" },
+            timeout: CHUNK_TIMEOUT_MS,
           })
           .then(function (response) {
             const status = response.data;
             if (status.success && self.state == "UPLOADING_MAGIC") {
               offset += CHUNK_SIZE;
-              if (offset <= filesize) {
-                var slice = self.file.slice(offset, offset + CHUNK_SIZE);
-                reader.readAsDataURL(slice);
+              if (offset < filesize) {
+                postChunk();
               } else {
                 offset = filesize;
                 self.apiCall("upload_magic_finish");
@@ -427,21 +464,37 @@ export default {
             } else {
               self.apiCall("upload_cancel");
             }
-          }).catch(function (error) {
-            self.$waveui.notify(error, "error", 0);
-            console.log(error);
+          })
+          .catch(function (error) {
+            if (self.state != "UPLOADING_MAGIC") {
+              return;
+            }
+            console.log("upload_magic_chunk failed: " + error);
+            // Concatenate rather than passing the Error object -
+            // notify() renders an object as an empty callout, which is
+            // what made an earlier failure look like nothing happened.
+            self.$waveui.notify(
+              "Magic flash failed at " +
+                Math.round((offset / filesize) * 100) +
+                "%: " +
+                error +
+                ". The eMMC is now partially written - reboot and try again.",
+              "error",
+              0
+            );
+            self.apiCall("upload_cancel");
           });
-      };
+      }
 
       if (this.file) {
-        var slice = this.file.slice(offset, offset + CHUNK_SIZE);
-        reader.readAsDataURL(slice);
         self.fileName = this.file.name;
+        postChunk();
       }
     },
     async uploadSelected() {
       let self = this;
       if (this.state == "IDLE") {
+        this.resetProgressBars();
         this.state = "UPLOADING";
         await axios
           .put(`/api/upload_start`, {
@@ -722,6 +775,7 @@ export default {
     },
     async backupSelected() {
       this.setProgress({ progress: 0 });
+      this.resetProgressBars();
       this.$refs.installprogressbar.update();
       let self = this;
       await axios
