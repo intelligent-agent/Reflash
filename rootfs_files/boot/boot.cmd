@@ -7,6 +7,8 @@
 setenv load_addr "0x45000000"
 setenv overlay_error "false"
 setenv verbosity "1"
+setenv splashfile "boot.bmp"
+setenv splashimage "0x66000000"
 
 # Print boot source
 itest.b *0x10028 == 0x00 && echo "U-boot loaded from SD"
@@ -18,6 +20,22 @@ echo "Boot script loaded from ${devtype}"
 if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
 	load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt
 	env import -t ${load_addr} ${filesize}
+fi
+
+# Show a splash image from the boot partition, if one is there.
+# ${devtype}/${devnum} rather than a fixed device, so this works whether we
+# booted from eMMC or USB. The load is guarded: an image without a splash
+# file simply skips it rather than failing the boot.
+# Disable by setting splashfile= (empty) in armbianEnv.txt.
+if test -n "${splashfile}"; then
+	if load ${devtype} ${devnum} ${splashimage} ${prefix}${splashfile}; then
+		# Nested if so a failure here cannot abort the boot script. An
+		# older u-boot on eMMC without CONFIG_CMD_BMP would fail on an
+		# unknown command, and that must not stop the board booting.
+		if bmp display ${splashimage} m m; then
+			echo "Splash displayed"
+		fi
+	fi
 fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttyS0,115200 console=tty1"; fi
