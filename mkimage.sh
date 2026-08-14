@@ -2,7 +2,19 @@
 
 set -xeuo pipefail
 
-KERNEL_DEB=linux-image-current-sunxi64_26.02.0-trunk_arm64__6.12.69.deb
+# Kernel comes from a Rebuild build, with the hash suffix Armbian stamps on
+# the filename stripped off (Armbian appends -S...-P...-C... content hashes
+# that change whenever the patches or config change, which would make this
+# name unstable).
+#
+# Matched to Rebuild's pinned kernel (armbian/recore.csc: 6.18.33, edge) so
+# both images run the same kernel. Reflash previously used 6.12.69/current,
+# which had drifted from Rebuild across three axes at once - kernel version,
+# branch, and Armbian release - and meant kernel patches fixed one image but
+# not the other. The dw-hdmi HPD debounce is the case in point: it is what
+# makes the on-board screen light up during flashing, and it only exists in
+# Rebuild's 6.18 patch set.
+KERNEL_DEB=linux-image-edge-sunxi64_26.05.0-trunk_arm64__6.18.33.deb
 export ROOTFSDIR=reflash_rootfs
 sudo rm -rf "${ROOTFSDIR}"
 mkdir -p "${ROOTFSDIR}"
@@ -198,10 +210,27 @@ done
 
 dpkg -i ${KERNEL_DEB}
 
+KVER=\$(ls /lib/modules | head -1)
+
+# Recreate the /boot/Image symlink the kernel package's postinst would have
+# made ("Armbian: update last-installed kernel symlink to 'Image'").
+#
+# The postinst does not run here. The kernel deb depends on
+# initramfs-tools | linux-initramfs-tool and this minbase chroot has
+# neither - deliberately, because Reflash's rootfs IS the initramfs, so
+# there is nothing for initramfs-tools to build. dpkg therefore unpacks the
+# package but leaves it unconfigured.
+#
+# boot.cmd loads \${prefix}Image, so without this symlink the image is
+# unbootable. That is exactly what happened on the first 6.18 build, and it
+# still exited 0: dpkg's failure does not stop this chroot body, which runs
+# without set -e.
+ln -sf vmlinuz-\${KVER} /boot/Image
+
 # Rebuild modules.dep against what actually got unpacked - the excludes
 # above drop whole subsystems, and a stale dep file would reference
 # modules that are not there.
-depmod -a \$(ls /lib/modules | head -1)
+depmod -a \${KVER}
 
 
 systemctl enable systemd-networkd
@@ -389,6 +418,24 @@ umount /dev
 # /proc, /sys and /dev still bind-mounted would leave them mounted inside
 # ${ROOTFSDIR}, and the next run's "sudo rm -rf ${ROOTFSDIR}" would then
 # recurse straight into the host's /dev.
+# Fail the build if the kernel did not land properly.
+#
+# boot.cmd loads Image and uInitrd; without them U-Boot has nothing to boot
+# and the failure is invisible until a board is flashed. The kernel package
+# is expected to be "unpacked but not configured" here (see the Image
+# symlink above), so dpkg's own exit status cannot be used as the check -
+# look at the files instead.
+BOOT_MISSING=""
+for f in /boot/Image /boot/vmlinuz-* ; do
+  [ -e "\$f" ] || BOOT_MISSING="\$BOOT_MISSING \$f"
+done
+[ -e "\$(readlink -f /boot/Image)" ] || BOOT_MISSING="\$BOOT_MISSING /boot/Image(dangling)"
+if [ -n "\$BOOT_MISSING" ]; then
+  echo "FATAL: kernel install incomplete - missing:\$BOOT_MISSING" >&2
+  echo "FATAL: the resulting image would not boot" >&2
+  exit 1
+fi
+
 FW_MISSING=""
 for f in /usr/lib/firmware/rtw88/rtw8821c_fw.bin \
          /usr/lib/firmware/mediatek/mt7601u.bin \
