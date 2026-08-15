@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/golang/freetype"
 	"github.com/golang/freetype/truetype"
@@ -43,7 +44,75 @@ var fb *os.File
 var reDraw bool
 var orientation int
 
+// End the kernel's deferred fbcon takeover, and wait for it to finish.
+//
+// CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER holds fbcon back so the
+// bootloader's splash stays on screen until something actually wants the
+// display. It is released by the first console output on the VT - and Reflash
+// boots with console=serial, so that never happens on its own.
+//
+// It matters because the panel is driven by simpledrm off the framebuffer
+// u-boot handed over, and simpledrm only copies its buffer out to the scanout
+// memory during an atomic commit. Until some client enables the CRTC there is
+// no commit, so everything drawn here lands in the buffer and never reaches the
+// glass: the panel just keeps showing u-boot's pixels. sun4i-drm used to hide
+// this by doing an initial modeset at probe time.
+//
+// The release is driven by the dummy console's output notifier, so it takes
+// real printable output to fire: measured on hardware, "reflash\n" triggers it
+// while a lone "\n" or a single space does not - those are handled by the vt
+// layer without ever reaching the dummy console's putcs. Hence a proper word
+// here rather than one byte. The text itself is never seen: it goes to the
+// dummy console, and fbcon clears the framebuffer as it takes over.
+//
+// The takeover is asynchronous and that clear would wipe anything already
+// drawn, so wait for it to land before returning.
+func endDeferredConsoleTakeover() {
+	tty, err := os.OpenFile("/dev/tty1", os.O_WRONLY, 0)
+	if err != nil {
+		// Headless, or no VT - nothing to take over.
+		fmt.Printf("Could not open /dev/tty1 to start console takeover: %v\n", err)
+		return
+	}
+	// Trailing clear-screen + cursor-home in case fbcon was already active and
+	// the word would otherwise be left on the panel under Reflash's drawing.
+	tty.Write([]byte("reflash\n\033[2J\033[H"))
+	tty.Close()
+
+	for i := 0; i < 100; i++ {
+		if consoleTakenOver() {
+			fmt.Println("Console takeover complete")
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	fmt.Println("Timed out waiting for console takeover; drawing anyway")
+}
+
+// True once a framebuffer console is bound, which is what tells us the CRTC has
+// been enabled and simpledrm is scanning out.
+func consoleTakenOver() bool {
+	entries, err := os.ReadDir("/sys/class/vtconsole")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		base := "/sys/class/vtconsole/" + e.Name()
+		name, err := os.ReadFile(base + "/name")
+		if err != nil || !strings.Contains(string(name), "frame buffer device") {
+			continue
+		}
+		bound, err := os.ReadFile(base + "/bind")
+		if err == nil && strings.TrimSpace(string(bound)) == "1" {
+			return true
+		}
+	}
+	return false
+}
+
 func ScreenInit() {
+	endDeferredConsoleTakeover()
+
 	content, err := os.ReadFile("/sys/class/graphics/fb0/virtual_size")
 	if err != nil {
 		fmt.Printf("Error opening /sys/class/graphics/fb0/virtual_size: %v\n", err)
