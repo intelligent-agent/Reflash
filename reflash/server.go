@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/grafana/tail"
@@ -1530,7 +1531,16 @@ var startInstall = func(filename string) { go goInstall(filename) }
 // the host disconnects, so we (re)open it in a retry loop.
 func serveSerialControl(devPath string) {
 	for {
-		f, err := os.OpenFile(devPath, os.O_RDWR, 0)
+		// O_NOCTTY matters here. This process is a systemd service and so a
+		// session leader, and opening a tty without it makes that tty the
+		// process's controlling terminal. The gadget serial then hangs up
+		// whenever USB is disturbed - replugging any device on the board is
+		// enough, it does not take unplugging the OTG cable - and the kernel
+		// sends SIGHUP to the session leader, which Go terminates on by
+		// default. The whole server died, mid-flash if you were unlucky,
+		// leaving a partially written eMMC. The reopen below was already the
+		// right recovery; it was just never reached. See issue #113.
+		f, err := os.OpenFile(devPath, os.O_RDWR|syscall.O_NOCTTY, 0)
 		if err != nil {
 			time.Sleep(2 * time.Second) // wait for the gadget tty to appear
 			continue
