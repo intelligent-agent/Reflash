@@ -34,6 +34,14 @@ if test -n "${splashfile}"; then
 		# unknown command, and that must not stop the board booting.
 		if bmp display ${splashimage} m m; then
 			echo "Splash displayed"
+			# Stop U-Boot printing over its own splash. stdout/stderr
+			# include vidconsole, so everything echoed from here on is
+			# drawn onto the panel - unrotated, since U-Boot knows
+			# nothing about the panel orientation. Serial keeps the
+			# full log, and the kernel gets its console from
+			# ${consoleargs} regardless of this.
+			setenv stdout serial
+			setenv stderr serial
 		fi
 	fi
 fi
