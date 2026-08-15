@@ -24,7 +24,12 @@ sudo debootstrap --arch=arm64 --foreign --variant=minbase trixie "${ROOTFSDIR}"/
 if [ ! -f rootfs_files/debs/${KERNEL_DEB} ]; then
 	wget -P rootfs_files/debs/ https://feeds.iagent.no/debian/pool/main/${KERNEL_DEB}
 fi
-sudo cp rootfs_files/debs/* "${ROOTFSDIR}"/initrd
+# Only *.deb, to stay symmetric with the "rm ./*.deb" that cleans these up
+# again after dpkg has installed them. A copy of everything picks up anything
+# else parked in this directory - a backup of the kernel deb, say - and since
+# the cleanup only matches *.deb it is never removed, so it ends up baked into
+# the rootfs at its full size. That is 166MB of dead weight for one stray file.
+sudo cp rootfs_files/debs/*.deb "${ROOTFSDIR}"/initrd
 
 sudo bash -c "echo recore > ${ROOTFSDIR}/initrd/etc/hostname"
 
