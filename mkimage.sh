@@ -2,7 +2,19 @@
 
 set -xeuo pipefail
 
-KERNEL_DEB=linux-image-current-sunxi64_26.02.0-trunk_arm64__6.12.69.deb
+# Kernel comes from a Rebuild build, with the hash suffix Armbian stamps on
+# the filename stripped off (Armbian appends -S...-P...-C... content hashes
+# that change whenever the patches or config change, which would make this
+# name unstable).
+#
+# Matched to Rebuild's pinned kernel (armbian/recore.csc: 6.18.33, edge) so
+# both images run the same kernel. Reflash previously used 6.12.69/current,
+# which had drifted from Rebuild across three axes at once - kernel version,
+# branch, and Armbian release - and meant kernel patches fixed one image but
+# not the other. The dw-hdmi HPD debounce is the case in point: it is what
+# makes the on-board screen light up during flashing, and it only exists in
+# Rebuild's 6.18 patch set.
+KERNEL_DEB=linux-image-edge-sunxi64_26.05.0-trunk_arm64__6.18.33.deb
 export ROOTFSDIR=reflash_rootfs
 sudo rm -rf "${ROOTFSDIR}"
 mkdir -p "${ROOTFSDIR}"
@@ -12,7 +24,13 @@ sudo debootstrap --arch=arm64 --foreign --variant=minbase trixie "${ROOTFSDIR}"/
 if [ ! -f rootfs_files/debs/${KERNEL_DEB} ]; then
 	wget -P rootfs_files/debs/ https://feeds.iagent.no/debian/pool/main/${KERNEL_DEB}
 fi
-sudo cp rootfs_files/debs/* "${ROOTFSDIR}"/initrd
+# Name the file rather than globbing. ${KERNEL_DEB} is the only deb that is
+# downloaded and the only one dpkg installs, and rootfs_files/debs is gitignored
+# - so its contents are whatever happens to be on the machine doing the build,
+# which makes a glob here non-deterministic. Copying everything once baked a
+# 166MB backup of the kernel deb into the rootfs, because the cleanup afterwards
+# only matched *.deb and the backup was named *.deb.upstream-orig.
+sudo cp rootfs_files/debs/${KERNEL_DEB} "${ROOTFSDIR}"/initrd
 
 sudo bash -c "echo recore > ${ROOTFSDIR}/initrd/etc/hostname"
 
@@ -45,6 +63,89 @@ EOF
 
 chmod +x /usr/sbin/policy-rc.d
 
+# Never unpack things this image has no use for. Done as dpkg excludes
+# rather than deleting afterwards so the files are never written at all -
+# that saves build time as well as space, and it also applies to the
+# kernel package installed further down.
+#
+# The kernel package is by far the biggest thing in this image (208MB of
+# ~366MB installed), and the initramfs is unpacked into a tmpfs that the
+# kernel caps at half of RAM (~367MB on this 1GB board). Without this the
+# rootfs boots essentially 100% full, and anything that writes - logging,
+# ssh host keys, even login - fails with ENOSPC.
+cat <<EOF > /etc/dpkg/dpkg.cfg.d/01-slim
+path-exclude /usr/share/doc/*
+path-include /usr/share/doc/*/copyright
+path-exclude /usr/share/man/*
+path-exclude /usr/share/info/*
+path-exclude /usr/share/locale/*
+path-exclude /usr/share/lintian/*
+
+# Sound: this image never plays audio.
+path-exclude /lib/modules/*/kernel/sound/*
+path-exclude /lib/modules/*/kernel/drivers/media/*
+
+# Firewalling/QoS/bluetooth: not used while flashing.
+#
+# net/ipv4/netfilter and net/ipv6/netfilter have to go too, not just
+# net/netfilter: x_tables.ko lives in the latter, and leaving ip_tables.ko
+# behind without it means every boot logs
+#   ip_tables: Unknown symbol xt_compat_unlock (err -2)
+# for a module that then fails to load anyway.
+path-exclude /lib/modules/*/kernel/net/netfilter/*
+path-exclude /lib/modules/*/kernel/net/ipv4/netfilter/*
+path-exclude /lib/modules/*/kernel/net/ipv6/netfilter/*
+path-exclude /lib/modules/*/kernel/net/bluetooth/*
+path-exclude /lib/modules/*/kernel/net/sched/*
+
+# Filesystems we never mount. ext4/vfat/fuse/nls are deliberately kept:
+# ext4 for the USB and eMMC partitions, vfat+nls for FAT boot partitions.
+path-exclude /lib/modules/*/kernel/fs/xfs/*
+path-exclude /lib/modules/*/kernel/fs/btrfs/*
+path-exclude /lib/modules/*/kernel/fs/f2fs/*
+path-exclude /lib/modules/*/kernel/fs/jfs/*
+path-exclude /lib/modules/*/kernel/fs/ocfs2/*
+path-exclude /lib/modules/*/kernel/fs/gfs2/*
+path-exclude /lib/modules/*/kernel/fs/nfs/*
+path-exclude /lib/modules/*/kernel/fs/nfsd/*
+path-exclude /lib/modules/*/kernel/fs/smb/*
+path-exclude /lib/modules/*/kernel/fs/ceph/*
+path-exclude /lib/modules/*/kernel/net/sunrpc/*
+
+# iSCSI target (exporting storage over the network). Note this is NOT
+# the USB drive's path - that is usb-storage/uas on top of drivers/scsi,
+# both of which are kept.
+path-exclude /lib/modules/*/kernel/drivers/target/*
+path-exclude /lib/modules/*/kernel/drivers/infiniband/*
+
+# Firmware: default-deny, then allow only what a USB wifi dongle needs.
+# Note the path spelling - firmware packages record ./usr/lib/firmware
+# while the kernel package records ./lib/modules, so the two need
+# different prefixes and an exclude written against the wrong one
+# silently matches nothing.
+#
+# Taken whole these packages are 236MB; the USB-dongle parts are ~15MB.
+# The bulk is PCIe/SDIO cards, bluetooth, ethernet NICs and audio
+# codecs, none of which exist on this board.
+#
+# Adding support for another dongle family = add a path-include here.
+path-exclude /usr/lib/firmware/*
+path-include /usr/lib/firmware/rtw88/*
+path-include /usr/lib/firmware/rtlwifi/*
+path-include /usr/lib/firmware/ath9k_htc/*
+path-include /usr/lib/firmware/mediatek/mt76*
+path-include /usr/lib/firmware/mediatek/mt7601u.bin
+path-include /usr/lib/firmware/rt2*.bin
+path-include /usr/lib/firmware/rt3*.bin
+path-include /usr/lib/firmware/rt73.bin
+path-include /usr/lib/firmware/regulatory.db*
+EOF
+
+# firmware-* live in non-free-firmware, which debootstrap does not
+# enable. Without them most wifi dongles fail at probe with "Direct
+# firmware load for ... failed" - see the firmware install below.
+echo "deb http://ftp.no.debian.org/debian trixie main non-free-firmware" > /etc/apt/sources.list
+
 apt-get update
 
 apt install -y \
@@ -67,7 +168,75 @@ ca-certificates \
 iwd \
 dbus
 
+# Wifi dongle firmware. Nearly every mainline wireless driver (rtw88,
+# mt76, ath9k_htc, brcmfmac, rtl8xxxu, ...) loads a blob from
+# /lib/firmware when it probes, and this image previously shipped no
+# firmware directory at all - so those drivers failed with
+#   rtw_8821cu: Direct firmware load for rtw88/rtw8821c_fw.bin failed
+#   rtw_8821cu: failed to setup chip information
+# and the dongle was dead. The only adapter that worked did so because
+# its out-of-tree driver carries firmware inside the module.
+#
+# wireless-regdb provides regulatory.db, which was also missing and
+# failing to load on every boot; it governs which channels and TX powers
+# are permitted, so without it a dongle can come up restricted.
+#
+# Chosen for USB dongles specifically:
+#   realtek     - rtw88 (8821cu etc) and rtlwifi (8192cu etc)
+#   mediatek    - mt76/mt7601u, and the Ralink rt2x00 blobs live here too
+#   ath9k-htc   - the USB Atheros package; firmware-atheros is 117MB of
+#                 ath10k/11k/qca for PCIe cards and is deliberately NOT
+#                 installed, as none of it applies to a USB dongle
+# firmware-brcm80211 is omitted (Broadcom is almost all SDIO/PCIe) as is
+# firmware-misc-nonfree (19.5MB, nothing wifi-relevant for us).
+# dpkg does not create parent directories for path-included files, and
+# the default-deny above excludes /usr/lib/firmware/mediatek itself. The
+# rtw88/rtlwifi/ath9k_htc includes end in /* which happens to match the
+# directory entry too (fnmatch lets * match the empty string), but
+# mediatek/mt76* needs a literal mt76 and so cannot - which made
+# firmware-mediatek fail to unpack entirely:
+#   unable to create '.../mediatek/mt7601u.bin.dpkg-new': No such file
+# Pre-create the directory so the included blobs have somewhere to land.
+mkdir -p /usr/lib/firmware/mediatek
+
+apt install -y \
+wireless-regdb \
+firmware-realtek \
+firmware-mediatek \
+firmware-ath9k-htc
+
+# wireless-regdb ships regulatory.db-debian and relies on
+# update-alternatives to create the regulatory.db symlink the kernel
+# actually asks for - and that did not survive the chroot install.
+# Create it directly; a missing regulatory.db means the wifi stack falls
+# back to the most restrictive channel/power set on every dongle.
+for f in regulatory.db regulatory.db.p7s; do
+  [ -e /usr/lib/firmware/\$f ] || ln -sf \$f-debian /usr/lib/firmware/\$f
+done
+
 dpkg -i ${KERNEL_DEB}
+
+KVER=\$(ls /lib/modules | head -1)
+
+# Recreate the /boot/Image symlink the kernel package's postinst would have
+# made ("Armbian: update last-installed kernel symlink to 'Image'").
+#
+# The postinst does not run here. The kernel deb depends on
+# initramfs-tools | linux-initramfs-tool and this minbase chroot has
+# neither - deliberately, because Reflash's rootfs IS the initramfs, so
+# there is nothing for initramfs-tools to build. dpkg therefore unpacks the
+# package but leaves it unconfigured.
+#
+# boot.cmd loads \${prefix}Image, so without this symlink the image is
+# unbootable. That is exactly what happened on the first 6.18 build, and it
+# still exited 0: dpkg's failure does not stop this chroot body, which runs
+# without set -e.
+ln -sf vmlinuz-\${KVER} /boot/Image
+
+# Rebuild modules.dep against what actually got unpacked - the excludes
+# above drop whole subsystems, and a stale dep file would reference
+# modules that are not there.
+depmod -a \${KVER}
 
 
 systemctl enable systemd-networkd
@@ -201,11 +370,95 @@ rm -rf /usr/share/lintian/* /usr/share/linda/* /var/cache/man/*
 rm -rf /usr/share/zoneinfo/*
 rm -rf /lib/udev/hwdb.d/*
 
+# Build-time logs. These record how the image was made and are useless
+# once it boots, on a rootfs where free space is the scarce resource.
+rm -rf /var/log/apt /var/log/dpkg.log /var/log/bootstrap.log \
+       /var/log/alternatives.log /var/log/faillog /var/log/lastlog
+
+# journald's default is Storage=auto, which writes persistently if
+# /var/log/journal exists and volatile (/run) otherwise. This root fs is
+# a RAM-backed initramfs capped at half of RAM, while /run is a separate
+# and much roomier tmpfs - so the journal belongs there. It already ends
+# up in /run today only because that directory happens to be empty; make
+# it explicit so a future package cannot silently flip the journal onto
+# the space-constrained rootfs.
+rm -rf /var/log/journal
+mkdir -p /etc/systemd/journald.conf.d
+cat <<EOF > /etc/systemd/journald.conf.d/volatile.conf
+[Journal]
+Storage=volatile
+RuntimeMaxUse=16M
+EOF
+
+# Report what actually landed, so a mis-typed path-exclude shows up in
+# the build log instead of silently shipping the full tree.
+echo "=== SIZE REPORT ==="
+du -sh /lib/modules /usr/lib/firmware / 2>/dev/null | sed 's/^/  /'
+du -sh /usr/lib/firmware/* 2>/dev/null | sed 's/^/    /'
+ls /usr/lib/firmware/rtw88/rtw8821c_fw.bin >/dev/null 2>&1 \
+  && echo "  rtw8821c_fw.bin: present" || echo "  rtw8821c_fw.bin: MISSING"
+ls /usr/lib/firmware/regulatory.db >/dev/null 2>&1 \
+  && echo "  regulatory.db: present" || echo "  regulatory.db: MISSING"
+ls /usr/lib/firmware/mediatek/mt7601u.bin >/dev/null 2>&1 \
+  && echo "  mt7601u.bin: present" || echo "  mt7601u.bin: MISSING"
+ls /usr/lib/firmware/ath9k_htc/*.fw >/dev/null 2>&1 \
+  && echo "  ath9k_htc fw: present" || echo "  ath9k_htc fw: MISSING"
+echo "=== END SIZE REPORT ==="
+
 # Clean up mounts before exiting the chroot
 umount /proc
 umount /sys
 umount /dev/pts
 umount /dev
+
+# Fail the build if the firmware install did not actually land.
+#
+# apt returning non-zero is not enough on its own: this chroot body runs
+# without set -e (the outer script's set -e only sees the exit status of
+# the whole here-doc, i.e. the last command), so a dpkg unpack failure
+# scrolls past and the image ships silently without dongle firmware.
+# That is exactly how firmware-mediatek went missing for an entire build
+# while make still reported success.
+#
+# Deliberately placed after the umounts above: exiting non-zero with
+# /proc, /sys and /dev still bind-mounted would leave them mounted inside
+# ${ROOTFSDIR}, and the next run's "sudo rm -rf ${ROOTFSDIR}" would then
+# recurse straight into the host's /dev.
+# Fail the build if the kernel did not land properly.
+#
+# boot.cmd loads Image and uInitrd; without them U-Boot has nothing to boot
+# and the failure is invisible until a board is flashed. The kernel package
+# is expected to be "unpacked but not configured" here (see the Image
+# symlink above), so dpkg's own exit status cannot be used as the check -
+# look at the files instead.
+BOOT_MISSING=""
+for f in /boot/Image /boot/vmlinuz-* ; do
+  [ -e "\$f" ] || BOOT_MISSING="\$BOOT_MISSING \$f"
+done
+[ -e "\$(readlink -f /boot/Image)" ] || BOOT_MISSING="\$BOOT_MISSING /boot/Image(dangling)"
+if [ -n "\$BOOT_MISSING" ]; then
+  echo "FATAL: kernel install incomplete - missing:\$BOOT_MISSING" >&2
+  echo "FATAL: the resulting image would not boot" >&2
+  exit 1
+fi
+
+FW_MISSING=""
+for f in /usr/lib/firmware/rtw88/rtw8821c_fw.bin \
+         /usr/lib/firmware/mediatek/mt7601u.bin \
+         /usr/lib/firmware/regulatory.db; do
+  [ -e "\$f" ] || FW_MISSING="\$FW_MISSING \$f"
+done
+# Checked as non-empty directories rather than by filename - these
+# packages rename their blobs between releases, and a check hard-coded to
+# a name that no longer exists would fail the build for the wrong reason.
+for d in /usr/lib/firmware/rtlwifi /usr/lib/firmware/ath9k_htc; do
+  [ -n "\$(ls -A \$d 2>/dev/null)" ] || FW_MISSING="\$FW_MISSING \$d/"
+done
+if [ -n "\$FW_MISSING" ]; then
+  echo "FATAL: wifi firmware install failed - missing:\$FW_MISSING" >&2
+  echo "FATAL: check the dpkg path-include rules and the apt output above" >&2
+  exit 1
+fi
 
 ENDOFDEB
 

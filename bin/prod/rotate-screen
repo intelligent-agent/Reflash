@@ -31,9 +31,19 @@ update_xorg(){
     if [ ! -d ${XORG_DIR} ]; then
         echo "Misssig directory: ${XORG_DIR}"
     else
+        # Two Monitor sections on purpose. The connector name depends on which
+        # driver owns the display in the image being flashed: sun4i-drm calls it
+        # HDMI-1, while simpledrm - which reports DRM_MODE_CONNECTOR_Unknown -
+        # is None-1 to Xorg. Reflash cannot know which one it just wrote, and a
+        # Monitor section whose Identifier matches no output is simply unused,
+        # so writing both covers old and new images alike.
         cat <<EOF > "${XORG_DIR}/90-monitor.conf"
 Section "Monitor"
     Identifier "HDMI-1"
+    Option "Rotate" "$ROT_XORG"
+EndSection
+Section "Monitor"
+    Identifier "None-1"
     Option "Rotate" "$ROT_XORG"
 EndSection
 Section "InputClass"
@@ -93,9 +103,31 @@ update_fbcon() {
 }
 
 # Plymouth's DRM renderer ignores fbcon=rotate: entirely (that only
-# affects the legacy fbcon text console) - it reads the kernel's DRM
-# panel orientation instead, set via video=<connector>:panel_orientation=<value>
-# on the kernel command line.
+# affects the legacy fbcon text console - and note fbcon=rotate: is itself
+# a no-op unless CONFIG_FRAMEBUFFER_CONSOLE_ROTATION is set in the
+# kernel). Plymouth reads the kernel's DRM panel orientation instead, set
+# via video=<connector>:panel_orientation=<value> on the command line.
+#
+# Deliberately NO mode is pinned here. An earlier version detected the
+# panel's preferred mode and wrote video=HDMI-A-1:<w>x<h>, which did fix
+# an invisible boot splash: sun8i-dw-hdmi reports HPD low for ~570ms while
+# its PHY starts, DRM builds the fbdev console inside that window without
+# an EDID, drm_add_modes_noedid() invents 1024x768, and drm_fb_helper -
+# which allocates once and cannot grow - makes that guess permanent. The
+# panel cannot lock, drops sync and blanks its own backlight.
+#
+# But a pinned mode also overrides the EDID of whatever panel is attached
+# later, so swapping the screen would misconfigure the new one. Rebuild
+# now solves it upstream of all this instead: sun4i-drm is not built at
+# all (CONFIG_DRM_SUN4I=n, CONFIG_DRM_SIMPLEDRM=y) and the panel is driven
+# from the framebuffer u-boot already programmed from the real EDID and
+# handed over via /chosen/framebuffer-hdmi. Every panel therefore gets its
+# own mode, chosen by u-boot rather than guessed by the kernel.
+#
+# Both connector names are written for the same reason as update_xorg:
+# sun4i-drm images call it HDMI-A-1, simpledrm images Unknown-1, and the
+# kernel silently ignores a video= argument for a connector that does not
+# exist.
 update_plymouth(){
     mkdir -p /mnt/emmc
     umount -q /mnt/emmc/ || true
@@ -105,11 +137,12 @@ update_plymouth(){
     if [ ! -f "$CONFIG_FILE" ]; then
         echo "Misssig file: ${CONFIG_FILE}"
     else
-        if [[ $(grep 'panel_orientation=' "$CONFIG_FILE") ]]; then
-            sed -i -E "s/panel_orientation=[a-z_]+/panel_orientation=${ROT_PLYMOUTH}/" "$CONFIG_FILE"
-        else
-            sed -i "/extraargs=/ s/\$/ video=HDMI-A-1:panel_orientation=${ROT_PLYMOUTH}/" "$CONFIG_FILE"
-        fi
+        # Drop any previous video= argument for either connector before
+        # re-adding them: a mode pinned by an older Reflash would otherwise
+        # survive a re-flash and keep overriding the panel's EDID, and a
+        # stale orientation would fight the new one.
+        sed -i -E "s/ *video=(HDMI-A-1|Unknown-1):[^ ]*//g" "$CONFIG_FILE"
+        sed -i "/extraargs=/ s|$| video=HDMI-A-1:panel_orientation=${ROT_PLYMOUTH} video=Unknown-1:panel_orientation=${ROT_PLYMOUTH}|" "$CONFIG_FILE"
         cat "$CONFIG_FILE"
     fi
     umount /mnt/emmc

@@ -74,6 +74,12 @@ docker:
 	mkdir -p docker-reflash/bin
 	cp bin/prod/* docker-reflash/bin
 	cp -r client docker-reflash/
+# Clear the staged copy first: "cp -r" merges into an existing directory
+# rather than replacing it, so files deleted from rootfs_files lived on in
+# the build context. A kernel deb removed here stayed behind and was copied
+# into the chroot alongside its replacement - 221MB of dead weight, and a
+# stale kernel that a small change to KERNEL_DEB could have picked up.
+	rm -rf docker-reflash/rootfs_files
 	cp -r rootfs_files docker-reflash/
 	mkdir -p docker-reflash/reflash
 	cp reflash/reflash docker-reflash/reflash
