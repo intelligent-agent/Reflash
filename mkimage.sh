@@ -543,9 +543,21 @@ Description=Refactor flashing server
 After=network.target
 Conflicts=getty@tty1.service
 Before=getty.target
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/usr/local/bin/reflash
+# Defence in depth: the server should never exit on its own, but if it does,
+# a flashing appliance that stays dead until someone power-cycles it is the
+# worst outcome - the user just sees the browser fail to connect. An
+# in-progress flash is lost either way, but the web UI and the log stream
+# come back by themselves.
+#
+# StartLimitIntervalSec=0 disables the rate limiter that would otherwise give
+# up after 5 restarts in 10s and leave the unit failed - for this appliance,
+# retrying forever is better than staying down.
+Restart=always
+RestartSec=1
 
 [Install]
 WantedBy=multi-user.target
