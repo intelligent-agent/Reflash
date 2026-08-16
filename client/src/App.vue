@@ -794,9 +794,6 @@ export default {
     shutdownBoard() {
       this.apiCall("shutdown_board");
     },
-    enableSsh() {
-      this.apiCall("enable_ssh");
-    },
     setOption(opt, value) {
       if (opt == "darkmode") {
         this.setTheme(value);

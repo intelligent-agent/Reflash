@@ -599,6 +599,7 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	state.BytesNow = 0
 	state.BytesTotal = data.Size
 	state.State = UPLOADING
+	uploadFailed = false
 	mountUsb(MODE_RW)
 
 	timeStart = time.Now()
@@ -633,6 +634,7 @@ func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
 	state.BytesNow = 0
 	state.BytesTotal = data.Size
 	state.State = UPLOADING_MAGIC
+	uploadFailed = false
 
 	go goUploadMagic()
 	time.Sleep(1 * time.Second)
@@ -653,10 +655,39 @@ func goUploadMagic() {
 	logInfo("flash-mkfifo done")
 }
 
+// A chunk that failed server-side used to return nothing but an HTTP status:
+// no log line, and the state left as UPLOADING. The client responds to that by
+// calling /upload/cancel, so all the journal showed was "Upload cancelled" -
+// identical to the user pressing Cancel, which is exactly the confusion this
+// cost us during testing. Record the failure here instead, with the offset it
+// happened at, since on the magic path it means a partially written eMMC.
+// See issue #114.
+// getProgress clears ERROR as soon as it has reported it once, and during an
+// upload the client is polling it every second - so by the time the client
+// reacts to a failed chunk by calling /upload/cancel, the state has usually
+// been reset to IDLE already and says nothing about why. Remember the failure
+// separately; it is cleared when a new upload starts.
+var uploadFailed bool
+
+func failChunk(w http.ResponseWriter, code int, what string, userMsg string, err error) {
+	progress := ""
+	if state.BytesTotal > 0 {
+		progress = fmt.Sprintf(" (%.0f%%)", float64(state.BytesNow)*100/float64(state.BytesTotal))
+	}
+	logError(fmt.Sprintf("%s after %d of %d bytes%s: %s",
+		what, state.BytesNow, state.BytesTotal, progress, err.Error()))
+	state.State = ERROR
+	state.Error = userMsg
+	uploadFailed = true
+	http.Error(w, userMsg, code)
+}
+
 func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
 	var err error
 
-	if state.State == CANCELLED {
+	// ERROR as well as CANCELLED: any chunk still in flight when one fails
+	// must not overwrite state.Error with a fresh failure of its own.
+	if state.State == CANCELLED || state.State == ERROR {
 		response := map[string]bool{"success": false}
 		json.NewEncoder(w).Encode(response)
 		return
@@ -686,11 +717,17 @@ func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
 	// board's WiFi that is a lot of avoidable transfer.
 	decoded, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed to read chunk body", http.StatusBadRequest)
+		failChunk(w, http.StatusBadRequest,
+			"Could not read a chunk of the magic upload from the network",
+			"The magic flash failed while receiving data. The eMMC is partially written - reboot and try again.",
+			err)
 		return
 	}
 	if _, err := state.File.Write(decoded); err != nil {
-		http.Error(w, "Failed to write chunk to file", http.StatusInternalServerError)
+		failChunk(w, http.StatusInternalServerError,
+			"Could not write a chunk of the magic upload to "+path,
+			"The magic flash failed while writing to the flash pipe. The eMMC is partially written - reboot and try again.",
+			err)
 		return
 	}
 
@@ -726,7 +763,7 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadChunk(w http.ResponseWriter, r *http.Request) {
-	if state.State == CANCELLED {
+	if state.State == CANCELLED || state.State == ERROR {
 		response := map[string]bool{"success": false}
 		json.NewEncoder(w).Encode(response)
 		return
@@ -738,7 +775,10 @@ func uploadChunk(w http.ResponseWriter, r *http.Request) {
 	// body.
 	decoded, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed to read chunk body", http.StatusBadRequest)
+		failChunk(w, http.StatusBadRequest,
+			"Could not read a chunk of the upload from the network",
+			"The upload failed while receiving data. Check the network connection and try again.",
+			err)
 		return
 	}
 
@@ -757,7 +797,10 @@ func uploadChunk(w http.ResponseWriter, r *http.Request) {
 	// intermittent connection resets - a hardware constraint, not
 	// something fixable by tuning the write path further.
 	if _, err := state.File.Write(decoded); err != nil {
-		http.Error(w, "Failed to write chunk to file", http.StatusInternalServerError)
+		failChunk(w, http.StatusInternalServerError,
+			"Could not write a chunk of the upload to "+state.Filename,
+			"The upload failed while writing to the USB drive. Check that it is present and has free space.",
+			err)
 		return
 	}
 	state.BytesNow += len(decoded)
@@ -770,7 +813,16 @@ func uploadChunk(w http.ResponseWriter, r *http.Request) {
 func uploadFinish(w http.ResponseWriter, r *http.Request) {
 	if state.File != nil {
 		if err := state.File.Close(); err != nil {
-			log.Fatal(err)
+			// The last flush to the USB drive lands here, so this is
+			// where a full disk shows up - an incomplete image to
+			// report, not a reason to kill the server and the log
+			// stream with it.
+			logError("Could not close " + state.Filename + ": " + err.Error())
+			state.Error = "The image was not written completely. Check that the USB drive has free space and try again."
+			state.File = nil
+			mountUsb(MODE_RO)
+			state.State = ERROR
+			return
 		}
 		state.File = nil
 	}
@@ -781,16 +833,40 @@ func uploadFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadCancel(w http.ResponseWriter, r *http.Request) {
-	state.State = CANCELLED
+	// The client calls this both when the user presses Cancel and after a
+	// chunk has failed, so an ERROR state has to survive - overwriting it
+	// with CANCELLED is what made the two indistinguishable in the first
+	// place, in the UI as well as the log. See issue #114.
+	failed := uploadFailed || state.State == ERROR
+	uploadFailed = false
+	if !failed {
+		state.State = CANCELLED
+	}
 	if state.File != nil {
 		logInfo("Closing file")
 		if err := state.File.Close(); err != nil {
-			log.Fatal(err)
+			// Same reasoning as uploadStart: this runs on removable
+			// media and feeds a pipe whose reader may already be gone,
+			// and killing the server here would take the log stream
+			// with it - precisely when there is something to read.
+			logError("Could not close the file: " + err.Error())
 		}
 		state.File = nil
 	}
-	duration := time.Since(timeStart)
-	logInfo(fmt.Sprintf("Upload cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	// timeStart is only set once an upload has actually started, and this
+	// endpoint can be reached without one - printing the zero value gives a
+	// duration in the hundreds of millions of minutes, which reads like a
+	// bug in the very log line that is supposed to explain what happened.
+	elapsed := ""
+	if !timeStart.IsZero() {
+		duration := time.Since(timeStart)
+		elapsed = fmt.Sprintf(" after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60)
+	}
+	if failed {
+		logInfo("Upload aborted by the error above" + elapsed)
+	} else {
+		logInfo("Upload cancelled by the user" + elapsed)
+	}
 }
 
 func startMagic(w http.ResponseWriter, r *http.Request) {
@@ -1240,17 +1316,6 @@ func cmdRotateScreen(rotation int, place string) error {
 	return err
 }
 
-func setSshEnabled(is_enabled bool) error {
-	var err error
-	cmd := exec.Command(resolveCmd("set-ssh-enabled"), strconv.FormatBool(is_enabled))
-	if err := cmd.Run(); err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			log.Fatalf("Command returned exit code %v\n", exitError.ExitCode())
-		}
-	}
-	return err
-}
-
 func isUsbPresent(w http.ResponseWriter, r *http.Request) {
 	result := runCommandReturnBool("is-usb-present")
 	var response *BinaryCommandResult = &BinaryCommandResult{
@@ -1274,29 +1339,44 @@ func logError(msg string) {
 	log_msg("[error] " + msg)
 }
 
+// Every log line opens, appends to and closes the log file, and all three
+// steps used to be log.Fatal - so a server that could not write its log
+// killed itself instead of reporting it. That is not hypothetical here: the
+// rootfs is the initrd unpacked into a tmpfs capped at half of RAM, and this
+// image has historically booted full enough that any write hits ENOSPC (see
+// the note in mkimage.sh).
+//
+// Failures are reported to stderr, never through logError - that would come
+// straight back here and recurse. The message is not lost either way: it has
+// already gone to stdout, which systemd captures in the journal.
 func log_msg(msg string) {
 	fmt.Println(msg)
 	file, err := os.OpenFile(log_file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, "Could not open "+log_file+": "+err.Error())
+		return
 	}
+	defer file.Close()
 	if _, err := file.Write([]byte(msg + "\n")); err != nil {
-		log.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, "Could not write to "+log_file+": "+err.Error())
 	}
 }
 
 func clearLog(w http.ResponseWriter, r *http.Request) {
 	file, err := os.OpenFile(log_file, os.O_RDWR, 0644)
 	if err != nil {
-		log.Fatal(err)
+		// O_RDWR without O_CREATE, so this fails outright if the log file
+		// is not there yet - and it was a log.Fatal, which made the Clear
+		// log button in the UI able to kill the server in one click.
+		logError("Could not open " + log_file + " to clear it: " + err.Error())
+		http.Error(w, "Could not clear the log", http.StatusInternalServerError)
+		return
 	}
 	defer file.Close()
-	err = file.Truncate(0)
-	if err != nil {
-		log.Fatal(err)
+	if err := file.Truncate(0); err != nil {
+		logError("Could not truncate " + log_file + ": " + err.Error())
+		http.Error(w, "Could not clear the log", http.StatusInternalServerError)
+		return
 	}
 	log_msg("--- Log start ---")
 
