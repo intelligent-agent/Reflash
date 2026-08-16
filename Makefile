@@ -103,7 +103,13 @@ flash:
 	@lsblk -o NAME,SIZE,TRAN,MODEL,MOUNTPOINTS $(DRIVE)
 	@read -p "This will ERASE all data on $(DRIVE). Type YES to continue: " a; [ "$$a" = YES ] || { echo "Aborted."; exit 1; }
 	@for p in $(DRIVE)*; do sudo umount "$$p" 2>/dev/null || true; done
-	xz -dc $(IMAGE) | sudo dd of=$(DRIVE) bs=4M conv=fsync oflag=direct status=progress
+# iflag=fullblock is required when dd reads from a pipe: a read() on a pipe
+# returns at most the pipe buffer (64K), so bs=4M is never filled and dd writes
+# short blocks - it warned "partial read (57344 bytes); suggest iflag=fullblock".
+# No data is lost (there is no count=), but with oflag=direct every one of those
+# 56K fragments goes straight to the device, which is slow on a USB stick.
+# fullblock makes dd accumulate a whole 4M block before writing.
+	xz -dc $(IMAGE) | sudo dd of=$(DRIVE) bs=4M iflag=fullblock conv=fsync oflag=direct status=progress
 	sync
 	@echo "Done. Safe to remove $(DRIVE)."
 

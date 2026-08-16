@@ -262,6 +262,27 @@ SUBSYSTEM=="udc", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-gadget-
 # network for an interactive console.
 EOF
 
+cat <<EOF > /etc/udev/rules.d/99-recore-rps.rules
+# Spread WiFi receive processing off cpu0. Without this, everything about an
+# inbound transfer happens on cpu0 - the EHCI interrupt, the rtw88 USB RX path
+# and the whole IP/TCP stack all run in softirq on that one core, which sat at
+# 73% softirq while receiving a mere 1.2 MB/s. That, not the radio and not the
+# USB drive, is what capped image uploads at ~1.5 MB/s.
+#
+# Measured on a Recore A8 with an RTL8821CU dongle: receive went from 1.0 MB/s
+# to 3.3 MB/s, and a real 1.2GB image upload from ~13 minutes to ~8. See #119.
+#
+# Mask "e" is cpus 1-3, leaving cpu0 for the driver itself. Do not also pin the
+# EHCI interrupt to one of those cores - that was measured and it is worse, as
+# the driver then competes with the stack for the same cpu.
+#
+# This has to run on hotplug rather than once at boot: rps_cpus lives on the
+# netdev, so it resets whenever the dongle is plugged in or the interface is
+# recreated. Only wlan* is set here - ethernet is native (dwmac-sun8i), does
+# not go through EHCI, and has not been measured.
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="wlan*", RUN+="/bin/sh -c 'echo e > /sys/class/net/%k/queues/rx-0/rps_cpus'"
+EOF
+
 # Careful: this heredoc is nested inside the outer, unquoted ENDOFDEB block
 # below (which must stay unquoted, since it expands the KERNEL_DEB variable
 # from mkimage.sh's own scope). An unquoted outer heredoc expands its entire

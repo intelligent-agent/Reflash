@@ -42,7 +42,28 @@ if [ ! -b /dev/sda2 ]; then
 fi
 
 info "Creating ext4 filesystem"
-mkfs.ext4 -F -E nodiscard /dev/sda2
+# -J size=16 rather than the 128MB journal mke2fs picks by default for a
+# filesystem this size. That journal is the bulk of what mkfs writes here:
+# measured on a 29GB stick, the default wrote 134MB and took 48-56s, while a
+# 16MB journal wrote 18MB and took 31s. On a first boot that time is all on
+# the critical path - ssh-keygen-boot calls this script, and reflash.service
+# waits for it, so the flashing UI does not appear until it finishes.
+#
+# 16MB is far more journal than this filesystem can use. It holds a handful
+# of multi-GB image files written sequentially, and in the default
+# data=ordered mode only metadata is journalled - a contiguous 1GB file is a
+# few extents plus the bitmaps for the block groups it spans. The cost of a
+# small journal is more frequent checkpointing, which needs a metadata-heavy
+# workload (many small files, heavy deletes, concurrent fsync) to show up.
+#
+# Do not expect much from shrinking it further: with a 16MB journal the whole
+# mkfs writes 18MB, which is ~1s at this stick's 18MB/s, yet still takes 31s.
+# The rest is per-write latency on scattered group metadata, not volume.
+#
+# Note that lazy inode table init is already the default in mke2fs 1.47, so
+# the 1.9M inodes are not what costs time here - confirmed by the default and
+# lazy_itable_init=1 writing byte-for-byte the same 134MB.
+mkfs.ext4 -F -E nodiscard -J size=16 /dev/sda2
 
 info "Mounting new partition"
 mkdir -p /mnt/usb
