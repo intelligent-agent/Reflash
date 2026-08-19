@@ -199,6 +199,40 @@ var (
 	connectMutex sync.Mutex
 )
 
+// bootPhase times one startup step and logs it. Unconditional: the whole point
+// of measuring is that the boot budget was previously guessed at, and #116 was
+// diagnosed from the journal after the fact rather than from anything Reflash
+// recorded itself.
+func bootPhase(name string, f func()) {
+	t := time.Now()
+	f()
+	logInfo(fmt.Sprintf("boot: %-16s %6.2fs", name, time.Since(t).Seconds()))
+}
+
+// earlyUI brings the panel and the HTTP listener up *before* the slow startup
+// work rather than after it. Off by default: it is an experiment, and it is not
+// safe to ship as-is - serving from /mnt/usb before it is mounted reports an
+// empty image list rather than "not ready", and starting before
+// ssh-keygen-boot has finished races it for the mount, which today is prevented
+// only by the Before=reflash.service ordering.
+func earlyUI() bool {
+	return os.Getenv("REFLASH_EARLY_UI") == "1"
+}
+
+// slowInit is everything that can block: mkfs on a fresh stick (measured at
+// 198s on a worn one), mounting, and a WiFi connect that waits up to 30s for
+// DHCP. Split out so it can be run either before the listener (current
+// behaviour) or alongside it (the experiment).
+func slowInit() {
+	bootPhase("get-ips", func() { state.IPs = getIPs() })
+	bootPhase("expand-usb", func() { expandUsb() })
+	bootPhase("mount-usb", func() { mountUsb(MODE_RO) })
+	bootPhase("load-options", func() { loadOptions() })
+	bootPhase("wifi-bringup", func() { bringupWifi() })
+	updateDisplay()
+	startWatchdog()
+}
+
 func ServerInit() {
 	env = os.Getenv("APP_ENV")
 	if env == "dev" {
@@ -221,10 +255,11 @@ func ServerInit() {
 		binDir = d
 	}
 
+	// IPs are filled in by slowInit: get-hostnames shells out to `ip` and
+	// getent, which is not something to do before the first frame.
 	state = &State{
 		State:      IDLE,
 		BytesTotal: 1,
-		IPs:        getIPs(),
 	}
 
 	oldState = &State{
@@ -235,15 +270,23 @@ func ServerInit() {
 	reflashVersion = runCommandReturnString("get-reflash-version")
 
 	logInfo("-- Server started at " + time.Now().Format("15:04:05") + " --")
-	expandUsb()
-	mountUsb(MODE_RO)
-	loadOptions()
-	bringupWifi()
-	updateDisplay()
-	startWatchdog()
+
+	// Neither of these touches the USB drive, so they are never worth delaying.
 	go serveControlSocket(controlSocketPath())
 	if env != "dev" {
 		go serveSerialControl("/dev/ttyGS1")
+	}
+
+	if earlyUI() {
+		// Something true on the panel before the slow work, not after it.
+		// Rotation is a stored option and is not known yet, so this first frame
+		// is unrotated and may flip once load-options completes.
+		bootPhase("early-draw", func() {
+			Draw(0, "Preparing USB drive", 0, nil, reflashVersion)
+		})
+		go slowInit()
+	} else {
+		slowInit()
 	}
 
 	timer1 := time.NewTimer(3 * time.Second)
