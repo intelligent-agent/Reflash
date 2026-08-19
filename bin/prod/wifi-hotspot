@@ -1,0 +1,47 @@
+#!/bin/bash
+#
+# Put the adapter back into access-point mode, so a user who joined the wrong
+# network - or one that has since gone away - can get back to a board they can
+# reach without a cable (#105).
+#
+# This is the same recovery wifi-connect performs on failure, exposed as a
+# deliberate action rather than only happening automatically.
+#
+# Saved credentials are left alone: this switches the mode now, it does not
+# forget the network, so a reboot will auto-connect again.
+
+# Defaults match the on-board layout; tests override via env to run hermetically.
+INTERFACE="${WIFI_INTERFACE:-wlan0}"
+SYS_NET="${SYS_NET:-/sys/class/net}"
+AP_PROFILE="Recore"
+LOG_FILE="${LOG_FILE:-/var/log/reflash.log}"
+
+info() {
+    echo "[info] $1" >> "$LOG_FILE"
+    echo "$1"
+}
+
+if [ ! -d "$SYS_NET/$INTERFACE" ]; then
+    info "No WiFi adapter ($INTERFACE) present. Cannot start the hotspot."
+    exit 1
+fi
+
+info "Switching $INTERFACE to access point mode ($AP_PROFILE)"
+
+# Drop any station association first. Without this the mode change can be
+# refused while the device is still connected or connecting.
+iwctl station "$INTERFACE" disconnect 2>/dev/null
+# Stop before start, or starting the profile fails with "Object already exists".
+iwctl ap "$INTERFACE" stop 2>/dev/null
+
+if ! iwctl device "$INTERFACE" set-property Mode ap; then
+    info "Could not switch $INTERFACE to AP mode."
+    exit 1
+fi
+
+if ! iwctl ap "$INTERFACE" start-profile "$AP_PROFILE"; then
+    info "Could not start the $AP_PROFILE access point."
+    exit 1
+fi
+
+info "Access point $AP_PROFILE started."

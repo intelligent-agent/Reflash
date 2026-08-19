@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -140,8 +141,9 @@ func TestGetStatusMountsNothing(t *testing.T) {
 func TestGetNetworkStatus(t *testing.T) {
 	t.Run("passes the helper's JSON through", func(t *testing.T) {
 		dir := setupTest(t)
-		fakeBin(t, dir, "network-status", `echo '{"ethernet":{"up":true,"ip":"192.168.1.42"},`+
-			`"wifi":{"present":true,"mode":"station","ssid":"HomeNet","ip":"192.168.1.87"}}'`)
+		fakeBin(t, dir, "network-status", `echo '{"ethernet":{"up":true,"ip":"192.168.1.42","active":false},`+
+			`"wifi":{"present":true,"mode":"station","ssid":"HomeNet","ip":"192.168.1.87",`+
+			`"rssi":-55,"active":true}}'`)
 
 		got := getNetworkStatus()
 		if !got.Ethernet.Up || got.Ethernet.IP != "192.168.1.42" {
@@ -149,6 +151,14 @@ func TestGetNetworkStatus(t *testing.T) {
 		}
 		if got.Wifi.Mode != "station" || got.Wifi.SSID != "HomeNet" || got.Wifi.IP != "192.168.1.87" {
 			t.Errorf("Wifi = %+v", got.Wifi)
+		}
+		// Both up, and only these say which one carries traffic (#112).
+		if got.Ethernet.Active || !got.Wifi.Active {
+			t.Errorf("active flags: eth=%v wifi=%v, want false/true",
+				got.Ethernet.Active, got.Wifi.Active)
+		}
+		if got.Wifi.RSSI != -55 {
+			t.Errorf("RSSI = %d, want -55", got.Wifi.RSSI)
 		}
 	})
 
@@ -206,9 +216,11 @@ func TestIsUsbPresent(t *testing.T) {
 }
 
 func TestGetWifi(t *testing.T) {
-	dir := setupTest(t)
-	// getWifi runs `get-setting WIFI_SSID`; echo back a known SSID.
-	fakeBin(t, dir, "get-setting", `echo "HomeNet"`)
+	setupTest(t)
+	// The SSID comes from the options the server already holds - no helper, no
+	// eMMC mount.
+	options.WifiSSID = "HomeNet"
+	options.WifiPSK = "hunter2secret"
 
 	rr := httptest.NewRecorder()
 	getWifi(rr, httptest.NewRequest("GET", "/api/get_wifi", nil))
@@ -219,6 +231,11 @@ func TestGetWifi(t *testing.T) {
 	}
 	if got.SSID != "HomeNet" {
 		t.Errorf("SSID = %q, want HomeNet", got.SSID)
+	}
+	// The dialog repopulates the passphrase from its own memory; the server
+	// must never send it to the browser.
+	if strings.Contains(rr.Body.String(), "hunter2secret") {
+		t.Errorf("passphrase sent to the client: %s", rr.Body.String())
 	}
 }
 
@@ -277,6 +294,54 @@ func TestBringupWifiSkippedWithoutAdapter(t *testing.T) {
 	if _, err := os.Stat(ran); err == nil {
 		t.Error("bringupWifi ran a wifi helper with no adapter present")
 	}
+}
+
+func TestStartHotspotWifi(t *testing.T) {
+	t.Run("refuses with no adapter instead of shelling out", func(t *testing.T) {
+		dir := setupTest(t)
+		t.Setenv("SYS_NET", t.TempDir())
+		t.Setenv("WIFI_INTERFACE", "wlan0")
+		ran := filepath.Join(dir, "ran")
+		fakeBin(t, dir, "wifi-hotspot", `echo ran >> `+ran)
+
+		rr := httptest.NewRecorder()
+		startHotspotWifi(rr, httptest.NewRequest("POST", "/api/wifi_start_hotspot", nil))
+
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", rr.Code)
+		}
+		if _, err := os.Stat(ran); err == nil {
+			t.Error("ran wifi-hotspot with no adapter present")
+		}
+	})
+
+	// 202 before the work starts, not after: the switch takes down the origin
+	// this request arrived on if the caller is on WiFi.
+	t.Run("accepts and runs the helper when an adapter is fitted", func(t *testing.T) {
+		dir := setupTest(t)
+		sysNet := t.TempDir()
+		if err := os.Mkdir(filepath.Join(sysNet, "wlan0"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("SYS_NET", sysNet)
+		t.Setenv("WIFI_INTERFACE", "wlan0")
+		ran := filepath.Join(dir, "ran")
+		fakeBin(t, dir, "wifi-hotspot", `echo ran >> `+ran)
+
+		rr := httptest.NewRecorder()
+		startHotspotWifi(rr, httptest.NewRequest("POST", "/api/wifi_start_hotspot", nil))
+
+		if rr.Code != http.StatusAccepted {
+			t.Errorf("status = %d, want 202", rr.Code)
+		}
+		for i := 0; i < 100; i++ {
+			if _, err := os.Stat(ran); err == nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Error("wifi-hotspot never ran")
+	})
 }
 
 func TestSetThenGetOptions(t *testing.T) {

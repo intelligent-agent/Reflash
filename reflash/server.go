@@ -59,6 +59,9 @@ type NetworkStatus struct {
 type EthernetStatus struct {
 	Up bool   `json:"up"`
 	IP string `json:"ip"`
+	// Active means this interface holds the winning default route. Both can be
+	// up on one subnet, and then nothing else says which carries traffic (#112).
+	Active bool `json:"active"`
 }
 
 type WifiNetworkStatus struct {
@@ -66,6 +69,9 @@ type WifiNetworkStatus struct {
 	Mode    string `json:"mode"` // "station" or "ap"
 	SSID    string `json:"ssid"`
 	IP      string `json:"ip"`
+	// Signal strength in dBm, always negative. 0 means unknown.
+	RSSI   int  `json:"rssi"`
+	Active bool `json:"active"`
 }
 
 type GetSerialNumber struct {
@@ -288,6 +294,7 @@ func ServerInit() {
 	http.HandleFunc("/api/wifi_start_scan", startScanWifi)
 	http.HandleFunc("/api/wifi_poll_scan", getWifiScanResults)
 	http.HandleFunc("/api/wifi_start_connect", startConnectWifi)
+	http.HandleFunc("/api/wifi_start_hotspot", startHotspotWifi)
 	http.HandleFunc("/api/wifi_poll_connect", pollConnectWifi)
 
 	log.Fatal(http.ListenAndServe(http_port, nil))
@@ -337,9 +344,25 @@ func getSerialNumber(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(get_serial_number)
 }
 
+// getWifi reports the network Reflash is configured to join, so reopening the
+// WiFi dialog comes back to it (#105).
+//
+// This used to shell out to `get-setting WIFI_SSID`, which could never work: it
+// mounted the eMMC and then grepped /etc/rebuild-settings - the initrd's own
+// path, not the mounted one - so it always returned nothing, and would have
+// returned the whole "WIFI_SSID='x'" line rather than the value even if it had
+// found the file. The value is right here in memory, already persisted to
+// options.cfg, and needs no mount. (rebuild-settings is about the flashed
+// image, which is a different question from what Reflash itself is using.)
+//
+// The passphrase is deliberately not returned. The dialog keeps it in memory
+// for as long as the page is open, which covers reopening the dialog, and the
+// server never echoes a secret back to a browser that may be on an open
+// hotspot.
 func getWifi(w http.ResponseWriter, r *http.Request) {
-
-	ssid, _, _ := runCommand2("get-setting", "WIFI_SSID")
+	optionsLock.Lock()
+	ssid := options.WifiSSID
+	optionsLock.Unlock()
 
 	var get_wifi *GetWifi = &GetWifi{
 		SSID: strings.TrimSpace(ssid),
@@ -502,6 +525,24 @@ func startConnectWifi(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Respond immediately so Vue knows the process started
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// startHotspotWifi puts the adapter back into AP mode on request (#105). Async
+// like startConnectWifi and for the same reason: if the caller reached this page
+// over WiFi, the switch takes their connection down, so the response has to be
+// sent before the work starts or it would never arrive.
+func startHotspotWifi(w http.ResponseWriter, r *http.Request) {
+	if !wifiAdapterPresent() {
+		http.Error(w, "No WiFi adapter present", http.StatusBadRequest)
+		return
+	}
+	go func() {
+		logInfo("Switching to hotspot mode on request")
+		if _, _, err := runCommand2("wifi-hotspot"); err != nil {
+			logError("Could not start the hotspot: " + err.Error())
+		}
+	}()
 	w.WriteHeader(http.StatusAccepted)
 }
 

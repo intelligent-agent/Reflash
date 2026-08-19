@@ -38,6 +38,14 @@
           <w-button @click="startWifiConnect" :disabled="progressVisible || !selected">
             Connect
           </w-button>
+          <w-button
+            @click="startHotspot"
+            :disabled="progressVisible || wifi.mode === 'ap'"
+            class="ml2"
+            title="Serve the Recore access point instead of joining a network"
+          >
+            Use hotspot
+          </w-button>
         </div>
       </div>
 
@@ -77,8 +85,8 @@ export default {
     updatePressed: false,
     serialNumber: "",
     serialNumberValid: false,
+    inputSSID: "",
     inputPassword: "",
-    apList: [],
     availableAPs: [],
     selected: null,
     progressVisible: false,
@@ -110,11 +118,58 @@ export default {
       }
       return require("./../assets/" + name + "-" + color + ".svg");
     },
-    async getInfo() {
-      var self = this;
-      await axios.get(`/api/get_wifi`).then(function (response) {
-        self.inputSSID = response.data.SSID;
-      });
+    // Reopening the dialog used to show an empty list, no SSID and no selection
+    // (#105). The server already keeps the last scan in cachedAccessPoints and
+    // the SSID in its options, so both survive even a page reload - they just
+    // were never asked for. wifi_poll_scan returns that cache without starting
+    // a scan, so this costs nothing and the user can still hit "Scan for
+    // Networks" for a fresh list.
+    async restoreState() {
+      try {
+        const [wifi, aps] = await Promise.all([
+          axios.get('/api/get_wifi'),
+          axios.get('/api/wifi_poll_scan'),
+        ]);
+        this.inputSSID = wifi.data.SSID || "";
+        // 204 means a scan is in flight; leave whatever is on screen alone.
+        if (aps.status !== 204 && Array.isArray(aps.data)) {
+          this.setAvailableAPs(aps.data);
+        }
+        this.reselectSavedSSID();
+      } catch (err) {
+        console.error("Could not restore WiFi state", err);
+      }
+    },
+    setAvailableAPs(aps) {
+      this.availableAPs = aps;
+      for (const ap in this.availableAPs) {
+        this.availableAPs[ap].label =
+          this.availableAPs[ap].SSID + " " + this.availableAPs[ap].signal;
+      }
+    },
+    // Preselect the network the board is set to use, so reopening the dialog
+    // comes back to where the user left it rather than to "Please select one".
+    reselectSavedSSID() {
+      if (!this.selected && this.inputSSID) {
+        this.selected =
+          this.availableAPs.find((ap) => ap.SSID === this.inputSSID) || null;
+      }
+    },
+    async startHotspot() {
+      this.progressVisible = true;
+      this.statusMessage = "Switching to the Recore hotspot...";
+      try {
+        await axios.post('/api/wifi_start_hotspot');
+        // Deliberately not polled: if this page arrived over WiFi, the switch
+        // takes its own origin down and no further request can ever land.
+        this.networkSwitching = true;
+        this.statusMessage =
+          "The board is switching to its own hotspot (Recore). Connect this device to that network, then continue below.";
+      } catch (err) {
+        this.statusMessage = err.response?.data || "Could not start the hotspot.";
+      } finally {
+        this.progressVisible = false;
+      }
     },
     async startWifiScan() {
       this.progressVisible = true;
@@ -133,11 +188,9 @@ export default {
         if (res.status === 204) {
           setTimeout(this.pollScanResults, 1000);
         } else {
-          this.availableAPs = res.data;
+          this.setAvailableAPs(res.data);
           this.progressVisible = false;
-          for (const ap in this.availableAPs) {
-            this.availableAPs[ap].label = this.availableAPs[ap].SSID + " " + this.availableAPs[ap].signal;
-          }
+          this.reselectSavedSSID();
           this.statusMessage = `Found ${this.availableAPs.length} network(s).`;
           this.getWifiStatus();
         }
@@ -250,7 +303,8 @@ export default {
         if (is_open) {
           this.networkSwitching = false;
           this.statusMessage = "";
-          this.getWifiStatus()
+          this.getWifiStatus();
+          this.restoreState();
           this.dialog.show = true;
         }
       },
