@@ -47,6 +47,33 @@ type GetStatus struct {
 	LocalImages    []Image       `json:"local_images"`
 	BytesAvailable int           `json:"bytes_available"`
 	Network        NetworkStatus `json:"network"`
+	// Storage is PREPARING until the USB drive is partitioned and mounted.
+	// The server now starts before that finishes, so the UI needs to be able
+	// to say "still working" rather than showing an empty image list as if the
+	// drive were simply empty.
+	Storage string `json:"storage"`
+}
+
+const (
+	STORAGE_PREPARING = "PREPARING"
+	STORAGE_READY     = "READY"
+	STORAGE_FAILED    = "FAILED"
+)
+
+var storageState = STORAGE_PREPARING
+var storageLock sync.Mutex
+
+func setStorage(s string) {
+	storageLock.Lock()
+	storageState = s
+	storageLock.Unlock()
+	updateDisplay()
+}
+
+func getStorage() string {
+	storageLock.Lock()
+	defer storageLock.Unlock()
+	return storageState
 }
 
 // NetworkStatus says how the board is reachable (#117). Both transports are
@@ -186,7 +213,6 @@ var bytes_last int
 var timeStart time.Time
 var cancelFunc context.CancelFunc
 var isDirty bool
-var env string
 var optionsLock sync.Mutex
 var (
 	cachedAccessPoints []AccessPoint
@@ -199,32 +225,93 @@ var (
 	connectMutex sync.Mutex
 )
 
-func ServerInit() {
-	env = os.Getenv("APP_ENV")
-	if env == "dev" {
-		static_dir = "../client/dist"
-		binDir = "../bin/dev"
-		images_folder = "/opt/reflash/images"
-		options_file = "../.tmp/opt/options.cfg"
-		log_file = "/var/log/reflash.log"
-		http_port = ":8080"
+// bootPhase times one startup step and logs it. Unconditional: the whole point
+// of measuring is that the boot budget was previously guessed at, and #116 was
+// diagnosed from the journal after the fact rather than from anything Reflash
+// recorded itself.
+func bootPhase(name string, f func()) {
+	t := time.Now()
+	f()
+	logInfo(fmt.Sprintf("boot: %-16s %6.2fs", name, time.Since(t).Seconds()))
+}
+
+// slowInit is everything that can block: mkfs on a fresh stick (measured at
+// 198s on a worn one), mounting, and a WiFi connect that waits up to 30s for
+// DHCP. Split out so it can be run either before the listener (current
+// behaviour) or alongside it (the experiment).
+// WiFi bring-up is off the critical path: it waits up to 30s for DHCP and
+// nothing in startup depends on it, yet it was 2.62s of a 3.08s startup even
+// when it went well. A package var like startInstall so tests can stub it and
+// stay synchronous.
+// How long to keep trying the mount before calling the drive unavailable.
+// Vars so tests do not have to sit through it.
+var (
+	mountRetries    = 30
+	mountRetryDelay = time.Second
+)
+
+var startWifiBringup = func() {
+	go bootPhase("wifi-bringup", func() { bringupWifi() })
+}
+
+func slowInit() {
+	bootPhase("get-ips", func() { state.IPs = getIPs() })
+	// Wait for the drive to be ours before taking it, rather than racing for
+	// it. Reflash does not create the partition either - ssh-keygen-boot is the
+	// only caller of expand-usb now, and running it here as well printed a
+	// second "Running expand USB script" that did nothing. Reflash mounts /mnt/usb and holds it for the life of the process, so
+	// it has to mount last: ssh-keygen-boot needs the drive read-write first,
+	// and a lock cannot share a mount with a process that never lets go.
+	//
+	// Confirmed live: mounting into that window stacked two mounts, after which
+	// a remount read-write failed with "already mounted" and the write
+	// underneath hit a read-only filesystem - the first options save was lost.
+	bootPhase("wait-for-usb", func() {
+		for i := 0; i < mountRetries; i++ {
+			if runCommandReturnBool("usb-ready") {
+				return
+			}
+			time.Sleep(mountRetryDelay)
+		}
+		logError("Timed out waiting for the USB drive to become available")
+	})
+
+	var mountErr error
+	bootPhase("mount-usb", func() { mountErr = mountUsb(MODE_RO) })
+	if mountErr != nil {
+		// Do not carry on as if the drive were simply empty. loadOptions would
+		// invent defaults and mark them dirty, and saveOptions would then write
+		// options.cfg into the bare mountpoint on the tmpfs rootfs - losing the
+		// user's settings on the next reboot, silently.
+		logError("USB storage unavailable: " + mountErr.Error())
+		setStorage(STORAGE_FAILED)
 	} else {
-		static_dir = "/var/www/html/reflash/dist"
-		binDir = "/usr/local/bin"
-		images_folder = "/mnt/usb/images"
-		options_file = "/mnt/usb/options.cfg"
-		log_file = "/var/log/reflash.log"
-		http_port = ":80"
+		bootPhase("load-options", func() { loadOptions() })
+		setStorage(STORAGE_READY)
 	}
+
+	startWatchdog()
+
+	startWifiBringup()
+}
+
+func ServerInit() {
+	static_dir = "/var/www/html/reflash/dist"
+	binDir = "/usr/local/bin"
+	images_folder = "/mnt/usb/images"
+	options_file = "/mnt/usb/options.cfg"
+	log_file = "/var/log/reflash.log"
+	http_port = ":80"
 	// Allow tests (and ad-hoc runs) to point the helper scripts elsewhere.
 	if d := os.Getenv("REFLASH_BIN_DIR"); d != "" {
 		binDir = d
 	}
 
+	// IPs are filled in by slowInit: get-hostnames shells out to `ip` and
+	// getent, which is not something to do before the first frame.
 	state = &State{
 		State:      IDLE,
 		BytesTotal: 1,
-		IPs:        getIPs(),
 	}
 
 	oldState = &State{
@@ -235,27 +322,28 @@ func ServerInit() {
 	reflashVersion = runCommandReturnString("get-reflash-version")
 
 	logInfo("-- Server started at " + time.Now().Format("15:04:05") + " --")
-	expandUsb()
-	mountUsb(MODE_RO)
-	loadOptions()
-	bringupWifi()
-	updateDisplay()
-	startWatchdog()
-	go serveControlSocket(controlSocketPath())
-	if env != "dev" {
-		go serveSerialControl("/dev/ttyGS1")
-	}
 
-	timer1 := time.NewTimer(3 * time.Second)
-	go func() {
-		<-timer1.C
-		logInfo("Updating IPs")
-		state.IPs = getIPs()
-		updateDisplay()
-	}()
+	// Neither of these touches the USB drive, so they are never worth delaying.
+	go serveControlSocket(controlSocketPath())
+	go serveSerialControl("/dev/ttyGS1")
+
+	// Draw before doing anything slow, then get out of the way: the listener
+	// starts immediately and the drive work happens behind it. Measured, this
+	// is worth ~3s; the ~9s that used to sit in front of the server was
+	// ssh-keygen-boot, fixed by dropping its ordering (see mkimage.sh).
+	//
+	// Rotation is a stored option on the drive, so this first frame is
+	// unrotated and may flip once load-options completes.
+	bootPhase("first-draw", func() {
+		msg, progress, _ := storageFrame()
+		Draw(float32(progress)/100, msg, 0, nil, reflashVersion)
+	})
+	go slowInit()
+
+	go watchIPs()
 
 	fs := http.FileServer(http.Dir(static_dir))
-	fmt.Println("Starting Reflash go server " + reflashVersion + " env '" + env + "'")
+	fmt.Println("Starting Reflash go server " + reflashVersion)
 	http.Handle("/", fs)
 	http.HandleFunc("/api/get_info", getInfo)
 	http.HandleFunc("/api/get_status", getStatus)
@@ -317,6 +405,7 @@ func getStatus(w http.ResponseWriter, r *http.Request) {
 		LocalImages:    getLocalImages(),
 		BytesAvailable: getFreeSpace(),
 		Network:        getNetworkStatus(),
+		Storage:        getStorage(),
 	}
 	json.NewEncoder(w).Encode(get_status)
 }
@@ -579,10 +668,32 @@ func updateDisplay() {
 	if oldState == nil {
 		oldState = &State{}
 	}
+	// state needs the same treatment now that setStorage redraws: storage can
+	// fail before ServerInit has finished building it.
+	if state == nil {
+		state = &State{State: IDLE, BytesTotal: 1}
+	}
+	// options is nil until loadOptions runs, and it does not run at all when
+	// the drive fails to mount - which is exactly when the screen most needs
+	// to say so. Reading ScreenRotation off it crashed the server on that
+	// path, and Restart=always turned the crash into a restart loop.
+	if options == nil {
+		options = &Options{}
+	}
+	// Until the drive is mounted there is nothing meaningful to report about
+	// flashing, and IDLE would draw an empty "ready" screen while the board is
+	// still busy. Say what is actually happening instead - this is the frame
+	// the user sees for most of the boot on a slow stick (#116).
+	shown := state.State
+	progress := float64(state.Progress)
+	if msg, p, ok := storageFrame(); ok {
+		shown, progress = msg, p
+	}
+
 	state.Lock()
-	if oldState.State != state.State || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
-		Draw(float32(state.Progress)/100, state.State, options.ScreenRotation, state.IPs, reflashVersion)
-		oldState.State = state.State
+	if oldState.State != shown || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
+		Draw(float32(progress)/100, shown, options.ScreenRotation, state.IPs, reflashVersion)
+		oldState.State = shown
 		oldState.Progress = state.Progress
 		oldRotation = options.ScreenRotation
 	}
@@ -1120,9 +1231,6 @@ func cancelBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func getBlockSize(file string) int {
-	if env == "dev" {
-		return 100 * 1024 * 1024
-	}
 	return runCommandReturnInt("lsblk", "-n", "-d", "-o", "SIZE", "--bytes", file)
 }
 
@@ -1496,15 +1604,6 @@ func clearLog(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func expandUSB() error {
-	cmd := exec.Command(resolveCmd("expand-usb"))
-	err := cmd.Run()
-	if err == nil {
-		logInfo("expand-usb returned error")
-	}
-	return err
-}
-
 // Helper commands that are handed a secret on the command line, and which
 // argument holds it. runCommand2 logs the argv of anything that fails, and
 // /var/log/reflash.log is streamed straight to the browser log viewer - so
@@ -1595,10 +1694,6 @@ func loadOptions() {
 	}
 }
 
-func expandUsb() {
-	runCommand2("expand-usb")
-}
-
 func lockSetOptions(opts []byte) error {
 	optionsLock.Lock()
 	defer optionsLock.Unlock()
@@ -1654,6 +1749,94 @@ func lockSaveOptions() {
 	state.State = IDLE
 	state.Unlock()
 	updateDisplay()
+}
+
+// storageFrame is what the panel shows while the drive is not usable, and
+// ok=false once it is and the flash state should be shown instead.
+//
+// Shared by the first frame and every later redraw. They used to decide
+// separately, and the first one passed a progress of 0 where the other passed
+// -1 - so a progress bar appeared for the moment before the first redraw
+// replaced it.
+//
+// Negative progress means no bar: neither of these has a measurable duration.
+// mkfs on a worn stick took 198s (#116) and reports nothing along the way, and
+// a bar pinned at zero reads as stuck where the message alone reads as working.
+func storageFrame() (string, float64, bool) {
+	switch getStorage() {
+	case STORAGE_PREPARING:
+		return "Preparing USB drive", -1, true
+	case STORAGE_FAILED:
+		return "No USB drive", -1, true
+	}
+	return "", 0, false
+}
+
+// refreshIPs re-reads the addresses and redraws if they changed.
+func refreshIPs() {
+	ips := getIPs()
+	state.Lock()
+	changed := !slices.Equal(state.IPs, ips)
+	state.IPs = ips
+	state.Unlock()
+	if changed {
+		shown := strings.Join(ips, " ")
+		if shown == "" {
+			shown = "(none)"
+		}
+		logInfo("Addresses changed: " + shown)
+		updateDisplay()
+	}
+}
+
+// How long to gather further address events before re-reading. One change
+// emits several netlink messages, and each re-read costs a get-hostnames
+// (~0.8s measured), so coalescing matters more than reacting instantly.
+var ipEventDebounce = 500 * time.Millisecond
+
+// watchIPs refreshes the panel when the addresses actually change.
+//
+// This replaced a single timer that fired three seconds after startup. That is
+// before WiFi has associated - measured at ~15s to a lease - so the panel
+// showed whatever was true at three seconds for the whole session, and a board
+// on WiFi alone never displayed an address at all.
+func watchIPs() {
+	refreshIPs()
+	for {
+		cmd := exec.Command(resolveCmd("watch-ips"))
+		stdout, err := cmd.StdoutPipe()
+		if err != nil || cmd.Start() != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		events := make(chan struct{}, 1)
+		go func() {
+			scanner := bufio.NewScanner(stdout)
+			for scanner.Scan() {
+				// Non-blocking: a burst collapses into the one buffered slot
+				// rather than queueing a re-read per netlink message.
+				select {
+				case events <- struct{}{}:
+				default:
+				}
+			}
+			close(events)
+		}()
+
+		for range events {
+			time.Sleep(ipEventDebounce)
+			select { // swallow anything that arrived while settling
+			case <-events:
+			default:
+			}
+			refreshIPs()
+		}
+
+		cmd.Wait()
+		// The monitor should not exit; if it does, do not spin on restarting it.
+		time.Sleep(2 * time.Second)
+	}
 }
 
 func startWatchdog() {
@@ -1781,13 +1964,10 @@ func serveSerialControl(devPath string) {
 
 // controlSocketPath is where the local transport listens. `reflash-ctl` uses
 // it, so a user logged in over USB can drive a flash without taking the tty
-// flasher-pi is talking on.
+// flasher-pi is talking on. REFLASH_CONTROL_SOCKET overrides it for tests.
 func controlSocketPath() string {
 	if p := os.Getenv("REFLASH_CONTROL_SOCKET"); p != "" {
 		return p
-	}
-	if os.Getenv("APP_ENV") == "dev" {
-		return "../.tmp/control.sock"
 	}
 	return "/run/reflash/control.sock"
 }

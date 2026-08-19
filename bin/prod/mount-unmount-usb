@@ -1,16 +1,35 @@
 #!/bin/bash
 set -euo pipefail
 
+# Every mount and unmount of /mnt/usb goes through this script, and there is
+# more than one caller: the Go server, and ssh-keygen-boot at boot. Until now
+# they were kept apart by ssh-keygen-boot being ordered Before=reflash.service,
+# which cost ~9s of the time to first frame for no reason other than this file
+# having no locking - ssh-keygen-boot ends with an unmount, and doing that under
+# a running server pulls the drive out from under it.
+#
+# One flock makes the ordering unnecessary, so the two can run concurrently.
+# Re-exec rather than a subshell so the lock covers the whole script including
+# the exits, and the fd is released when the process ends however it ends.
+LOCK="${USB_LOCK:-/run/reflash-usb.lock}"
+if [ "${USB_LOCK_HELD:-}" != "1" ]; then
+    export USB_LOCK_HELD=1
+    exec flock "$LOCK" "$0" "$@"
+fi
+
 info() {
-    echo "[info] $1" >> /var/log/reflash.log
+    echo "[info] $1" >> "${LOG_FILE:-/var/log/reflash.log}"
     echo "$1"
 }
+
+MOUNT_POINT="${USB_MOUNT_POINT:-/mnt/usb}"
+USB_DEV="${USB_DEVICE:-/dev/sda2}"
 
 STATE=$1
 
 if [ "$STATE" == "unmounted" ]; then
-    info "Unmounting /mnt/usb"
-    umount -q /mnt/usb || true
+    info "Unmounting $MOUNT_POINT"
+    umount -q "$MOUNT_POINT" || true
     exit 0
 fi
 
@@ -25,11 +44,11 @@ else
     exit 1
 fi
 
-umount -q /mnt/usb || true
+umount -q "$MOUNT_POINT" || true
 
 if [ "$STATE" == "mounted" ]; then
-    info "Mounting /dev/sda2 on /mnt/usb as ${MODE}"
-    mount /dev/sda2 "${MODE_STR}" /mnt/usb
+    info "Mounting $USB_DEV on $MOUNT_POINT as ${MODE}"
+    mount "$USB_DEV" "${MODE_STR}" "$MOUNT_POINT"
     exit 0
 fi
 

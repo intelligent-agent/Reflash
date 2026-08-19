@@ -1,3 +1,0 @@
-#!/bin/bash
- 
-echo -e "localhost\n127.0.0.1"

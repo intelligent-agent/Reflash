@@ -192,15 +192,23 @@ func Draw(progress float32, state string, rot int, ips []string, version string)
 			drawText(img, version, 16, (fb_min/2)+125+(20*len(ips))+20)
 		}
 	} else {
+		// A negative progress means there is nothing to measure - the board is
+		// waiting on something whose duration it cannot know, like the drive
+		// being partitioned. A bar frozen at zero reads as "stuck"; the message
+		// on its own reads as "working".
 		if fb_min > 700 {
 			drawLogo(img, (fb_min/2)-250)
 			drawText(img, "REFLASH", 50, (fb_min/2)-100)
-			drawProgressBar(img, (fb_min / 2), progress)
+			if progress >= 0 {
+				drawProgressBar(img, (fb_min / 2), progress)
+			}
 			drawText(img, state, 30, (fb_min/2)+120)
 		} else {
 			drawLogo(img, (fb_min/2)-210)
 			drawText(img, "REFLASH", 50, (fb_min/2)-(110-50))
-			drawProgressBar(img, (fb_min / 2), progress)
+			if progress >= 0 {
+				drawProgressBar(img, (fb_min / 2), progress)
+			}
 			drawText(img, state, 30, (fb_min/2)+60+36)
 		}
 	}

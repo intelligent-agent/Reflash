@@ -65,13 +65,13 @@ info "Creating ext4 filesystem"
 # lazy_itable_init=1 writing byte-for-byte the same 134MB.
 mkfs.ext4 -F -E nodiscard -J size=16 /dev/sda2
 
-info "Mounting new partition"
-mkdir -p /mnt/usb
-mount /dev/sda2 /mnt/usb
-
-info "creating images folder"
-mkdir /mnt/usb/images
-
-umount /mnt/usb
+# Via mount-unmount-usb, not a direct mount: that script holds the flock, and
+# this was the one caller bypassing it. Mounting here directly stacked a second
+# mount on /mnt/usb, after which a remount read-write failed with "already
+# mounted on /mnt/usb" and the write underneath it hit a read-only filesystem.
+info "Creating images folder"
+mount-unmount-usb mounted rw
+mkdir -p /mnt/usb/images
+mount-unmount-usb unmounted
 
 systemctl daemon-reload

@@ -65,11 +65,15 @@ This will use debootstrap to create a Reflash image
 make docker
 ```
 
-### Local development
-To start the npm client/Vue frontend
+### Development
+The server only runs on a board - it draws to the framebuffer, mounts the USB
+drive and shells out to helpers in `/usr/local/bin`, so there is no local run
+target. Work against the test suites, then build an image:
+
 ```
-make run-go
-make dev-client
+make test        # Go, bash helpers (bats) and the Vue client
+make test-live   # read-only checks against a running board, over SSH
+make build-vue   # rebuild the client bundle on its own
 ```
 
 ### Tests to run on a new version

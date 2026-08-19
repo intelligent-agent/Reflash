@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ func setupTest(t *testing.T) string {
 	}
 	options = &Options{}
 	reflashVersion = ""
+	storageState = STORAGE_PREPARING
 	return dir
 }
 
@@ -119,6 +121,146 @@ func TestGetStatus(t *testing.T) {
 // The split only pays off if the expensive half stays out of the polled half:
 // get-recore-revision, get-recore-serial-number and get-emmc-version each mount
 // a partition.
+// The server now answers before the drive is mounted, so the state it reports
+// while doing so is what both the banner and the panel key off.
+func TestStorageReadiness(t *testing.T) {
+	t.Run("get_status reports the storage state", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "get-free-space", `echo "1"`)
+		fakeBin(t, dir, "network-status", `echo '{}'`)
+		state = &State{State: IDLE, BytesTotal: 1}
+		setStorage(STORAGE_PREPARING)
+
+		rr := httptest.NewRecorder()
+		getStatus(rr, httptest.NewRequest("GET", "/api/get_status", nil))
+
+		var got GetStatus
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Storage != STORAGE_PREPARING {
+			t.Errorf("Storage = %q, want %q", got.Storage, STORAGE_PREPARING)
+		}
+	})
+
+	// A failed mount must not look like an empty drive: loadOptions would
+	// invent defaults and mark them dirty, and saveOptions would then write
+	// options.cfg into the bare mountpoint on tmpfs - losing the user's
+	// settings silently on the next boot.
+	t.Run("a failed mount does not load or dirty the options", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "get-hostnames", `echo "recore.local"`)
+		fakeBin(t, dir, "usb-ready", `echo true`)
+		fakeBin(t, dir, "mount-unmount-usb", `exit 1`)
+		origRetries, origDelay := mountRetries, mountRetryDelay
+		mountRetries, mountRetryDelay = 2, time.Millisecond
+		defer func() { mountRetries, mountRetryDelay = origRetries, origDelay }()
+		// Keep the test synchronous: the real one is a goroutine that would
+		// still be writing the log while TempDir is being removed.
+		origWifi := startWifiBringup
+		startWifiBringup = func() {}
+		defer func() { startWifiBringup = origWifi }()
+
+		state = &State{State: IDLE, BytesTotal: 1}
+		options = &Options{}
+		isDirty = false
+		setStorage(STORAGE_PREPARING)
+
+		slowInit()
+
+		if getStorage() != STORAGE_FAILED {
+			t.Errorf("Storage = %q, want %q", getStorage(), STORAGE_FAILED)
+		}
+		if isDirty {
+			t.Error("options marked dirty with no drive to save them to")
+		}
+	})
+}
+
+// The first frame and every later redraw take their message and progress from
+// here. They used to decide separately and disagreed: the first passed 0, which
+// drew a progress bar for the moment before the first redraw replaced it.
+func TestStorageFrame(t *testing.T) {
+	cases := []struct {
+		storage string
+		msg     string
+		bar     bool // is there a progress bar
+	}{
+		{STORAGE_PREPARING, "Preparing USB drive", false},
+		{STORAGE_FAILED, "No USB drive", false},
+		{STORAGE_READY, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.storage, func(t *testing.T) {
+			setupTest(t)
+			state = &State{State: IDLE, BytesTotal: 1}
+			setStorage(c.storage)
+
+			msg, progress, ok := storageFrame()
+			if c.storage == STORAGE_READY {
+				if ok {
+					t.Error("READY should not override the flash state")
+				}
+				return
+			}
+			if !ok || msg != c.msg {
+				t.Errorf("got %q ok=%v, want %q", msg, ok, c.msg)
+			}
+			// Negative progress is what suppresses the bar; 0 draws one.
+			if progress >= 0 {
+				t.Errorf("progress = %v, want negative so no bar is drawn", progress)
+			}
+		})
+	}
+}
+
+func TestWatchIPs(t *testing.T) {
+	// The bug this replaces: a single timer three seconds after startup, which
+	// fires before WiFi has a lease - so the panel showed nothing for the rest
+	// of the session on a board with no cable.
+	t.Run("redraws when an address event arrives", func(t *testing.T) {
+		dir := setupTest(t)
+		state = &State{State: IDLE, BytesTotal: 1}
+		setStorage(STORAGE_READY)
+
+		// One event, then hold the pipe open so watchIPs stays in its loop.
+		fakeBin(t, dir, "watch-ips", "echo 'addr event'\nsleep 30")
+		ips := filepath.Join(dir, "ips")
+		os.WriteFile(ips, []byte("first.local\n"), 0o644)
+		fakeBin(t, dir, "get-hostnames", `cat `+ips)
+
+		origDebounce := ipEventDebounce
+		ipEventDebounce = 10 * time.Millisecond
+		defer func() { ipEventDebounce = origDebounce }()
+
+		go watchIPs()
+
+		// The initial read happens before any event.
+		waitFor(t, func() bool { return ipsEqual([]string{"first.local"}) })
+
+		// Now the address changes; the event already queued drives the re-read.
+		os.WriteFile(ips, []byte("second.local\n"), 0o644)
+		waitFor(t, func() bool { return ipsEqual([]string{"second.local"}) })
+	})
+}
+
+func ipsEqual(want []string) bool {
+	state.Lock()
+	defer state.Unlock()
+	return slices.Equal(state.IPs, want)
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition not met in time")
+}
+
 func TestGetStatusMountsNothing(t *testing.T) {
 	dir := setupTest(t)
 	fakeBin(t, dir, "get-free-space", `echo "1"`)
@@ -703,16 +845,14 @@ func TestControlSocket(t *testing.T) {
 }
 
 func TestControlSocketPath(t *testing.T) {
-	t.Run("prod default", func(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
 		t.Setenv("REFLASH_CONTROL_SOCKET", "")
-		t.Setenv("APP_ENV", "")
 		if got := controlSocketPath(); got != "/run/reflash/control.sock" {
 			t.Errorf("got %q", got)
 		}
 	})
 	t.Run("env override wins", func(t *testing.T) {
 		t.Setenv("REFLASH_CONTROL_SOCKET", "/tmp/x.sock")
-		t.Setenv("APP_ENV", "dev")
 		if got := controlSocketPath(); got != "/tmp/x.sock" {
 			t.Errorf("got %q", got)
 		}

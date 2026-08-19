@@ -40,6 +40,16 @@ export default {
         this.$waveui.notify("Unable to clear log", "error", 0);
     },
     connectLogStream() {
+      // The server replays the whole file on every connection - streamLog
+      // tails from offset 0, deliberately, so a freshly opened page shows the
+      // boot rather than an empty box. That makes each connection a complete
+      // snapshot, not an increment, so the previous contents have to go.
+      //
+      // Without this the log appeared two and three times over: the #95
+      // watchdog made reconnects actually happen, and the board reconnects
+      // precisely when it changes WiFi mode - so every AP/station switch
+      // appended another full copy of the log to the one already on screen.
+      this.log = [];
       const evtSource = new EventSource(`/api/stream_log`);
       evtSource.onmessage = (event) => {
         this.log.push(event.data);
