@@ -1263,7 +1263,46 @@ func refreshProgress() {
 	bytes_last = state.BytesNow
 	state.Bandwidth = bytes_diff_mb / float32(elapsed)
 
+	logBandwidth()
 	updateDisplay()
+}
+
+// Bandwidth was computed for the UI chart and thrown away, so a transfer that
+// stalled left nothing behind to look at once the browser was closed - and the
+// log is what we have after the fact. Sampled rather than logged per poll: the
+// client polls once a second, and 60 lines a minute would bury everything else
+// in a log that lives in a tmpfs and is streamed to the browser.
+var (
+	bandwidthLogEvery = 30 * time.Second
+	lastBandwidthLog  time.Time
+	bytesAtLastLog    int
+)
+
+// Averaged over the whole window rather than reported from state.Bandwidth.
+// That field is recomputed on every poll, so it is an instantaneous ~1s rate,
+// and sampling it every 30s logs whichever second happened to land on the
+// tick. On the run this was written for it printed "0.00 MB/s" twice while the
+// transfer was actually moving 2.93 and 4.15 MB/s - so a real stall and an
+// unlucky sample were indistinguishable, which defeats the point of logging it.
+func logBandwidth() {
+	if state.BytesTotal <= 0 {
+		return
+	}
+	now := time.Now()
+	if lastBandwidthLog.IsZero() {
+		lastBandwidthLog = now
+		bytesAtLastLog = state.BytesNow
+		return
+	}
+	window := now.Sub(lastBandwidthLog)
+	if window < bandwidthLogEvery {
+		return
+	}
+	mb := float64(state.BytesNow-bytesAtLastLog) / (1024 * 1024)
+	lastBandwidthLog = now
+	bytesAtLastLog = state.BytesNow
+	logInfo(fmt.Sprintf("%s: %.2f MB/s (%d of %d bytes, %.0f%%)",
+		state.State, mb/window.Seconds(), state.BytesNow, state.BytesTotal, state.Progress))
 }
 
 func getProgress(w http.ResponseWriter, r *http.Request) {
