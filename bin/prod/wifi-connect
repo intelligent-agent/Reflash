@@ -97,6 +97,23 @@ while [ $COUNT -lt $MAX_RETRIES ]; do
 done
 
 info "Timed out waiting for IP address."
+
+# Name which half failed. "No IP" covers three problems that need three
+# different actions - retype the passphrase, move the board, look at the router
+# - and reporting all of them as a DHCP timeout sent people to the wrong one.
+# iwctl's exit status is not usable here: it prints failures and still exits 0,
+# and association completes after the connect call has already returned.
+STATE=$(iwctl station "$INTERFACE" show 2>/dev/null \
+        | sed $'s/\x1b\[[0-9;]*m//g' | awk '/^ *State/ {print $2}')
+case "$STATE" in
+    connected)
+        info "Associated with $SSID, but no IPv4 address arrived. This is a DHCP problem, not a password one." ;;
+    connecting|*onnecting*)
+        info "Still trying to associate with $SSID. Check the passphrase and the signal." ;;
+    *)
+        info "Never associated with $SSID (state: ${STATE:-unknown}). Check the passphrase." ;;
+esac
+
 restore_hotspot
 exit 1
 
