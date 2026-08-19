@@ -256,10 +256,10 @@ var startWifiBringup = func() {
 
 func slowInit() {
 	bootPhase("get-ips", func() { state.IPs = getIPs() })
-	bootPhase("expand-usb", func() { expandUsb() })
-
 	// Wait for the drive to be ours before taking it, rather than racing for
-	// it. Reflash mounts /mnt/usb and holds it for the life of the process, so
+	// it. Reflash does not create the partition either - ssh-keygen-boot runs
+	// expand-usb before it needs the drive, and calling it here as well only
+	// printed a second "Running expand USB script" that did nothing. Reflash mounts /mnt/usb and holds it for the life of the process, so
 	// it has to mount last: ssh-keygen-boot needs the drive read-write first,
 	// and a lock cannot share a mount with a process that never lets go.
 	//
@@ -1609,15 +1609,6 @@ func clearLog(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func expandUSB() error {
-	cmd := exec.Command(resolveCmd("expand-usb"))
-	err := cmd.Run()
-	if err == nil {
-		logInfo("expand-usb returned error")
-	}
-	return err
-}
-
 // Helper commands that are handed a secret on the command line, and which
 // argument holds it. runCommand2 logs the argv of anything that fails, and
 // /var/log/reflash.log is streamed straight to the browser log viewer - so
@@ -1706,10 +1697,6 @@ func loadOptions() {
 		toml.Unmarshal(content, &options)
 		logInfo("Options loaded from disk successfully")
 	}
-}
-
-func expandUsb() {
-	runCommand2("expand-usb")
 }
 
 func lockSetOptions(opts []byte) error {

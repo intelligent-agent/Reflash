@@ -17,10 +17,12 @@
 #   - the partition exists at all (expand-usb creates it on a fresh stick)
 #   - the unit that wants it read-write is no longer running
 #
-# "activating" is the state a Type=oneshot unit is in while its ExecStart runs.
-# Anything else - active, inactive, failed - means it is not going to touch the
-# drive again this boot, including the case where its ConditionPathExists
-# skipped it entirely.
+# The unit must have *finished*, not merely not-started. A Type=oneshot unit
+# reads "inactive" both before it runs and after a Condition skips it, so
+# treating inactive as ready let Reflash mount in the gap before the unit
+# started - and it would then steal the mount. "active" (it holds
+# RemainAfterExit) or "failed" mean it is done; ConditionResult=no means it was
+# skipped and will never run, which must not wait for the timeout.
 
 set -uo pipefail
 
@@ -33,9 +35,9 @@ if [ ! -b "$DEVICE" ]; then
 fi
 
 state=$(systemctl show -p ActiveState --value "$UNIT" 2>/dev/null || echo "unknown")
-if [ "$state" = "activating" ]; then
-    echo "false"
-    exit 0
-fi
+cond=$(systemctl show -p ConditionResult --value "$UNIT" 2>/dev/null || echo "unknown")
 
-echo "true"
+case "$state" in
+    active|failed) echo "true" ;;                       # ran to completion
+    *) [ "$cond" = "no" ] && echo "true" || echo "false" ;;  # skipped, or not yet
+esac

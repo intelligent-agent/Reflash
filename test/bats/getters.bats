@@ -45,41 +45,70 @@ teardown() { teardown_sandbox; }
 # Reflash holds /mnt/usb for the life of the process, so it waits for whatever
 # needs the drive read-write to finish rather than racing it.
 
-@test "usb-ready: not ready while the owning unit is still running" {
-  export USB_DEVICE="$SANDBOX/sda2"
-  export USB_OWNER_UNIT="fake.service"
-  printf '' > "$USB_DEVICE"   # not a block device, but present
-  stub systemctl <<'OUT'
-activating
-OUT
-  run "$PROD_BIN/usb-ready"
-  [ "$status" -eq 0 ]
-  [ "$output" = "false" ]
+# systemctl show -p X --value is called twice: ActiveState then ConditionResult.
+stub_unit() {
+  cat > "$SHIMDIR/systemctl" <<EOF
+#!/usr/bin/env bash
+echo "systemctl \$*" >> "$CALLS"
+case "\$*" in
+  *ConditionResult*) echo "${2:-yes}" ;;
+  *ActiveState*)     echo "${1:-inactive}" ;;
+esac
+EOF
+  chmod +x "$SHIMDIR/systemctl"
 }
 
-@test "usb-ready: not ready while the partition does not exist" {
-  export USB_DEVICE="$SANDBOX/absent"
-  export USB_OWNER_UNIT="fake.service"
-  stub systemctl <<'OUT'
-active
-OUT
-  run "$PROD_BIN/usb-ready"
-  [ "$status" -eq 0 ]
-  [ "$output" = "false" ]
-}
-
-# A unit skipped by its ConditionPathExists reports inactive, never active -
-# that must count as "not going to touch the drive", not as "wait forever".
-@test "usb-ready: an inactive owner does not block forever" {
-  # Needs a real block device: the check is -b, and creating one needs root.
+with_partition() {
   dev=$(ls /dev/loop0 /dev/sda /dev/nvme0n1 /dev/vda 2>/dev/null | head -1)
   [ -b "$dev" ] || skip "no block device available to point USB_DEVICE at"
   export USB_DEVICE="$dev"
   export USB_OWNER_UNIT="fake.service"
-  stub systemctl <<'OUT'
-inactive
-OUT
+}
+
+@test "usb-ready: false while the owning unit is still running" {
+  with_partition
+  stub_unit activating yes
   run "$PROD_BIN/usb-ready"
   [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
+}
+
+# The race this closes: a oneshot reads "inactive" before it starts as well as
+# after a Condition skips it. Mounting in that gap let the unit steal the mount.
+@test "usb-ready: false while the owning unit has not started yet" {
+  with_partition
+  stub_unit inactive yes
+  run "$PROD_BIN/usb-ready"
+  [ "$output" = "false" ]
+}
+
+@test "usb-ready: true once the owning unit has completed" {
+  with_partition
+  stub_unit active yes
+  run "$PROD_BIN/usb-ready"
   [ "$output" = "true" ]
+}
+
+# A failed unit is not going to touch the drive again either - waiting for it
+# would just burn the timeout and then report no drive.
+@test "usb-ready: true when the owning unit failed" {
+  with_partition
+  stub_unit failed yes
+  run "$PROD_BIN/usb-ready"
+  [ "$output" = "true" ]
+}
+
+@test "usb-ready: true when the owning unit was skipped by its condition" {
+  with_partition
+  stub_unit inactive no
+  run "$PROD_BIN/usb-ready"
+  [ "$output" = "true" ]
+}
+
+@test "usb-ready: false while the partition does not exist" {
+  export USB_DEVICE="$SANDBOX/absent"
+  export USB_OWNER_UNIT="fake.service"
+  stub_unit active yes
+  run "$PROD_BIN/usb-ready"
+  [ "$output" = "false" ]
 }
