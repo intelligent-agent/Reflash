@@ -28,6 +28,7 @@ func setupTest(t *testing.T) string {
 		t.Fatal(err)
 	}
 	options = &Options{}
+	reflashVersion = ""
 	return dir
 }
 
@@ -58,16 +59,13 @@ func TestResolveCmd(t *testing.T) {
 
 func TestGetInfo(t *testing.T) {
 	dir := setupTest(t)
-	fakeBin(t, dir, "get-reflash-version", `echo "v9.9.9"`)
+	// Read once at startup, not per request - so seed the cache, and install no
+	// get-reflash-version stub. If the handler shells out it will fail, which is
+	// the point.
+	reflashVersion = "v9.9.9"
 	fakeBin(t, dir, "get-recore-revision", `echo "A8"`)
 	fakeBin(t, dir, "get-recore-serial-number", `echo "RC-0042"`)
 	fakeBin(t, dir, "get-emmc-version", `echo "emmc-1"`)
-	fakeBin(t, dir, "is-ssh-enabled", `echo "true"`)
-	fakeBin(t, dir, "get-free-space", `echo "12345"`)
-	fakeBin(t, dir, "get-hostnames", `echo "recore.local"`)
-	if err := os.WriteFile(filepath.Join(images_folder, "test.img.xz"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
 	rr := httptest.NewRecorder()
 	getInfo(rr, httptest.NewRequest("GET", "/api/get_info", nil))
@@ -88,14 +86,54 @@ func TestGetInfo(t *testing.T) {
 	if info.EmmcVersion != "emmc-1" {
 		t.Errorf("EmmcVersion = %q, want emmc-1", info.EmmcVersion)
 	}
-	if !info.IsSshEnabled {
-		t.Error("IsSshEnabled = false, want true")
+}
+
+func TestGetStatus(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "get-free-space", `echo "12345"`)
+	fakeBin(t, dir, "network-status", `echo '{"ethernet":{"up":true,"ip":"192.168.1.42"},`+
+		`"wifi":{"present":false}}'`)
+	if err := os.WriteFile(filepath.Join(images_folder, "test.img.xz"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if info.BytesAvailable != 12345 {
-		t.Errorf("BytesAvailable = %d, want 12345", info.BytesAvailable)
+
+	rr := httptest.NewRecorder()
+	getStatus(rr, httptest.NewRequest("GET", "/api/get_status", nil))
+
+	var status GetStatus
+	if err := json.Unmarshal(rr.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode: %v (body=%q)", err, rr.Body.String())
 	}
-	if len(info.LocalImages) != 1 || info.LocalImages[0].Name != "test.img.xz" {
-		t.Errorf("LocalImages = %+v, want one entry named test.img.xz", info.LocalImages)
+	if status.BytesAvailable != 12345 {
+		t.Errorf("BytesAvailable = %d, want 12345", status.BytesAvailable)
+	}
+	if len(status.LocalImages) != 1 || status.LocalImages[0].Name != "test.img.xz" {
+		t.Errorf("LocalImages = %+v, want one entry named test.img.xz", status.LocalImages)
+	}
+	if !status.Network.Ethernet.Up {
+		t.Errorf("Network = %+v, want ethernet up", status.Network)
+	}
+}
+
+// The split only pays off if the expensive half stays out of the polled half:
+// get-recore-revision, get-recore-serial-number and get-emmc-version each mount
+// a partition.
+func TestGetStatusMountsNothing(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "get-free-space", `echo "1"`)
+	fakeBin(t, dir, "network-status", `echo '{}'`)
+
+	ran := filepath.Join(dir, "ran")
+	for _, name := range []string{"get-recore-revision", "get-recore-serial-number",
+		"get-emmc-version", "get-reflash-version", "get-hostnames", "is-ssh-enabled"} {
+		fakeBin(t, dir, name, `echo `+name+` >> `+ran)
+	}
+
+	rr := httptest.NewRecorder()
+	getStatus(rr, httptest.NewRequest("GET", "/api/get_status", nil))
+
+	if b, err := os.ReadFile(ran); err == nil {
+		t.Errorf("get_status ran mounting/dead helpers: %s", b)
 	}
 }
 

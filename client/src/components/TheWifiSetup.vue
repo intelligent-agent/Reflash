@@ -11,8 +11,7 @@
       <img style="width: 20%" :src="computeSVG('Wi-Fi')" /><br />
       <w-progress v-if="progressVisible" class="ma1" circle></w-progress>
       <div v-if="isWifiPresent">
-        <h3>Connected as: {{ wifiDetails?.name }}</h3>
-        <p>Mode: {{ wifiDetails?.mode }}</p>
+        <h3>{{ wifiSummary }}</h3>
         
         <w-select
           style="width: 50%; margin: auto"
@@ -59,6 +58,7 @@
 <script>
 import axios from "axios";
 import { mapGetters } from "vuex";
+import { wifiSummary } from "../network";
 
 export default {
   name: "TheWifiSetup",
@@ -73,6 +73,7 @@ export default {
     },
     isWifiPresent: false,
     wifiStatusKnown: false,
+    wifi: {},
     updatePressed: false,
     serialNumber: "",
     serialNumberValid: false,
@@ -85,7 +86,12 @@ export default {
     networkSwitching: false,
     statusMessage: "",
   }),
-  computed: mapGetters(["options"]),
+  computed: {
+    ...mapGetters(["options"]),
+    wifiSummary() {
+      return wifiSummary(this.wifi);
+    },
+  },
   methods: {
     computeSVG(name) {
       var color;
@@ -133,6 +139,7 @@ export default {
             this.availableAPs[ap].label = this.availableAPs[ap].SSID + " " + this.availableAPs[ap].signal;
           }
           this.statusMessage = `Found ${this.availableAPs.length} network(s).`;
+          this.getWifiStatus();
         }
       } catch (err) {
         setTimeout(this.pollScanResults, 1000);
@@ -217,23 +224,22 @@ export default {
     continueToBoard() {
       window.location.href = "http://recore.local/";
     },
+    // Fetched on demand, never on a timer. This used to poll /api/get_wifi_status
+    // every 2s and never stop (#115); that poll raced the mode changes wifi-scan
+    // makes and kept reporting the dongle as missing mid-scan, collapsing the
+    // dialog. A scan cannot add or remove hardware, so there is nothing here a
+    // timer would have caught.
     async getWifiStatus() {
       try {
-        const response = await axios.get('/api/get_wifi_status');
-        
-        this.isWifiPresent = response.data.present;
-        this.wifiDetails = response.data;
+        const response = await axios.get('/api/get_status');
+        this.wifi = response.data.network?.wifi || {};
+        this.isWifiPresent = !!this.wifi.present;
         this.wifiStatusKnown = true;
-
       } catch (err) {
-        // A failed request says nothing about the hardware, and this used to
-        // conclude the dongle was gone. Scanning takes the AP down (wifi-scan
-        // stops it to switch to station mode), so a browser reaching the board
-        // over the hotspot loses the connection for the duration of the scan -
-        // exactly when this is polling. Keep the last known answer.
+        // Says nothing about the hardware: scanning takes the AP down, so a
+        // browser reaching the board over the hotspot loses the origin for the
+        // duration. Keep the last known answer.
         console.error("WiFi status check failed", err);
-      } finally {
-        setTimeout(this.getWifiStatus, 2000);
       }
     }
   },

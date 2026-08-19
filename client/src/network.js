@@ -1,3 +1,21 @@
+// One-line summary of what the WiFi adapter is doing, for the WiFi dialog.
+//
+// This used to read `name` out of `iwctl device list`, which is the *device* -
+// so the dialog said "Connected as: wlan0" where it meant to name the network.
+export function wifiSummary(wifi) {
+  if (!wifi || !wifi.present) {
+    return "";
+  }
+  const withIp = wifi.ip ? ` (${wifi.ip})` : "";
+  if (wifi.mode === "ap") {
+    return `Access point: ${wifi.ssid || "Recore"}${withIp}`;
+  }
+  if (wifi.ssid) {
+    return `Connected to: ${wifi.ssid}${withIp}`;
+  }
+  return "Not connected to a network";
+}
+
 // Build the "Network:" lines for the info panel (#117).
 //
 // One line per active transport, not one "the" connection: the board can be on

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { networkLines } from '../../src/network'
+import { networkLines, wifiSummary } from '../../src/network'
 
 describe('networkLines', () => {
   it('shows ethernet with its IP', () => {
@@ -51,5 +51,27 @@ describe('networkLines', () => {
 
   it('drops the parenthesised IP when there is no lease yet', () => {
     expect(networkLines({ ethernet: { up: true, ip: '' } })).toEqual(['Ethernet'])
+  })
+})
+
+describe('wifiSummary', () => {
+  it('names the network, not the device', () => {
+    expect(wifiSummary({ present: true, mode: 'station', ssid: 'HomeNet', ip: '192.168.1.87' }))
+      .toBe('Connected to: HomeNet (192.168.1.87)')
+  })
+
+  it('says access point when hosting the hotspot', () => {
+    expect(wifiSummary({ present: true, mode: 'ap', ssid: 'Recore', ip: '192.168.8.1' }))
+      .toBe('Access point: Recore (192.168.8.1)')
+  })
+
+  it('says not connected when the adapter has joined nothing', () => {
+    expect(wifiSummary({ present: true, mode: 'station', ssid: '', ip: '' }))
+      .toBe('Not connected to a network')
+  })
+
+  it('is empty with no adapter, so the dialog shows its own warning', () => {
+    expect(wifiSummary({ present: false })).toBe('')
+    expect(wifiSummary(undefined)).toBe('')
   })
 })

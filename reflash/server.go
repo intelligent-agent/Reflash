@@ -30,15 +30,22 @@ type Image struct {
 	Id   int    `json:"id"`
 }
 
+// GetInfo is what does not change while the page is open. Every field below
+// costs a partition mount except the version, so this is fetched once and must
+// never be polled.
 type GetInfo struct {
+	ReflashVersion string `json:"reflash_version"`
+	RecoreRevision string `json:"recore_revision"`
+	SerialNumber   string `json:"serial_number"`
+	EmmcVersion    string `json:"emmc_version"`
+}
+
+// GetStatus is what does change: the image list after a download or upload,
+// free space as it fills, and how the board is reachable. Nothing here mounts
+// anything, so unlike GetInfo it is safe to call as often as the UI needs.
+type GetStatus struct {
 	LocalImages    []Image       `json:"local_images"`
-	ReflashVersion string        `json:"reflash_version"`
-	RecoreRevision string        `json:"recore_revision"`
-	SerialNumber   string        `json:"serial_number"`
-	EmmcVersion    string        `json:"emmc_version"`
-	IsSshEnabled   bool          `json:"is_ssh_enabled"`
 	BytesAvailable int           `json:"bytes_available"`
-	IPs            []string      `json:"ips"`
 	Network        NetworkStatus `json:"network"`
 }
 
@@ -245,6 +252,7 @@ func ServerInit() {
 	fmt.Println("Starting Reflash go server " + reflashVersion + " env '" + env + "'")
 	http.Handle("/", fs)
 	http.HandleFunc("/api/get_info", getInfo)
+	http.HandleFunc("/api/get_status", getStatus)
 	http.HandleFunc("/api/stream_log", streamLog)
 	http.HandleFunc("/api/get_options", getOptions)
 	http.HandleFunc("/api/set_options", setOptions)
@@ -277,7 +285,6 @@ func ServerInit() {
 	http.HandleFunc("/api/get_serial_number", getSerialNumber)
 
 	http.HandleFunc("/api/get_wifi", getWifi)
-	http.HandleFunc("/api/get_wifi_status", getWifiStatus)
 	http.HandleFunc("/api/wifi_start_scan", startScanWifi)
 	http.HandleFunc("/api/wifi_poll_scan", getWifiScanResults)
 	http.HandleFunc("/api/wifi_start_connect", startConnectWifi)
@@ -288,23 +295,29 @@ func ServerInit() {
 
 func getInfo(w http.ResponseWriter, r *http.Request) {
 	var get_info *GetInfo = &GetInfo{
-		LocalImages:    getLocalImages(),
-		ReflashVersion: runCommandReturnString("get-reflash-version"),
+		// Already read once at startup, and the file cannot change under a
+		// running server - no reason to shell out again per request.
+		ReflashVersion: reflashVersion,
 		RecoreRevision: runCommandReturnString("get-recore-revision"),
 		SerialNumber:   runCommandReturnString("get-recore-serial-number"),
 		EmmcVersion:    runCommandReturnString("get-emmc-version"),
-		IsSshEnabled:   runCommandReturnBool("is-ssh-enabled"),
-		BytesAvailable: getFreeSpace(),
-		IPs:            getIPs(),
-		Network:        getNetworkStatus(),
 	}
 	json.NewEncoder(w).Encode(get_info)
 }
 
-// getNetworkStatus rides along on get_info rather than getting an endpoint of
-// its own, so the UI picks it up on the fetch it already makes. Nothing polls
-// it - App.vue refetches when the WiFi dialog closes, which is the only thing
-// that changes it from the UI. See #115 for the unbounded-poll mistake.
+func getStatus(w http.ResponseWriter, r *http.Request) {
+	var get_status *GetStatus = &GetStatus{
+		LocalImages:    getLocalImages(),
+		BytesAvailable: getFreeSpace(),
+		Network:        getNetworkStatus(),
+	}
+	json.NewEncoder(w).Encode(get_status)
+}
+
+// getNetworkStatus is the single source for "is a dongle fitted and what is it
+// doing". It replaced a separate /api/get_wifi_status that the WiFi dialog
+// polled every 2s: that poll raced the mode changes wifi-scan makes and kept
+// reporting the dongle as missing mid-scan, and it never stopped (#115).
 func getNetworkStatus() NetworkStatus {
 	var status NetworkStatus
 	out, _, err := runCommand2("network-status")
@@ -436,12 +449,6 @@ func getWifiScanResults(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cachedAccessPoints)
-}
-
-func getWifiStatus(w http.ResponseWriter, r *http.Request) {
-	result := runCommandReturnString("wifi-present")
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(result))
 }
 
 func startConnectWifi(w http.ResponseWriter, r *http.Request) {

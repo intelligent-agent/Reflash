@@ -1,24 +1,10 @@
 REMOTE=recore.local
 
+# Was an eighteen-line list naming each script, which went stale the moment one
+# was added or removed. This covers exactly what was just copied.
 install_bins:
 	cp bin/dev/* /usr/local/bin
-	chmod +x /usr/local/bin/backup-emmc
-	chmod +x /usr/local/bin/set-ssh-enabled
-	chmod +x /usr/local/bin/flash-recore
-	chmod +x /usr/local/bin/reboot-board
-	chmod +x /usr/local/bin/shutdown-board
-	chmod +x /usr/local/bin/get-emmc-version
-	chmod +x /usr/local/bin/get-recore-serial-number
-	chmod +x /usr/local/bin/rotate-screen
-	chmod +x /usr/local/bin/create-recore-config
-	chmod +x /usr/local/bin/is-usb-present
-	chmod +x /usr/local/bin/is-ssh-enabled
-	chmod +x /usr/local/bin/get-free-space
-	chmod +x /usr/local/bin/mount-unmount-usb
-	chmod +x /usr/local/bin/get-reflash-version
-	chmod +x /usr/local/bin/save-settings
-	chmod +x /usr/local/bin/flash-cleanup
-	chmod +x /usr/local/bin/flash-mkfifo
+	chmod +x $(patsubst bin/dev/%,/usr/local/bin/%,$(wildcard bin/dev/*))
 
 upload-bins:
 	scp bin/prod/* debian@recore.local:/usr/local/bin

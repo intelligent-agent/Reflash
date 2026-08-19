@@ -193,7 +193,7 @@
         <TheWifiSetup
           :open="openWifi"
           ref="TheWifiSetup"
-          @close="openWifi = false; this.checkInternet(); this.getInfo()"
+          @close="openWifi = false; this.checkInternet(); this.getStatus()"
         />
       </w-flex>
     </w-card>
@@ -691,14 +691,14 @@ export default {
             this.installFinished = true;
           } else if (this.previousState == "BACKUPING") {
             this.backupFile = "";
-            this.getInfo();
+            this.getStatus();
           } else if (this.previousState == "DOWNLOADING") {
             this.selectedRebuildImage = null;
-            await this.getInfo();
+            await this.getStatus();
             this.selectedLocalImage = data.filename;
           } else if (this.previousState == "UPLOADING") {
             this.selectedUploadImage = [];
-            await this.getInfo();
+            await this.getStatus();
             this.selectedLocalImage = data.filename;
           } else if (this.previousState == "MAGIC") {
             this.selectedRebuildImage = null;
@@ -711,7 +711,7 @@ export default {
           }
         } else if (data.state == "CANCELLED") {
           this.selectedGithubImage = null;
-          this.getInfo();
+          this.getStatus();
         } else if (data.state == "ERROR") {
           this.$waveui.notify(data.error, "error", 0);
         }
@@ -822,16 +822,23 @@ export default {
         }
       }
     },
+    // Static for as long as the page is open, and every field costs a partition
+    // mount on the board - so this is fetched once and never on a state change.
     async getInfo() {
       const response = await axios.get(`/api/get_info`);
-      this.localImages = response.data.local_images;
       this.reflash_version = response.data.reflash_version;
       this.emmc_version = response.data.emmc_version;
       this.recore_revision = response.data.recore_revision;
       this.serial_number = response.data.serial_number;
-      this.network = response.data.network;
-      this.bytesAvailable = response.data.bytes_available;
       this.openSerialNumber = (this.serial_number == "");
+    },
+    // The parts that actually change. Cheap: no mounts, so this is what the
+    // flash-state transitions call.
+    async getStatus() {
+      const response = await axios.get(`/api/get_status`);
+      this.localImages = response.data.local_images;
+      this.bytesAvailable = response.data.bytes_available;
+      this.network = response.data.network;
     },
     async getGithubImages() {
       // Reset first - this can now be called again (see checkInternet())
@@ -859,6 +866,7 @@ export default {
     this.selectedMethod = this.availableMethods.find((m) => m.id == 0);
     this.getGithubImages();
     this.getInfo();
+    this.getStatus();
     this.checkInternet();
     this.checkOnLoadProgress();
   },
