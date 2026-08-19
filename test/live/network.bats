@@ -79,6 +79,15 @@ wired_up() {
   [[ "$output" == *"dev eth0"* ]]
 }
 
+# Receiving an image allocates skbs from softirq, which is GFP_ATOMIC and so
+# cannot reclaim: when free memory sits below the watermark the WiFi driver
+# drops frames instead. Asserted as the value in force, not as a file in
+# sysctl.d - a typo'd key there is silently ignored.
+@test "there is headroom for atomic allocations under load" {
+  run board_ssh "cat /proc/sys/vm/min_free_kbytes"
+  [ "$output" -ge 16384 ] || { echo "min_free_kbytes=$output - the kernel default is too low here"; false; }
+}
+
 # Both interfaces on one subnet made the board answer ARP for either address on
 # either interface, so peers cached them crossed and the wired address took ping
 # but refused TCP.

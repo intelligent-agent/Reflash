@@ -953,3 +953,47 @@ func TestUploadChunkRoundTrip(t *testing.T) {
 		t.Errorf("state.BytesNow = %d, want %d", state.BytesNow, len(payload))
 	}
 }
+
+// A stalled transfer is the thing this logging exists to catch, and the client
+// polls once a second - so the sampling has to hold regardless of poll rate.
+func TestBandwidthIsSampledNotLoggedEveryPoll(t *testing.T) {
+	setupTest(t)
+
+	saved := bandwidthLogEvery
+	bandwidthLogEvery = 50 * time.Millisecond
+	lastBandwidthLog = time.Time{}
+	defer func() { bandwidthLogEvery = saved; lastBandwidthLog = time.Time{} }()
+
+	state = &State{State: UPLOADING_MAGIC, BytesTotal: 1000, BytesNow: 100}
+
+	for i := 0; i < 5; i++ { // five polls inside one sampling window
+		logBandwidth()
+	}
+	time.Sleep(60 * time.Millisecond)
+	logBandwidth() // window has passed, so this one is recorded
+
+	logged, err := os.ReadFile(log_file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(logged), "MB/s"); got != 2 {
+		t.Errorf("want 2 bandwidth lines (one per elapsed window), got %d:\n%s",
+			got, logged)
+	}
+}
+
+// Without a total there is no transfer in progress, and logging a rate then
+// would fill the log during idle polling.
+func TestBandwidthIsNotLoggedWhenNothingIsTransferring(t *testing.T) {
+	setupTest(t)
+	lastBandwidthLog = time.Time{}
+	defer func() { lastBandwidthLog = time.Time{} }()
+
+	state = &State{State: IDLE, BytesTotal: 0}
+	logBandwidth()
+
+	logged, _ := os.ReadFile(log_file)
+	if strings.Contains(string(logged), "MB/s") {
+		t.Errorf("logged a rate with no transfer in progress:\n%s", logged)
+	}
+}

@@ -1263,7 +1263,31 @@ func refreshProgress() {
 	bytes_last = state.BytesNow
 	state.Bandwidth = bytes_diff_mb / float32(elapsed)
 
+	logBandwidth()
 	updateDisplay()
+}
+
+// Bandwidth was computed for the UI chart and thrown away, so a transfer that
+// stalled left nothing behind to look at once the browser was closed - and the
+// log is what we have after the fact. Sampled rather than logged per poll: the
+// client polls once a second, and 60 lines a minute would bury everything else
+// in a log that lives in a tmpfs and is streamed to the browser.
+var (
+	bandwidthLogEvery = 30 * time.Second
+	lastBandwidthLog  time.Time
+)
+
+func logBandwidth() {
+	if state.BytesTotal <= 0 {
+		return
+	}
+	now := time.Now()
+	if !lastBandwidthLog.IsZero() && now.Sub(lastBandwidthLog) < bandwidthLogEvery {
+		return
+	}
+	lastBandwidthLog = now
+	logInfo(fmt.Sprintf("%s: %.2f MB/s (%d of %d bytes, %.0f%%)",
+		state.State, state.Bandwidth, state.BytesNow, state.BytesTotal, state.Progress))
 }
 
 func getProgress(w http.ResponseWriter, r *http.Request) {
