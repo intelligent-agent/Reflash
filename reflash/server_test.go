@@ -150,7 +150,6 @@ func TestStorageReadiness(t *testing.T) {
 	t.Run("a failed mount does not load or dirty the options", func(t *testing.T) {
 		dir := setupTest(t)
 		fakeBin(t, dir, "get-hostnames", `echo "recore.local"`)
-		fakeBin(t, dir, "expand-usb", `exit 0`)
 		fakeBin(t, dir, "usb-ready", `echo true`)
 		fakeBin(t, dir, "mount-unmount-usb", `exit 1`)
 		origRetries, origDelay := mountRetries, mountRetryDelay

@@ -257,9 +257,9 @@ var startWifiBringup = func() {
 func slowInit() {
 	bootPhase("get-ips", func() { state.IPs = getIPs() })
 	// Wait for the drive to be ours before taking it, rather than racing for
-	// it. Reflash does not create the partition either - ssh-keygen-boot runs
-	// expand-usb before it needs the drive, and calling it here as well only
-	// printed a second "Running expand USB script" that did nothing. Reflash mounts /mnt/usb and holds it for the life of the process, so
+	// it. Reflash does not create the partition either - ssh-keygen-boot is the
+	// only caller of expand-usb now, and running it here as well printed a
+	// second "Running expand USB script" that did nothing. Reflash mounts /mnt/usb and holds it for the life of the process, so
 	// it has to mount last: ssh-keygen-boot needs the drive read-write first,
 	// and a lock cannot share a mount with a process that never lets go.
 	//
