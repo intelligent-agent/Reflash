@@ -8,6 +8,56 @@ Reflash and use Balena Etcher to flash it to a USB drive.
 
 More information on the wiki: https://wiki.iagent.no/wiki/Reflash
 
+## Consoles and the control protocol
+
+Reflash draws its status UI straight to `/dev/fb0`, so `reflash.service` carries
+`Conflicts=getty@tty1.service` and the attached screen has no login prompt. That
+leaves USB as the way in, and the gadget exposes two ACM functions for it:
+
+| function | board | host | serves |
+| --- | --- | --- | --- |
+| `acm.usb0` | `/dev/ttyGS0` | `/dev/ttyACM0` | login getty (`debian` / `temppwd`) |
+| `acm.usb1` | `/dev/ttyGS1` | `/dev/ttyACM1` | control protocol |
+
+Ports are handed out in the order the functions are linked into the config, so
+the order in `usb-gadget-init.sh` is what fixes this mapping. The login gets the
+first port because that is the one a person plugging in a cable reaches for.
+
+The login matters because the alternatives are not always there: SSH needs a
+network, which a board with failed WiFi setup does not have, and without a USB
+getty the only remaining console is the UART header - which means opening the
+case, exactly when a console is most needed.
+
+### The control protocol
+
+A line-based protocol for flashing without the web UI. **flasher-pi** is the
+main consumer: a standalone machine that flashes an image onto a Recore, used in
+testing to flash a board for the first time. It talks to `/dev/ttyACM1` and does
+not need the board to be on the network - the image is already on the board's
+USB drive, so this only lists, starts and polls.
+
+```
+LIST          -> "IMG <name> <bytes>" per local image, then OK
+STATUS        -> "STATE <state> PROGRESS <pct>"
+FLASH <file>  -> starts a file install; "OK flashing <file>" or "ERR ..."
+CANCEL        -> cancels an in-progress flash
+```
+
+The same protocol is served on a unix socket at `/run/reflash/control.sock`, for
+clients on the board itself. `reflash-ctl` is the wrapper:
+
+```
+reflash-ctl LIST
+reflash-ctl FLASH rebuild-1.2.3.img.xz
+reflash-ctl STATUS
+reflash-ctl                 # interactive, one command per line
+```
+
+Use it from the getty rather than opening `/dev/ttyGS1`, which would take the
+tty flasher-pi is talking on. Responses are CRLF-terminated on the serial line
+and LF-terminated on the socket; everything else is identical, and all three
+transports drive the same state machine as the HTTP API.
+
 ## Development
 ### Create linux image
 This will use debootstrap to create a Reflash image
