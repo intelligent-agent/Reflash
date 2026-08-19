@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -207,8 +208,9 @@ func ServerInit() {
 	bringupWifi()
 	updateDisplay()
 	startWatchdog()
+	go serveControlSocket(controlSocketPath())
 	if env != "dev" {
-		go serveSerialControl("/dev/ttyGS0")
+		go serveSerialControl("/dev/ttyGS1")
 	}
 
 	timer1 := time.NewTimer(3 * time.Second)
@@ -1640,10 +1642,10 @@ func checkAutoReboot() {
 	runCommand2("reboot-board")
 }
 
-// handleSerialCommand parses one line of the USB control protocol (spoken over
-// the ACM gadget on /dev/ttyGS0) and returns the response line(s) to write
-// back. It drives the same flash state machine the HTTP API uses, so there is
-// no duplicate flashing logic.
+// handleSerialCommand parses one line of the control protocol and returns the
+// response line(s) to write back. It is transport-agnostic - see the transports
+// below - and drives the same flash state machine the HTTP API uses, so there
+// is no duplicate flashing logic.
 //
 //	LIST          -> "IMG <name> <bytes>" per local image, then "OK"
 //	STATUS        -> "STATE <state> PROGRESS <pct>"
@@ -1654,10 +1656,20 @@ func checkAutoReboot() {
 // tests can stub it without spawning the real flashing goroutine.
 var startInstall = func(filename string) { go goInstall(filename) }
 
-// serveSerialControl runs the USB control protocol over the ACM gadget tty.
-// flasher-pi sees this as /dev/ttyACM0 and can list/flash/poll without the
-// network. The tty only exists once the gadget has bound, and goes away when
-// the host disconnects, so we (re)open it in a retry loop.
+// The control protocol is served on two transports, both feeding the same
+// dispatcher:
+//
+//	/dev/ttyGS1  - the second ACM gadget function, which flasher-pi drives as
+//	               /dev/ttyACM1 without needing the network. The first ACM
+//	               function is the login getty: a getty and the protocol cannot
+//	               share a tty, so they get one each rather than the protocol
+//	               taking the only USB console.
+//	a unix socket - for anything running on the board itself, in particular
+//	               `reflash-ctl` from that login.
+//
+// serveSerialControl runs the protocol over the ACM gadget tty. The tty only
+// exists once the gadget has bound, and goes away when the host disconnects, so
+// we (re)open it in a retry loop.
 func serveSerialControl(devPath string) {
 	for {
 		// O_NOCTTY matters here. This process is a systemd service and so a
@@ -1675,19 +1687,126 @@ func serveSerialControl(devPath string) {
 			continue
 		}
 		logInfo("USB control channel open on " + devPath)
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-			for _, resp := range handleSerialCommand(line) {
-				fmt.Fprintf(f, "%s\r\n", resp)
-			}
-		}
-		f.Close() // EOF / host disconnected — reopen.
+		// CRLF: this end is a serial line, and flasher-pi reads it as one.
+		serveControlConn(f, "\r\n")
+		f.Close() // EOF / host disconnected - reopen.
 		time.Sleep(1 * time.Second)
 	}
+}
+
+// controlSocketPath is where the local transport listens. `reflash-ctl` uses
+// it, so a user logged in over USB can drive a flash without taking the tty
+// flasher-pi is talking on.
+func controlSocketPath() string {
+	if p := os.Getenv("REFLASH_CONTROL_SOCKET"); p != "" {
+		return p
+	}
+	if os.Getenv("APP_ENV") == "dev" {
+		return "../.tmp/control.sock"
+	}
+	return "/run/reflash/control.sock"
+}
+
+// serveControlSocket accepts control-protocol clients on a unix socket. Each
+// connection is handled concurrently and drives the same state machine the
+// HTTP API uses, so there is still no duplicate flashing logic.
+func serveControlSocket(path string) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		logError("Could not create control socket directory: " + err.Error())
+		return
+	}
+	// A unix socket is a filesystem entry that outlives the process that bound
+	// it, so a previous run (or a crash) leaves one behind that Listen would
+	// refuse with EADDRINUSE.
+	os.Remove(path)
+
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		logError("Could not listen on control socket " + path + ": " + err.Error())
+		return
+	}
+	// World-accessible on purpose: this exposes exactly what the HTTP API on
+	// port 80 already serves unauthenticated to the whole LAN, so restricting
+	// the local socket would buy nothing while breaking `reflash-ctl` for the
+	// non-root login it exists to serve.
+	if err := os.Chmod(path, 0o666); err != nil {
+		logError("Could not chmod control socket: " + err.Error())
+	}
+	logInfo("Control socket listening on " + path)
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			logError("Control socket accept failed: " + err.Error())
+			time.Sleep(time.Second)
+			continue
+		}
+		go func() {
+			defer conn.Close()
+			serveControlConn(conn, "\n")
+		}()
+	}
+}
+
+// serveControlConn runs the line protocol over one connection: a command per
+// line in, its response lines out, terminated by eol. On the socket the client
+// signals it is done by closing its write side, which ends the scan and closes
+// the connection - that EOF is what frames a one-shot response, since the
+// protocol itself has no framing.
+func serveControlConn(rw io.ReadWriter, eol string) {
+	scanner := bufio.NewScanner(rw)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		for _, resp := range handleSerialCommand(line) {
+			fmt.Fprint(rw, resp+eol)
+		}
+	}
+}
+
+// runControlClient is the `reflash ctl` side: with arguments it sends one
+// command and prints the reply, without them it relays stdin/stdout so the
+// protocol can be driven interactively from a ttyGS0 login.
+func runControlClient(args []string) int {
+	return runControlClientIO(os.Stdin, os.Stdout, args)
+}
+
+// The streams are parameters so tests do not have to swap the os.Stdout global
+// out from under the server's logging goroutines.
+func runControlClientIO(in io.Reader, out io.Writer, args []string) int {
+	path := controlSocketPath()
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Could not reach the Reflash server on "+path+": "+err.Error())
+		return 1
+	}
+	defer conn.Close()
+
+	// Half-closing tells the server no more commands are coming, so it finishes
+	// the response and closes - which is the EOF that terminates the copy below.
+	halfClose := func() {
+		if c, ok := conn.(*net.UnixConn); ok {
+			c.CloseWrite()
+		}
+	}
+
+	if len(args) > 0 {
+		fmt.Fprintf(conn, "%s\n", strings.Join(args, " "))
+		halfClose()
+	} else {
+		go func() {
+			io.Copy(conn, in)
+			halfClose()
+		}()
+	}
+
+	if _, err := io.Copy(out, conn); err != nil {
+		fmt.Fprintln(os.Stderr, "Control connection failed: "+err.Error())
+		return 1
+	}
+	return 0
 }
 
 func handleSerialCommand(line string) []string {

@@ -3,12 +3,16 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // setupTest points the helper-script seam (binDir) and the on-disk paths at a
@@ -413,6 +417,167 @@ func TestHandleSerialCommand(t *testing.T) {
 		state = &State{State: IDLE}
 		if got := handleSerialCommand("WIBBLE"); !strings.HasPrefix(got[0], "ERR unknown command") {
 			t.Errorf("got %v", got)
+		}
+	})
+}
+
+// startControlSocket brings up the control socket on a throwaway path and
+// waits for it to accept, so tests do not race the listener goroutine.
+func startControlSocket(t *testing.T) string {
+	t.Helper()
+	// The socket path goes in the sandbox, not $TMPDIR directly: unix socket
+	// paths are capped at ~108 bytes.
+	sock := filepath.Join(t.TempDir(), "c.sock")
+	t.Setenv("REFLASH_CONTROL_SOCKET", sock)
+	go serveControlSocket(sock)
+
+	for i := 0; i < 100; i++ {
+		if c, err := net.Dial("unix", sock); err == nil {
+			c.Close()
+			return sock
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("control socket never came up")
+	return ""
+}
+
+// The two transports must stay byte-compatible apart from their line ending:
+// the ACM tty is a serial line that flasher-pi reads as CRLF, the socket is not.
+func TestServeControlConnLineEndings(t *testing.T) {
+	for _, tc := range []struct{ name, eol string }{
+		{"tty uses CRLF", "\r\n"},
+		{"socket uses LF", "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTest(t)
+			state = &State{State: IDLE, Progress: 5}
+
+			var out bytes.Buffer
+			serveControlConn(struct {
+				io.Reader
+				io.Writer
+			}{strings.NewReader("STATUS\n"), &out}, tc.eol)
+
+			if got, want := out.String(), "STATE IDLE PROGRESS 5"+tc.eol; got != want {
+				t.Errorf("got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestControlSocket(t *testing.T) {
+	t.Run("serves the line protocol", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: MAGIC, Progress: 42}
+		os.WriteFile(filepath.Join(images_folder, "a.img.xz"), []byte("x"), 0o644)
+		sock := startControlSocket(t)
+
+		conn, err := net.Dial("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+
+		fmt.Fprint(conn, "LIST\nSTATUS\n")
+		conn.(*net.UnixConn).CloseWrite() // half-close frames the response
+
+		out, err := io.ReadAll(conn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(out)
+		for _, want := range []string{"IMG a.img.xz 1", "OK", "STATE MAGIC PROGRESS 42"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("response missing %q:\n%s", want, got)
+			}
+		}
+		// Serial framing has no business on a socket.
+		if strings.Contains(got, "\r") {
+			t.Errorf("response contains CR: %q", got)
+		}
+	})
+
+	t.Run("client sends one command and prints the reply", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE, Progress: 7}
+		startControlSocket(t)
+
+		var out bytes.Buffer
+		code := runControlClientIO(strings.NewReader(""), &out, []string{"STATUS"})
+
+		if code != 0 {
+			t.Errorf("exit code = %d, want 0", code)
+		}
+		if strings.TrimSpace(out.String()) != "STATE IDLE PROGRESS 7" {
+			t.Errorf("got %q", out.String())
+		}
+	})
+
+	t.Run("client with no arguments relays stdin", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE, Progress: 3}
+		startControlSocket(t)
+
+		var out bytes.Buffer
+		code := runControlClientIO(strings.NewReader("STATUS\nWIBBLE\n"), &out, nil)
+
+		if code != 0 {
+			t.Errorf("exit code = %d, want 0", code)
+		}
+		if !strings.Contains(out.String(), "STATE IDLE PROGRESS 3") ||
+			!strings.Contains(out.String(), "ERR unknown command") {
+			t.Errorf("got %q", out.String())
+		}
+	})
+
+	t.Run("client reports a missing server instead of hanging", func(t *testing.T) {
+		setupTest(t)
+		t.Setenv("REFLASH_CONTROL_SOCKET", filepath.Join(t.TempDir(), "absent.sock"))
+		if code := runControlClient([]string{"STATUS"}); code != 1 {
+			t.Errorf("exit code = %d, want 1", code)
+		}
+	})
+
+	t.Run("a stale socket file does not block startup", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE}
+		sock := filepath.Join(t.TempDir(), "c.sock")
+		// What a previous run or a crash leaves behind.
+		if err := os.WriteFile(sock, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("REFLASH_CONTROL_SOCKET", sock)
+		go serveControlSocket(sock)
+
+		var conn net.Conn
+		for i := 0; i < 100; i++ {
+			if c, err := net.Dial("unix", sock); err == nil {
+				conn = c
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if conn == nil {
+			t.Fatal("listener never bound over the stale socket")
+		}
+		conn.Close()
+	})
+}
+
+func TestControlSocketPath(t *testing.T) {
+	t.Run("prod default", func(t *testing.T) {
+		t.Setenv("REFLASH_CONTROL_SOCKET", "")
+		t.Setenv("APP_ENV", "")
+		if got := controlSocketPath(); got != "/run/reflash/control.sock" {
+			t.Errorf("got %q", got)
+		}
+	})
+	t.Run("env override wins", func(t *testing.T) {
+		t.Setenv("REFLASH_CONTROL_SOCKET", "/tmp/x.sock")
+		t.Setenv("APP_ENV", "dev")
+		if got := controlSocketPath(); got != "/tmp/x.sock" {
+			t.Errorf("got %q", got)
 		}
 	})
 }

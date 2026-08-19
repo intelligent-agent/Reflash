@@ -257,9 +257,13 @@ cat <<EOF > /etc/udev/rules.d/99-recore-otg.rules
 # every Recore revision regardless of DTB.
 SUBSYSTEM=="udc", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-gadget-setup.service"
 
-# ttyGS0 is owned by the Reflash server's USB control protocol (flasher-pi sees
-# it as /dev/ttyACM0), so we do NOT start a login getty on it. Use SSH over the
-# network for an interactive console.
+# A login getty on ttyGS0 (host: /dev/ttyACM0). Without one there is no console
+# a user can reach without opening the case: Reflash owns the framebuffer so
+# tty1 has no getty, and SSH needs a network that a board with failed WiFi setup
+# does not have. That left only the UART header - exactly when a console is most
+# needed. The Reflash control protocol has its own ACM function on ttyGS1
+# (host: /dev/ttyACM1); a getty and the protocol cannot share one tty.
+KERNEL=="ttyGS0", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="serial-getty@ttyGS0.service"
 EOF
 
 cat <<EOF > /etc/udev/rules.d/99-recore-rps.rules
@@ -329,12 +333,20 @@ case "\$1" in
         echo "Iagent" > strings/0x409/manufacturer
         echo "Recore USB Serial" > strings/0x409/product
 
+        # Two ACM functions, in this order: ports are handed out in the order
+        # the functions are linked into the config, so acm.usb0 is ttyGS0 and
+        # acm.usb1 is ttyGS1, which the host sees as /dev/ttyACM0 and ACM1.
+        # ttyGS0 carries the login getty and ttyGS1 the Reflash control
+        # protocol - a getty and the protocol cannot share one tty, so they get
+        # one each rather than the protocol taking the only USB console.
         mkdir -p functions/acm.usb0
+        mkdir -p functions/acm.usb1
         mkdir -p configs/c.1/strings/0x409
         echo "Config 1: Serial" > configs/c.1/strings/0x409/configuration
 
         # Link function to config
         ln -s functions/acm.usb0 configs/c.1/ 2>/dev/null
+        ln -s functions/acm.usb1 configs/c.1/ 2>/dev/null
 
         # Bind to hardware
         echo "\$UDC_NAME" > UDC
@@ -344,9 +356,11 @@ case "\$1" in
             cd \$GADGET_DIR
             echo "" > UDC
             rm -f configs/c.1/acm.usb0
+            rm -f configs/c.1/acm.usb1
             [ -d "configs/c.1/strings/0x409" ] && rmdir configs/c.1/strings/0x409
             [ -d "configs/c.1" ] && rmdir configs/c.1
             [ -d "functions/acm.usb0" ] && rmdir functions/acm.usb0
+            [ -d "functions/acm.usb1" ] && rmdir functions/acm.usb1
             [ -d "strings/0x409" ] && rmdir strings/0x409
             cd ..
             rmdir g1
