@@ -14,10 +14,6 @@ function render(network, open = true) {
       serialNumber: 'RC-0042',
       network,
     },
-    global: {
-      // w-transition-expand would otherwise swallow the whole panel.
-      stubs: { 'w-transition-expand': { template: '<div><slot /></div>' } },
-    },
   })
 }
 
