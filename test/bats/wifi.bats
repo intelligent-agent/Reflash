@@ -165,3 +165,47 @@ EOF
   assert_called_with "device wlan0 set-property Mode ap"
   assert_called_with "ap wlan0 start-profile Recore"
 }
+
+# --- adapter presence (#117 fallout: the dialog vanished mid-scan) -----------
+
+@test "wifi-present: no adapter reports present=false and exits 0" {
+  run "$PROD_BIN/wifi-present"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"present": false'* ]]
+}
+
+@test "wifi-present: adapter fitted reports the details iwd gives" {
+  with_adapter
+  stub iwctl <<'OUT'
+                    Devices
+  Name    Address             Powered  Adapter  Mode
+------------------------------------------------------
+  wlan0   aa:bb:cc:dd:ee:ff   on       phy0     station
+OUT
+  run "$PROD_BIN/wifi-present"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"present": true'* ]]
+  [[ "$output" == *'"mac": "aa:bb:cc:dd:ee:ff"'* ]]
+  [[ "$output" == *'"mode": "station"'* ]]
+}
+
+# The actual bug: a mode change makes iwd drop and re-add the device, so
+# `iwctl device list` is briefly empty. The dongle has not gone anywhere, and
+# the UI polls this every 2s while wifi-scan flips the mode twice.
+@test "wifi-present: adapter is still present while iwd shows no device" {
+  with_adapter
+  stub_silent iwctl
+  run "$PROD_BIN/wifi-present"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"present": true'* ]]
+  [[ "$output" == *'"name": "wlan0"'* ]]
+}
+
+@test "wifi-present: adapter is still present when iwctl fails outright" {
+  with_adapter
+  stub iwctl 1 <<'OUT'
+OUT
+  run "$PROD_BIN/wifi-present"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"present": true'* ]]
+}
