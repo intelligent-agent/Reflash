@@ -151,6 +151,9 @@ func TestStorageReadiness(t *testing.T) {
 		fakeBin(t, dir, "get-hostnames", `echo "recore.local"`)
 		fakeBin(t, dir, "expand-usb", `exit 0`)
 		fakeBin(t, dir, "mount-unmount-usb", `exit 1`)
+		origRetries, origDelay := mountRetries, mountRetryDelay
+		mountRetries, mountRetryDelay = 2, time.Millisecond
+		defer func() { mountRetries, mountRetryDelay = origRetries, origDelay }()
 		// Keep the test synchronous: the real one is a goroutine that would
 		// still be writing the log while TempDir is being removed.
 		origWifi := startWifiBringup

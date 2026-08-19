@@ -244,6 +244,13 @@ func bootPhase(name string, f func()) {
 // nothing in startup depends on it, yet it was 2.62s of a 3.08s startup even
 // when it went well. A package var like startInstall so tests can stub it and
 // stay synchronous.
+// How long to keep trying the mount before calling the drive unavailable.
+// Vars so tests do not have to sit through it.
+var (
+	mountRetries    = 30
+	mountRetryDelay = time.Second
+)
+
 var startWifiBringup = func() {
 	go bootPhase("wifi-bringup", func() { bringupWifi() })
 }
@@ -252,8 +259,19 @@ func slowInit() {
 	bootPhase("get-ips", func() { state.IPs = getIPs() })
 	bootPhase("expand-usb", func() { expandUsb() })
 
+	// Retry rather than concluding there is no drive: ssh-keygen-boot mounts it
+	// rw for the duration of restoring or generating host keys, and a mount
+	// attempt inside that window fails with "Can't open blockdev". Confirmed
+	// live - the first boot after removing the ordering hit exactly that.
 	var mountErr error
-	bootPhase("mount-usb", func() { mountErr = mountUsb(MODE_RO) })
+	bootPhase("mount-usb", func() {
+		for i := 0; i < mountRetries; i++ {
+			if mountErr = mountUsb(MODE_RO); mountErr == nil {
+				return
+			}
+			time.Sleep(mountRetryDelay)
+		}
+	})
 	if mountErr != nil {
 		// Do not carry on as if the drive were simply empty. loadOptions would
 		// invent defaults and mark them dirty, and saveOptions would then write
@@ -665,6 +683,13 @@ func updateDisplay() {
 	// fail before ServerInit has finished building it.
 	if state == nil {
 		state = &State{State: IDLE, BytesTotal: 1}
+	}
+	// options is nil until loadOptions runs, and it does not run at all when
+	// the drive fails to mount - which is exactly when the screen most needs
+	// to say so. Reading ScreenRotation off it crashed the server on that
+	// path, and Restart=always turned the crash into a restart loop.
+	if options == nil {
+		options = &Options{}
 	}
 	// Until the drive is mounted there is nothing meaningful to report about
 	// flashing, and IDLE would draw an empty "ready" screen while the board is
