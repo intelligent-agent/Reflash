@@ -641,6 +641,16 @@ EOF
 systemctl enable reflash --root="${ROOTFSDIR}"/initrd
 
 # Install app
+#
+# The helper directory and the web root are built from scratch rather than
+# copied into: the build context is a staging directory that the Makefile
+# populates from bin/prod and client/, and "cp" merges rather than replaces - so
+# anything deleted upstream survived in the context and kept being installed.
+# Eight dead scripts had accumulated that way, one of them (get-setting) removed
+# because it could never work. The Makefile clears the staging dir now; this
+# refuses to install a stale set even if it is handed one, e.g. when the
+# container is run against a context assembled by hand.
+sudo rm -rf "${ROOTFSDIR}"/initrd/usr/local/bin "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo mkdir -p "${ROOTFSDIR}"/initrd/usr/local/bin
 sudo cp reflash/reflash "${ROOTFSDIR}"/initrd/usr/local/bin/
 sudo mkdir -p "${ROOTFSDIR}"/initrd/usr/local/share/fonts
@@ -648,6 +658,12 @@ sudo cp reflash/Roboto-Light.ttf "${ROOTFSDIR}"/initrd/usr/local/share/fonts/
 sudo mkdir -p "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo cp -r client/dist "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo cp bin/* "${ROOTFSDIR}"/initrd/usr/local/bin
+
+# The helper set is what most of the image's behaviour hangs off, and a missing
+# or surplus script is invisible until something calls it at runtime. Record it
+# in the build log so an image can be audited from its own build output.
+echo "Installed $(ls "${ROOTFSDIR}"/initrd/usr/local/bin | wc -l) helpers:"
+ls "${ROOTFSDIR}"/initrd/usr/local/bin | sort | tr '\n' ' '; echo
 sudo mkdir -p "${ROOTFSDIR}"/initrd/mnt/usb
 sudo mkdir -p "${ROOTFSDIR}"/initrd/mnt/emmc
 
