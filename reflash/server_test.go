@@ -962,23 +962,62 @@ func TestBandwidthIsSampledNotLoggedEveryPoll(t *testing.T) {
 	saved := bandwidthLogEvery
 	bandwidthLogEvery = 50 * time.Millisecond
 	lastBandwidthLog = time.Time{}
-	defer func() { bandwidthLogEvery = saved; lastBandwidthLog = time.Time{} }()
+	bytesAtLastLog = 0
+	defer func() {
+		bandwidthLogEvery = saved
+		lastBandwidthLog = time.Time{}
+		bytesAtLastLog = 0
+	}()
 
-	state = &State{State: UPLOADING_MAGIC, BytesTotal: 1000, BytesNow: 100}
+	state = &State{State: UPLOADING_MAGIC, BytesTotal: 1 << 30}
 
-	for i := 0; i < 5; i++ { // five polls inside one sampling window
-		logBandwidth()
+	logBandwidth() // first call only arms the window, it cannot know a rate yet
+	for i := 0; i < 5; i++ {
+		logBandwidth() // five polls inside one window
 	}
 	time.Sleep(60 * time.Millisecond)
-	logBandwidth() // window has passed, so this one is recorded
+	state.BytesNow = 1 << 20 // one MB moved during the window
+	logBandwidth()
 
 	logged, err := os.ReadFile(log_file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(string(logged), "MB/s"); got != 2 {
-		t.Errorf("want 2 bandwidth lines (one per elapsed window), got %d:\n%s",
-			got, logged)
+	if got := strings.Count(string(logged), "MB/s"); got != 1 {
+		t.Errorf("want 1 bandwidth line (one elapsed window), got %d:\n%s", got, logged)
+	}
+}
+
+// The reason for averaging: state.Bandwidth is an instantaneous ~1s rate, so
+// sampling it logged 0.00 MB/s while a transfer was moving several MB/s, and a
+// real stall could not be told apart from an unlucky sample.
+func TestBandwidthIsAveragedOverTheWindowNotSampled(t *testing.T) {
+	setupTest(t)
+
+	saved := bandwidthLogEvery
+	bandwidthLogEvery = 50 * time.Millisecond
+	lastBandwidthLog = time.Time{}
+	bytesAtLastLog = 0
+	defer func() {
+		bandwidthLogEvery = saved
+		lastBandwidthLog = time.Time{}
+		bytesAtLastLog = 0
+	}()
+
+	// Bandwidth reads zero - the instantaneous sample a poll would have caught -
+	// while the byte counter shows real movement.
+	state = &State{State: UPLOADING_MAGIC, BytesTotal: 1 << 30, Bandwidth: 0}
+	logBandwidth()
+	time.Sleep(60 * time.Millisecond)
+	state.BytesNow = 4 << 20
+	logBandwidth()
+
+	logged, _ := os.ReadFile(log_file)
+	if strings.Contains(string(logged), "0.00 MB/s") {
+		t.Errorf("reported a stall while 4MB moved in the window:\n%s", logged)
+	}
+	if !strings.Contains(string(logged), "MB/s") {
+		t.Fatalf("no bandwidth line logged at all:\n%s", logged)
 	}
 }
 
