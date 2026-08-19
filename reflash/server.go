@@ -335,7 +335,8 @@ func ServerInit() {
 	// Rotation is a stored option on the drive, so this first frame is
 	// unrotated and may flip once load-options completes.
 	bootPhase("first-draw", func() {
-		Draw(0, "Preparing USB drive", 0, nil, reflashVersion)
+		msg, progress, _ := storageFrame()
+		Draw(float32(progress)/100, msg, 0, nil, reflashVersion)
 	})
 	go slowInit()
 
@@ -684,15 +685,9 @@ func updateDisplay() {
 	// still busy. Say what is actually happening instead - this is the frame
 	// the user sees for most of the boot on a slow stick (#116).
 	shown := state.State
-	// Negative progress: no bar. Neither of these has a measurable duration -
-	// mkfs on a worn stick took 198s (#116) and reports nothing along the way.
 	progress := float64(state.Progress)
-	if st := getStorage(); st == STORAGE_PREPARING {
-		shown = "Preparing USB drive"
-		progress = -1
-	} else if st == STORAGE_FAILED {
-		shown = "No USB drive"
-		progress = -1
+	if msg, p, ok := storageFrame(); ok {
+		shown, progress = msg, p
 	}
 
 	state.Lock()
@@ -1754,6 +1749,27 @@ func lockSaveOptions() {
 	state.State = IDLE
 	state.Unlock()
 	updateDisplay()
+}
+
+// storageFrame is what the panel shows while the drive is not usable, and
+// ok=false once it is and the flash state should be shown instead.
+//
+// Shared by the first frame and every later redraw. They used to decide
+// separately, and the first one passed a progress of 0 where the other passed
+// -1 - so a progress bar appeared for the moment before the first redraw
+// replaced it.
+//
+// Negative progress means no bar: neither of these has a measurable duration.
+// mkfs on a worn stick took 198s (#116) and reports nothing along the way, and
+// a bar pinned at zero reads as stuck where the message alone reads as working.
+func storageFrame() (string, float64, bool) {
+	switch getStorage() {
+	case STORAGE_PREPARING:
+		return "Preparing USB drive", -1, true
+	case STORAGE_FAILED:
+		return "No USB drive", -1, true
+	}
+	return "", 0, false
 }
 
 // refreshIPs re-reads the addresses and redraws if they changed.

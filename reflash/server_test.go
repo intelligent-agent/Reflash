@@ -177,6 +177,43 @@ func TestStorageReadiness(t *testing.T) {
 	})
 }
 
+// The first frame and every later redraw take their message and progress from
+// here. They used to decide separately and disagreed: the first passed 0, which
+// drew a progress bar for the moment before the first redraw replaced it.
+func TestStorageFrame(t *testing.T) {
+	cases := []struct {
+		storage string
+		msg     string
+		bar     bool // is there a progress bar
+	}{
+		{STORAGE_PREPARING, "Preparing USB drive", false},
+		{STORAGE_FAILED, "No USB drive", false},
+		{STORAGE_READY, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.storage, func(t *testing.T) {
+			setupTest(t)
+			state = &State{State: IDLE, BytesTotal: 1}
+			setStorage(c.storage)
+
+			msg, progress, ok := storageFrame()
+			if c.storage == STORAGE_READY {
+				if ok {
+					t.Error("READY should not override the flash state")
+				}
+				return
+			}
+			if !ok || msg != c.msg {
+				t.Errorf("got %q ok=%v, want %q", msg, ok, c.msg)
+			}
+			// Negative progress is what suppresses the bar; 0 draws one.
+			if progress >= 0 {
+				t.Errorf("progress = %v, want negative so no bar is drawn", progress)
+			}
+		})
+	}
+}
+
 func TestWatchIPs(t *testing.T) {
 	// The bug this replaces: a single timer three seconds after startup, which
 	// fires before WiFi has a lease - so the panel showed nothing for the rest
