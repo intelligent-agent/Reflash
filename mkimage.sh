@@ -289,10 +289,14 @@ EOF
 
 # usb-gadget-init.sh is not written here any more: it lives in bin/prod and is
 # installed with the other helpers below. It used to be a heredoc nested inside
-# the unquoted ENDOFDEB block, which meant every $ and ` in it had to be
-# backslash-escaped to survive the outer expansion - and it was silently deleted
-# by the rm -rf that rebuilds /usr/local/bin further down, so the gadget failed
-# to start on every image built after that change.
+# the unquoted ENDOFDEB block, so every dollar sign and backtick in it had to be
+# backslash-escaped to survive the outer expansion - and it was then silently
+# deleted by the rm -rf that rebuilds /usr/local/bin further down, so the gadget
+# failed to start on every image built after that change.
+#
+# Note the wording above: this comment is itself inside that unquoted heredoc,
+# so writing either character literally here is a build failure, not a style
+# point. It was, once.
 
 cat <<EOF > /etc/systemd/system/usb-gadget-setup.service
 [Unit]
