@@ -10,6 +10,13 @@ import (
 )
 
 func main() {
+	// `reflash ctl [COMMAND...]` is the client half, for a user logged in on
+	// ttyGS0. Handled before anything else starts: it must not touch the
+	// screen or bind the server's ports.
+	if len(os.Args) > 1 && os.Args[1] == "ctl" {
+		os.Exit(runControlClient(os.Args[2:]))
+	}
+
 	// Belt and braces alongside the O_NOCTTY in serveSerialControl: a flashing
 	// appliance should not be killable by a USB cable event. Go's default
 	// disposition for SIGHUP is to terminate, and there is nothing this process

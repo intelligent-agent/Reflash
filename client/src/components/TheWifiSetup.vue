@@ -11,8 +11,7 @@
       <img style="width: 20%" :src="computeSVG('Wi-Fi')" /><br />
       <w-progress v-if="progressVisible" class="ma1" circle></w-progress>
       <div v-if="isWifiPresent">
-        <h3>Connected as: {{ wifiDetails?.name }}</h3>
-        <p>Mode: {{ wifiDetails?.mode }}</p>
+        <h3>{{ wifiSummary }}</h3>
         
         <w-select
           style="width: 50%; margin: auto"
@@ -33,22 +32,37 @@
         </w-input>
 
         <div class="mt4">
-          <w-button @click="startWifiScan" :disabled="progressVisible" class="mr2">
+          <w-button @click="startWifiScan" :disabled="busy" class="mr2">
             Scan for Networks
           </w-button>
-          <w-button @click="startWifiConnect" :disabled="progressVisible || !selected">
+          <w-button @click="startWifiConnect" :disabled="busy || !selected">
             Connect
+          </w-button>
+          <w-button
+            @click="startHotspot"
+            :disabled="busy || wifi.mode === 'ap'"
+            class="ml2"
+            title="Serve the Recore access point instead of joining a network"
+          >
+            Use hotspot
           </w-button>
         </div>
       </div>
 
-      <div v-else class="pa4 text-center mt4 color-error border-error-all">
+      <!-- Only once the server has actually answered: before the first reply
+           "not present" is just "not asked yet", and claiming the dongle is
+           missing on the way in is how this warning came to flash spuriously. -->
+      <div v-else-if="wifiStatusKnown" class="pa4 text-center mt4 color-error border-error-all">
         <p>⚠️ No WiFi dongle detected. Please plug in a USB WiFi adapter.</p>
       </div>
 
       <div v-if="statusMessage" class="pa2 mt4 text-center">
         <p>{{ statusMessage }}</p>
-        <w-button v-if="networkSwitching" @click="continueToBoard">Continue at recore.local</w-button>
+        <!-- Only while the board is genuinely unreachable. Telling someone to
+             reconnect when the page is still talking to the board is noise. -->
+        <p v-if="reconnecting && !boardReachable" class="reconnect-hint">
+          Reconnect this computer to the same network.
+        </p>
       </div>
     </div>
   </w-dialog>
@@ -56,6 +70,7 @@
 <script>
 import axios from "axios";
 import { mapGetters } from "vuex";
+import { wifiSummary } from "../network";
 
 export default {
   name: "TheWifiSetup",
@@ -69,19 +84,38 @@ export default {
       width: "30%",
     },
     isWifiPresent: false,
+    wifiStatusKnown: false,
+    wifi: {},
     updatePressed: false,
     serialNumber: "",
     serialNumberValid: false,
+    inputSSID: "",
     inputPassword: "",
-    apList: [],
     availableAPs: [],
     selected: null,
     progressVisible: false,
-    connectPollDeadline: 0,
-    networkSwitching: false,
+    // A mode switch is in flight and we are waiting to reach the board again.
+    reconnecting: false,
+    // Whether the board answered our last probe. Starts true so the hint does
+    // not flash before the first probe has had a chance to run.
+    boardReachable: true,
+    reconnectTarget: "",
+    reconnectFromMode: "",
+    sawTransition: false,
+    reconnectTimer: null,
     statusMessage: "",
   }),
-  computed: mapGetters(["options"]),
+  computed: {
+    ...mapGetters(["options"]),
+    wifiSummary() {
+      return wifiSummary(this.wifi);
+    },
+    // One flag for "don't touch the radio right now", so the buttons come back
+    // by themselves the moment the board is reachable and settled again.
+    busy() {
+      return this.progressVisible || this.reconnecting;
+    },
+  },
   methods: {
     computeSVG(name) {
       var color;
@@ -100,11 +134,51 @@ export default {
       }
       return require("./../assets/" + name + "-" + color + ".svg");
     },
-    async getInfo() {
-      var self = this;
-      await axios.get(`/api/get_wifi`).then(function (response) {
-        self.inputSSID = response.data.SSID;
-      });
+    // Reopening the dialog used to show an empty list, no SSID and no selection
+    // (#105). The server already keeps the last scan in cachedAccessPoints and
+    // the SSID in its options, so both survive even a page reload - they just
+    // were never asked for. wifi_poll_scan returns that cache without starting
+    // a scan, so this costs nothing and the user can still hit "Scan for
+    // Networks" for a fresh list.
+    async restoreState() {
+      try {
+        const [wifi, aps] = await Promise.all([
+          axios.get('/api/get_wifi'),
+          axios.get('/api/wifi_poll_scan'),
+        ]);
+        this.inputSSID = wifi.data.SSID || "";
+        // 204 means a scan is in flight; leave whatever is on screen alone.
+        if (aps.status !== 204 && Array.isArray(aps.data)) {
+          this.setAvailableAPs(aps.data);
+        }
+        this.reselectSavedSSID();
+      } catch (err) {
+        console.error("Could not restore WiFi state", err);
+      }
+    },
+    setAvailableAPs(aps) {
+      this.availableAPs = aps;
+      for (const ap in this.availableAPs) {
+        this.availableAPs[ap].label =
+          this.availableAPs[ap].SSID + " " + this.availableAPs[ap].signal;
+      }
+    },
+    // Preselect the network the board is set to use, so reopening the dialog
+    // comes back to where the user left it rather than to "Please select one".
+    reselectSavedSSID() {
+      if (!this.selected && this.inputSSID) {
+        this.selected =
+          this.availableAPs.find((ap) => ap.SSID === this.inputSSID) || null;
+      }
+    },
+    async startHotspot() {
+      this.statusMessage = "Switching to the Recore hotspot...";
+      try {
+        await axios.post('/api/wifi_start_hotspot');
+        this.beginReconnect("Recore", "ap");
+      } catch (err) {
+        this.statusMessage = err.response?.data || "Could not start the hotspot.";
+      }
     },
     async startWifiScan() {
       this.progressVisible = true;
@@ -123,12 +197,11 @@ export default {
         if (res.status === 204) {
           setTimeout(this.pollScanResults, 1000);
         } else {
-          this.availableAPs = res.data;
+          this.setAvailableAPs(res.data);
           this.progressVisible = false;
-          for (const ap in this.availableAPs) {
-            this.availableAPs[ap].label = this.availableAPs[ap].SSID + " " + this.availableAPs[ap].signal;
-          }
+          this.reselectSavedSSID();
           this.statusMessage = `Found ${this.availableAPs.length} network(s).`;
+          this.getWifiStatus();
         }
       } catch (err) {
         setTimeout(this.pollScanResults, 1000);
@@ -139,92 +212,121 @@ export default {
         this.$waveui.notify("Please select an access point", "error", 0);
         return;
       }
-      this.progressVisible = true;
-      this.networkSwitching = false;
-      this.connectPollDeadline = Date.now() + 15000;
       this.statusMessage = `Connecting to ${this.selected.SSID}...`;
       try {
-        await axios.post('/api/wifi_start_connect',{
+        await axios.post('/api/wifi_start_connect', {
           SSID: this.selected.SSID,
           password: this.inputPassword,
         });
-        setTimeout(this.pollConnectResults, 1000);
+        this.beginReconnect(this.selected.SSID, "station");
       } catch (err) {
         const msg = err.response?.data || "Could not start connection";
         this.$waveui.notify(msg, "error", 4000);
         this.statusMessage = msg;
-        this.progressVisible = false;
       }
     },
-    async pollConnectResults() {
-      // Once the board switches to station mode it tears down its own
-      // hotspot AP - if that's the network this page loaded from, its
-      // origin is gone for good from here on, regardless of whether the
-      // station-mode connection ultimately succeeds (#90). Polling that
-      // dead origin can never observe an outcome, so only do it for a
-      // short window to catch fast, local failures (e.g. validation
-      // errors) that happen before the switch - after that, stop and
-      // point the user at reconnecting manually instead of spinning
-      // forever against an address that will never respond again.
-      //
-      // A deadline (not an attempt counter) bounds this, because a
-      // request against a dead origin doesn't necessarily fail quickly -
-      // confirmed live (#95) that a request can hang completely silently
-      // (no error, ever) once the interface disappears. The explicit
-      // timeout below turns that into a normal rejection so the loop
-      // keeps moving instead of getting stuck forever on one request.
-      if (Date.now() > this.connectPollDeadline) {
-        this.progressVisible = false;
-        this.networkSwitching = true;
-        this.statusMessage = `The board is switching to ${this.selected.SSID}. Reconnect this device to that network, then continue below.`;
+    // Switching the radio takes the board off whatever network this page came
+    // in on, so the origin may die mid-request. Rather than giving up after a
+    // deadline and offering a "continue at recore.local" button that only
+    // guesses, watch for the board to come back and say what is true at each
+    // step: switching -> (unreachable) reconnect this computer -> connected.
+    beginReconnect(target, wantMode) {
+      this.stopReconnectWatch();
+      this.reconnecting = true;
+      this.reconnectTarget = target;
+      // The state the board is in right now. Nothing it reports counts as an
+      // outcome until it has left this - straight after the request it is
+      // still here, and reading that as a result is wrong in both directions.
+      this.reconnectFromMode = this.wifi.mode || "";
+      this.sawTransition = false;
+      this.progressVisible = false; // the reconnect state drives `busy` now
+      this.boardReachable = true;
+      this.statusMessage = `Recore is switching to ${target}.`;
+      this.watchForReconnect(wantMode);
+    },
+    stopReconnectWatch() {
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.reconnecting = false;
+    },
+    async watchForReconnect(wantMode) {
+      // Bounded by the dialog, not by a timer: closing it stops the watch, so
+      // this cannot become another loop that runs forever (#115).
+      if (!this.open) {
+        this.stopReconnectWatch();
         return;
       }
+      const target = this.reconnectTarget;
+      let wifi = null;
       try {
-        const res = await axios.get('/api/wifi_poll_connect', { timeout: 3000 });
-        if (res.status === 204) {
-          setTimeout(this.pollConnectResults, 1000);
-        } else {
-          console.log(res.data)
-          if(res.data.isConnecting == true){
-            this.statusMessage = `Still connecting to ${this.selected.SSID}...`;
-            setTimeout(this.pollConnectResults, 1000);
-          }
-          else {
-            if (res.data.error) {
-              this.$waveui.notify(res.data.error, "error", 0);
-              this.statusMessage = res.data.error;
-            }
-            else{
-              this.$waveui.notify("Connected to "+this.selected.SSID, "info", 0);
-              this.statusMessage = `Connected to ${this.selected.SSID}.`;
-            }
-            this.progressVisible = false;
-          }
-        }
+        // An explicit timeout, because a request to an origin that has gone
+        // away does not necessarily fail - confirmed live (#95) that it can
+        // hang silently forever. This turns that into a normal rejection.
+        const res = await axios.get('/api/get_status', { timeout: 3000 });
+        wifi = res.data.network?.wifi || {};
+        this.boardReachable = true;
       } catch (err) {
-        // A hung/timed-out request here looks the same as a normal
-        // network blip - keep showing the same "still connecting"
-        // status rather than alarming the user prematurely. The
-        // deadline check above is what actually decides when to give up.
-        this.statusMessage = `Still connecting to ${this.selected.SSID}...`;
-        setTimeout(this.pollConnectResults, 1000);
+        this.boardReachable = false;
       }
+
+      if (wifi) {
+        if (wifi.mode !== this.reconnectFromMode) {
+          this.sawTransition = true;
+        }
+        // Only "arrived" once the board reports the state we asked for. Right
+        // after the request it is still on the old one, and treating that as
+        // success would report a connection that has not happened.
+        const arrived =
+          wantMode === "ap"
+            ? wifi.mode === "ap"
+            : wifi.mode === "station" && wifi.ssid === target;
+        if (arrived) {
+          this.wifi = wifi;
+          this.isWifiPresent = !!wifi.present;
+          this.wifiStatusKnown = true;
+          this.stopReconnectWatch();
+          this.statusMessage = `Connected to ${target}.`;
+          return;
+        }
+        // Reachable, and it fell back to its own hotspot instead of joining:
+        // wifi-connect does that on any failure (#90), and nothing used to say
+        // so - the user was left believing they had joined their network.
+        //
+        // Only once it has actually left the mode it started in. Connecting
+        // *from* the hotspot is the common case, and without this the first
+        // probe sees the AP it has not torn down yet and calls the attempt
+        // failed before the board has done anything.
+        if (wantMode === "station" && wifi.mode === "ap" && this.sawTransition) {
+          this.wifi = wifi;
+          this.stopReconnectWatch();
+          this.statusMessage =
+            `Could not join ${target}. The board is back on its own Recore hotspot.`;
+          this.$waveui.notify(this.statusMessage, "error", 0);
+          return;
+        }
+      }
+
+      this.statusMessage = `Recore is switching to ${target}.`;
+      this.reconnectTimer = setTimeout(() => this.watchForReconnect(wantMode), 2000);
     },
-    continueToBoard() {
-      window.location.href = "http://recore.local/";
-    },
+    // Fetched on demand, never on a timer. This used to poll /api/get_wifi_status
+    // every 2s and never stop (#115); that poll raced the mode changes wifi-scan
+    // makes and kept reporting the dongle as missing mid-scan, collapsing the
+    // dialog. A scan cannot add or remove hardware, so there is nothing here a
+    // timer would have caught.
     async getWifiStatus() {
       try {
-        const response = await axios.get('/api/get_wifi_status');
-        
-        this.isWifiPresent = response.data.present;
-        this.wifiDetails = response.data;
-
+        const response = await axios.get('/api/get_status');
+        this.wifi = response.data.network?.wifi || {};
+        this.isWifiPresent = !!this.wifi.present;
+        this.wifiStatusKnown = true;
       } catch (err) {
+        // Says nothing about the hardware: scanning takes the AP down, so a
+        // browser reaching the board over the hotspot loses the origin for the
+        // duration. Keep the last known answer.
         console.error("WiFi status check failed", err);
-        this.isWifiPresent = false;
-      } finally {
-        setTimeout(this.getWifiStatus, 2000); 
       }
     }
   },
@@ -233,10 +335,14 @@ export default {
       immediate: true,
       handler(is_open) {
         if (is_open) {
-          this.networkSwitching = false;
           this.statusMessage = "";
-          this.getWifiStatus()
+          this.getWifiStatus();
+          this.restoreState();
           this.dialog.show = true;
+        } else {
+          // The watch is bounded by the dialog being open; without this it
+          // would keep polling an invisible dialog forever (#115).
+          this.stopReconnectWatch();
         }
       },
     },
@@ -247,5 +353,9 @@ export default {
 <style>
 .dialog_title {
   margin: auto;
+}
+.reconnect-hint {
+  opacity: 0.8;
+  font-size: 0.9em;
 }
 </style>

@@ -1,24 +1,10 @@
 REMOTE=recore.local
 
+# Was an eighteen-line list naming each script, which went stale the moment one
+# was added or removed. This covers exactly what was just copied.
 install_bins:
 	cp bin/dev/* /usr/local/bin
-	chmod +x /usr/local/bin/backup-emmc
-	chmod +x /usr/local/bin/set-ssh-enabled
-	chmod +x /usr/local/bin/flash-recore
-	chmod +x /usr/local/bin/reboot-board
-	chmod +x /usr/local/bin/shutdown-board
-	chmod +x /usr/local/bin/get-emmc-version
-	chmod +x /usr/local/bin/get-recore-serial-number
-	chmod +x /usr/local/bin/rotate-screen
-	chmod +x /usr/local/bin/create-recore-config
-	chmod +x /usr/local/bin/is-usb-present
-	chmod +x /usr/local/bin/is-ssh-enabled
-	chmod +x /usr/local/bin/get-free-space
-	chmod +x /usr/local/bin/mount-unmount-usb
-	chmod +x /usr/local/bin/get-reflash-version
-	chmod +x /usr/local/bin/save-settings
-	chmod +x /usr/local/bin/flash-cleanup
-	chmod +x /usr/local/bin/flash-mkfifo
+	chmod +x $(patsubst bin/dev/%,/usr/local/bin/%,$(wildcard bin/dev/*))
 
 upload-bins:
 	scp bin/prod/* debian@recore.local:/usr/local/bin
@@ -26,6 +12,19 @@ upload-bins:
 # Run the bash-helper test suite (bats-core). Install with: apt-get install bats
 test-bats:
 	bats test/bats
+
+# Live checks against a running board, over SSH. Not part of `make test`: that
+# has to pass on a laptop with no hardware attached.
+#
+# Read-only - nothing here reflashes, switches WiFi mode, writes to the eMMC or
+# restarts a service, so it is safe to run against a board mid-use.
+#
+#   make test-live                          # RECORE_HOST defaults to recore.local
+#   make test-live RECORE_HOST=192.168.1.5
+test-live:
+	RECORE_HOST=$(RECORE_HOST) bats test/live
+
+RECORE_HOST ?= recore.local
 
 # Run the Go server unit tests.
 test-go:
@@ -71,6 +70,12 @@ docker:
 	mkdir -p output
 	git describe --always --tags > docker-reflash/reflash-version
 	cp mkimage.sh docker-reflash
+# Same trap as rootfs_files below: "cp" merges into an existing directory rather
+# than replacing it, so a script deleted from bin/prod stayed in the build
+# context and kept being installed into the image. Eight had accumulated that
+# way, including one (get-setting) that was deleted precisely because it was
+# broken. Clear both first.
+	rm -rf docker-reflash/bin docker-reflash/client
 	mkdir -p docker-reflash/bin
 	cp bin/prod/* docker-reflash/bin
 	cp -r client docker-reflash/

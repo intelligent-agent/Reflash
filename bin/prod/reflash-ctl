@@ -1,0 +1,14 @@
+#!/bin/bash
+#
+# Talk to the running Reflash server's control protocol over its unix socket.
+# This is what a user logged in on ttyGS0 (host: /dev/ttyACM0), the UART or SSH
+# uses to drive a flash without the web UI. It deliberately does not touch
+# ttyGS1, which serves the same protocol to flasher-pi over USB.
+#
+#   reflash-ctl LIST            -> "IMG <name> <bytes>" per local image, then OK
+#   reflash-ctl STATUS          -> "STATE <state> PROGRESS <pct>"
+#   reflash-ctl FLASH <file>    -> starts a file install
+#   reflash-ctl CANCEL          -> cancels an in-progress flash
+#   reflash-ctl                 -> interactive: one command per line on stdin
+
+exec /usr/local/bin/reflash ctl "$@"

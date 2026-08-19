@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,15 +30,48 @@ type Image struct {
 	Id   int    `json:"id"`
 }
 
+// GetInfo is what does not change while the page is open. Every field below
+// costs a partition mount except the version, so this is fetched once and must
+// never be polled.
 type GetInfo struct {
-	LocalImages    []Image  `json:"local_images"`
-	ReflashVersion string   `json:"reflash_version"`
-	RecoreRevision string   `json:"recore_revision"`
-	SerialNumber   string   `json:"serial_number"`
-	EmmcVersion    string   `json:"emmc_version"`
-	IsSshEnabled   bool     `json:"is_ssh_enabled"`
-	BytesAvailable int      `json:"bytes_available"`
-	IPs            []string `json:"ips"`
+	ReflashVersion string `json:"reflash_version"`
+	RecoreRevision string `json:"recore_revision"`
+	SerialNumber   string `json:"serial_number"`
+	EmmcVersion    string `json:"emmc_version"`
+}
+
+// GetStatus is what does change: the image list after a download or upload,
+// free space as it fills, and how the board is reachable. Nothing here mounts
+// anything, so unlike GetInfo it is safe to call as often as the UI needs.
+type GetStatus struct {
+	LocalImages    []Image       `json:"local_images"`
+	BytesAvailable int           `json:"bytes_available"`
+	Network        NetworkStatus `json:"network"`
+}
+
+// NetworkStatus says how the board is reachable (#117). Both transports are
+// reported independently because both can be up at once.
+type NetworkStatus struct {
+	Ethernet EthernetStatus    `json:"ethernet"`
+	Wifi     WifiNetworkStatus `json:"wifi"`
+}
+
+type EthernetStatus struct {
+	Up bool   `json:"up"`
+	IP string `json:"ip"`
+	// Active means this interface holds the winning default route. Both can be
+	// up on one subnet, and then nothing else says which carries traffic (#112).
+	Active bool `json:"active"`
+}
+
+type WifiNetworkStatus struct {
+	Present bool   `json:"present"`
+	Mode    string `json:"mode"` // "station" or "ap"
+	SSID    string `json:"ssid"`
+	IP      string `json:"ip"`
+	// Signal strength in dBm, always negative. 0 means unknown.
+	RSSI   int  `json:"rssi"`
+	Active bool `json:"active"`
 }
 
 type GetSerialNumber struct {
@@ -207,8 +241,9 @@ func ServerInit() {
 	bringupWifi()
 	updateDisplay()
 	startWatchdog()
+	go serveControlSocket(controlSocketPath())
 	if env != "dev" {
-		go serveSerialControl("/dev/ttyGS0")
+		go serveSerialControl("/dev/ttyGS1")
 	}
 
 	timer1 := time.NewTimer(3 * time.Second)
@@ -223,6 +258,7 @@ func ServerInit() {
 	fmt.Println("Starting Reflash go server " + reflashVersion + " env '" + env + "'")
 	http.Handle("/", fs)
 	http.HandleFunc("/api/get_info", getInfo)
+	http.HandleFunc("/api/get_status", getStatus)
 	http.HandleFunc("/api/stream_log", streamLog)
 	http.HandleFunc("/api/get_options", getOptions)
 	http.HandleFunc("/api/set_options", setOptions)
@@ -255,10 +291,10 @@ func ServerInit() {
 	http.HandleFunc("/api/get_serial_number", getSerialNumber)
 
 	http.HandleFunc("/api/get_wifi", getWifi)
-	http.HandleFunc("/api/get_wifi_status", getWifiStatus)
 	http.HandleFunc("/api/wifi_start_scan", startScanWifi)
 	http.HandleFunc("/api/wifi_poll_scan", getWifiScanResults)
 	http.HandleFunc("/api/wifi_start_connect", startConnectWifi)
+	http.HandleFunc("/api/wifi_start_hotspot", startHotspotWifi)
 	http.HandleFunc("/api/wifi_poll_connect", pollConnectWifi)
 
 	log.Fatal(http.ListenAndServe(http_port, nil))
@@ -266,16 +302,39 @@ func ServerInit() {
 
 func getInfo(w http.ResponseWriter, r *http.Request) {
 	var get_info *GetInfo = &GetInfo{
-		LocalImages:    getLocalImages(),
-		ReflashVersion: runCommandReturnString("get-reflash-version"),
+		// Already read once at startup, and the file cannot change under a
+		// running server - no reason to shell out again per request.
+		ReflashVersion: reflashVersion,
 		RecoreRevision: runCommandReturnString("get-recore-revision"),
 		SerialNumber:   runCommandReturnString("get-recore-serial-number"),
 		EmmcVersion:    runCommandReturnString("get-emmc-version"),
-		IsSshEnabled:   runCommandReturnBool("is-ssh-enabled"),
-		BytesAvailable: getFreeSpace(),
-		IPs:            getIPs(),
 	}
 	json.NewEncoder(w).Encode(get_info)
+}
+
+func getStatus(w http.ResponseWriter, r *http.Request) {
+	var get_status *GetStatus = &GetStatus{
+		LocalImages:    getLocalImages(),
+		BytesAvailable: getFreeSpace(),
+		Network:        getNetworkStatus(),
+	}
+	json.NewEncoder(w).Encode(get_status)
+}
+
+// getNetworkStatus is the single source for "is a dongle fitted and what is it
+// doing". It replaced a separate /api/get_wifi_status that the WiFi dialog
+// polled every 2s: that poll raced the mode changes wifi-scan makes and kept
+// reporting the dongle as missing mid-scan, and it never stopped (#115).
+func getNetworkStatus() NetworkStatus {
+	var status NetworkStatus
+	out, _, err := runCommand2("network-status")
+	if err != nil {
+		return status
+	}
+	if err := json.Unmarshal([]byte(out), &status); err != nil {
+		logError("Could not parse network-status output: " + err.Error())
+	}
+	return status
 }
 
 func getSerialNumber(w http.ResponseWriter, r *http.Request) {
@@ -285,9 +344,25 @@ func getSerialNumber(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(get_serial_number)
 }
 
+// getWifi reports the network Reflash is configured to join, so reopening the
+// WiFi dialog comes back to it (#105).
+//
+// This used to shell out to `get-setting WIFI_SSID`, which could never work: it
+// mounted the eMMC and then grepped /etc/rebuild-settings - the initrd's own
+// path, not the mounted one - so it always returned nothing, and would have
+// returned the whole "WIFI_SSID='x'" line rather than the value even if it had
+// found the file. The value is right here in memory, already persisted to
+// options.cfg, and needs no mount. (rebuild-settings is about the flashed
+// image, which is a different question from what Reflash itself is using.)
+//
+// The passphrase is deliberately not returned. The dialog keeps it in memory
+// for as long as the page is open, which covers reopening the dialog, and the
+// server never echoes a secret back to a browser that may be on an open
+// hotspot.
 func getWifi(w http.ResponseWriter, r *http.Request) {
-
-	ssid, _, _ := runCommand2("get-setting", "WIFI_SSID")
+	optionsLock.Lock()
+	ssid := options.WifiSSID
+	optionsLock.Unlock()
 
 	var get_wifi *GetWifi = &GetWifi{
 		SSID: strings.TrimSpace(ssid),
@@ -295,7 +370,32 @@ func getWifi(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(get_wifi)
 }
 
+// wifiAdapterPresent reports whether a WiFi interface exists at all. WiFi on
+// Recore is a USB dongle, so on a board with none fitted there is nothing to
+// connect to and nothing to run an AP on. The env seams and the wlan0 default
+// mirror the bin/prod wifi-* scripts, which make the same check.
+func wifiAdapterPresent() bool {
+	iface := os.Getenv("WIFI_INTERFACE")
+	if iface == "" {
+		iface = "wlan0"
+	}
+	sysNet := os.Getenv("SYS_NET")
+	if sysNet == "" {
+		sysNet = "/sys/class/net"
+	}
+	_, err := os.Stat(filepath.Join(sysNet, iface))
+	return err == nil
+}
+
 func bringupWifi() {
+	// Without this the boot always ends in a failed wifi-connect: the script
+	// refuses (correctly) and exits 1, which reads as an error in the log the
+	// user is looking at even though nothing is wrong.
+	if !wifiAdapterPresent() {
+		logInfo("Boot: No WiFi adapter present, skipping WiFi bring-up.")
+		return
+	}
+
 	// If we have saved credentials, try to connect immediately
 	if options.WifiSSID != "" && options.WifiPSK != "" {
 		logInfo("Boot: Attempting auto-connect to " + options.WifiSSID)
@@ -374,12 +474,6 @@ func getWifiScanResults(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(cachedAccessPoints)
 }
 
-func getWifiStatus(w http.ResponseWriter, r *http.Request) {
-	result := runCommandReturnString("wifi-present")
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(result))
-}
-
 func startConnectWifi(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	var get_wifi GetWifi
@@ -431,6 +525,24 @@ func startConnectWifi(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Respond immediately so Vue knows the process started
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// startHotspotWifi puts the adapter back into AP mode on request (#105). Async
+// like startConnectWifi and for the same reason: if the caller reached this page
+// over WiFi, the switch takes their connection down, so the response has to be
+// sent before the work starts or it would never arrive.
+func startHotspotWifi(w http.ResponseWriter, r *http.Request) {
+	if !wifiAdapterPresent() {
+		http.Error(w, "No WiFi adapter present", http.StatusBadRequest)
+		return
+	}
+	go func() {
+		logInfo("Switching to hotspot mode on request")
+		if _, _, err := runCommand2("wifi-hotspot"); err != nil {
+			logError("Could not start the hotspot: " + err.Error())
+		}
+	}()
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -1393,6 +1505,30 @@ func expandUSB() error {
 	return err
 }
 
+// Helper commands that are handed a secret on the command line, and which
+// argument holds it. runCommand2 logs the argv of anything that fails, and
+// /var/log/reflash.log is streamed straight to the browser log viewer - so
+// without this the user's WiFi passphrase is printed in clear text every time
+// one of these fails, which is on every boot of a board with no adapter.
+var secretArgs = map[string][]int{
+	"wifi-connect":  {2}, // wifi-connect <SSID> <PASSPHRASE>
+	"save-settings": {1}, // the settings blob carries WIFI_PSK='...'
+}
+
+func redactArgs(cmds []string) []string {
+	idxs, ok := secretArgs[cmds[0]]
+	if !ok {
+		return cmds
+	}
+	out := append([]string(nil), cmds...)
+	for _, i := range idxs {
+		if i < len(out) && out[i] != "" {
+			out[i] = "<redacted>"
+		}
+	}
+	return out
+}
+
 func runCommand2(cmds ...string) (string, string, error) {
 	cmd := exec.Command(resolveCmd(cmds[0]), cmds[1:]...)
 	var out bytes.Buffer
@@ -1401,7 +1537,7 @@ func runCommand2(cmds ...string) (string, string, error) {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err != nil {
-		logError(fmt.Sprintf("%s", cmds) + ": " + fmt.Sprint(err) + ": " + strings.TrimSpace(stderr.String()))
+		logError(fmt.Sprintf("%s", redactArgs(cmds)) + ": " + fmt.Sprint(err) + ": " + strings.TrimSpace(stderr.String()))
 	}
 	return out.String(), stderr.String(), err
 }
@@ -1591,10 +1727,10 @@ func checkAutoReboot() {
 	runCommand2("reboot-board")
 }
 
-// handleSerialCommand parses one line of the USB control protocol (spoken over
-// the ACM gadget on /dev/ttyGS0) and returns the response line(s) to write
-// back. It drives the same flash state machine the HTTP API uses, so there is
-// no duplicate flashing logic.
+// handleSerialCommand parses one line of the control protocol and returns the
+// response line(s) to write back. It is transport-agnostic - see the transports
+// below - and drives the same flash state machine the HTTP API uses, so there
+// is no duplicate flashing logic.
 //
 //	LIST          -> "IMG <name> <bytes>" per local image, then "OK"
 //	STATUS        -> "STATE <state> PROGRESS <pct>"
@@ -1605,10 +1741,20 @@ func checkAutoReboot() {
 // tests can stub it without spawning the real flashing goroutine.
 var startInstall = func(filename string) { go goInstall(filename) }
 
-// serveSerialControl runs the USB control protocol over the ACM gadget tty.
-// flasher-pi sees this as /dev/ttyACM0 and can list/flash/poll without the
-// network. The tty only exists once the gadget has bound, and goes away when
-// the host disconnects, so we (re)open it in a retry loop.
+// The control protocol is served on two transports, both feeding the same
+// dispatcher:
+//
+//	/dev/ttyGS1  - the second ACM gadget function, which flasher-pi drives as
+//	               /dev/ttyACM1 without needing the network. The first ACM
+//	               function is the login getty: a getty and the protocol cannot
+//	               share a tty, so they get one each rather than the protocol
+//	               taking the only USB console.
+//	a unix socket - for anything running on the board itself, in particular
+//	               `reflash-ctl` from that login.
+//
+// serveSerialControl runs the protocol over the ACM gadget tty. The tty only
+// exists once the gadget has bound, and goes away when the host disconnects, so
+// we (re)open it in a retry loop.
 func serveSerialControl(devPath string) {
 	for {
 		// O_NOCTTY matters here. This process is a systemd service and so a
@@ -1626,19 +1772,126 @@ func serveSerialControl(devPath string) {
 			continue
 		}
 		logInfo("USB control channel open on " + devPath)
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-			for _, resp := range handleSerialCommand(line) {
-				fmt.Fprintf(f, "%s\r\n", resp)
-			}
-		}
-		f.Close() // EOF / host disconnected — reopen.
+		// CRLF: this end is a serial line, and flasher-pi reads it as one.
+		serveControlConn(f, "\r\n")
+		f.Close() // EOF / host disconnected - reopen.
 		time.Sleep(1 * time.Second)
 	}
+}
+
+// controlSocketPath is where the local transport listens. `reflash-ctl` uses
+// it, so a user logged in over USB can drive a flash without taking the tty
+// flasher-pi is talking on.
+func controlSocketPath() string {
+	if p := os.Getenv("REFLASH_CONTROL_SOCKET"); p != "" {
+		return p
+	}
+	if os.Getenv("APP_ENV") == "dev" {
+		return "../.tmp/control.sock"
+	}
+	return "/run/reflash/control.sock"
+}
+
+// serveControlSocket accepts control-protocol clients on a unix socket. Each
+// connection is handled concurrently and drives the same state machine the
+// HTTP API uses, so there is still no duplicate flashing logic.
+func serveControlSocket(path string) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		logError("Could not create control socket directory: " + err.Error())
+		return
+	}
+	// A unix socket is a filesystem entry that outlives the process that bound
+	// it, so a previous run (or a crash) leaves one behind that Listen would
+	// refuse with EADDRINUSE.
+	os.Remove(path)
+
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		logError("Could not listen on control socket " + path + ": " + err.Error())
+		return
+	}
+	// World-accessible on purpose: this exposes exactly what the HTTP API on
+	// port 80 already serves unauthenticated to the whole LAN, so restricting
+	// the local socket would buy nothing while breaking `reflash-ctl` for the
+	// non-root login it exists to serve.
+	if err := os.Chmod(path, 0o666); err != nil {
+		logError("Could not chmod control socket: " + err.Error())
+	}
+	logInfo("Control socket listening on " + path)
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			logError("Control socket accept failed: " + err.Error())
+			time.Sleep(time.Second)
+			continue
+		}
+		go func() {
+			defer conn.Close()
+			serveControlConn(conn, "\n")
+		}()
+	}
+}
+
+// serveControlConn runs the line protocol over one connection: a command per
+// line in, its response lines out, terminated by eol. On the socket the client
+// signals it is done by closing its write side, which ends the scan and closes
+// the connection - that EOF is what frames a one-shot response, since the
+// protocol itself has no framing.
+func serveControlConn(rw io.ReadWriter, eol string) {
+	scanner := bufio.NewScanner(rw)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		for _, resp := range handleSerialCommand(line) {
+			fmt.Fprint(rw, resp+eol)
+		}
+	}
+}
+
+// runControlClient is the `reflash ctl` side: with arguments it sends one
+// command and prints the reply, without them it relays stdin/stdout so the
+// protocol can be driven interactively from a ttyGS0 login.
+func runControlClient(args []string) int {
+	return runControlClientIO(os.Stdin, os.Stdout, args)
+}
+
+// The streams are parameters so tests do not have to swap the os.Stdout global
+// out from under the server's logging goroutines.
+func runControlClientIO(in io.Reader, out io.Writer, args []string) int {
+	path := controlSocketPath()
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Could not reach the Reflash server on "+path+": "+err.Error())
+		return 1
+	}
+	defer conn.Close()
+
+	// Half-closing tells the server no more commands are coming, so it finishes
+	// the response and closes - which is the EOF that terminates the copy below.
+	halfClose := func() {
+		if c, ok := conn.(*net.UnixConn); ok {
+			c.CloseWrite()
+		}
+	}
+
+	if len(args) > 0 {
+		fmt.Fprintf(conn, "%s\n", strings.Join(args, " "))
+		halfClose()
+	} else {
+		go func() {
+			io.Copy(conn, in)
+			halfClose()
+		}()
+	}
+
+	if _, err := io.Copy(out, conn); err != nil {
+		fmt.Fprintln(os.Stderr, "Control connection failed: "+err.Error())
+		return 1
+	}
+	return 0
 }
 
 func handleSerialCommand(line string) []string {

@@ -165,3 +165,37 @@ EOF
   assert_called_with "device wlan0 set-property Mode ap"
   assert_called_with "ap wlan0 start-profile Recore"
 }
+
+# --- switching back to the hotspot on request (#105) -------------------------
+
+@test "wifi-hotspot: no adapter exits 1" {
+  run "$PROD_BIN/wifi-hotspot"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Cannot start the hotspot"* ]]
+}
+
+@test "wifi-hotspot: disconnects, then switches to AP mode and starts the profile" {
+  with_adapter
+  stub_silent iwctl
+  run "$PROD_BIN/wifi-hotspot"
+  [ "$status" -eq 0 ]
+  assert_called_with "station wlan0 disconnect"
+  # Stop before start, or start-profile fails with "Object already exists".
+  assert_called_with "ap wlan0 stop"
+  assert_called_with "device wlan0 set-property Mode ap"
+  assert_called_with "ap wlan0 start-profile Recore"
+}
+
+@test "wifi-hotspot: a refused mode change is reported, not ignored" {
+  with_adapter
+  cat > "$SHIMDIR/iwctl" <<'EOF2'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+[ "$1 $3 $4" = "device set-property Mode" ] && exit 1
+exit 0
+EOF2
+  chmod +x "$SHIMDIR/iwctl"
+  run "$PROD_BIN/wifi-hotspot"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Could not switch"* ]]
+}

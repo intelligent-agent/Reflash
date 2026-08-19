@@ -257,9 +257,13 @@ cat <<EOF > /etc/udev/rules.d/99-recore-otg.rules
 # every Recore revision regardless of DTB.
 SUBSYSTEM=="udc", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-gadget-setup.service"
 
-# ttyGS0 is owned by the Reflash server's USB control protocol (flasher-pi sees
-# it as /dev/ttyACM0), so we do NOT start a login getty on it. Use SSH over the
-# network for an interactive console.
+# A login getty on ttyGS0 (host: /dev/ttyACM0). Without one there is no console
+# a user can reach without opening the case: Reflash owns the framebuffer so
+# tty1 has no getty, and SSH needs a network that a board with failed WiFi setup
+# does not have. That left only the UART header - exactly when a console is most
+# needed. The Reflash control protocol has its own ACM function on ttyGS1
+# (host: /dev/ttyACM1); a getty and the protocol cannot share one tty.
+KERNEL=="ttyGS0", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="serial-getty@ttyGS0.service"
 EOF
 
 cat <<EOF > /etc/udev/rules.d/99-recore-rps.rules
@@ -329,12 +333,20 @@ case "\$1" in
         echo "Iagent" > strings/0x409/manufacturer
         echo "Recore USB Serial" > strings/0x409/product
 
+        # Two ACM functions, in this order: ports are handed out in the order
+        # the functions are linked into the config, so acm.usb0 is ttyGS0 and
+        # acm.usb1 is ttyGS1, which the host sees as /dev/ttyACM0 and ACM1.
+        # ttyGS0 carries the login getty and ttyGS1 the Reflash control
+        # protocol - a getty and the protocol cannot share one tty, so they get
+        # one each rather than the protocol taking the only USB console.
         mkdir -p functions/acm.usb0
+        mkdir -p functions/acm.usb1
         mkdir -p configs/c.1/strings/0x409
         echo "Config 1: Serial" > configs/c.1/strings/0x409/configuration
 
         # Link function to config
         ln -s functions/acm.usb0 configs/c.1/ 2>/dev/null
+        ln -s functions/acm.usb1 configs/c.1/ 2>/dev/null
 
         # Bind to hardware
         echo "\$UDC_NAME" > UDC
@@ -344,9 +356,11 @@ case "\$1" in
             cd \$GADGET_DIR
             echo "" > UDC
             rm -f configs/c.1/acm.usb0
+            rm -f configs/c.1/acm.usb1
             [ -d "configs/c.1/strings/0x409" ] && rmdir configs/c.1/strings/0x409
             [ -d "configs/c.1" ] && rmdir configs/c.1
             [ -d "functions/acm.usb0" ] && rmdir functions/acm.usb0
+            [ -d "functions/acm.usb1" ] && rmdir functions/acm.usb1
             [ -d "strings/0x409" ] && rmdir strings/0x409
             cd ..
             rmdir g1
@@ -483,9 +497,25 @@ fi
 
 ENDOFDEB
 
+# iwd owns wlan0's addressing, and networkd owns eth0's. Previously both ran a
+# DHCP client on wlan0, which gave it two default routes - and iwd's, at
+# RoutePriorityOffset 300 + ifindex = 304, outranked the 1024 networkd gives
+# eth0. So a board with a cable plugged in pushed a 1.2GB image over WiFi
+# instead: measured at 1.37 MB/s on wlan0 against 543 B/s on eth0 (#112).
+#
+# iwd rather than networkd owns wlan0 because the hotspot depends on it: the AP
+# profile below carries the [IPv4] block that gives 192.168.50.1, and iwd only
+# applies that - and only runs its AP DHCP server - with network configuration
+# enabled. Turning it off to let networkd own the interface would take out the
+# fallback AP, which is how a user reaches a board that has no credentials yet.
 cat <<EOF > "${ROOTFSDIR}"/initrd/etc/iwd/main.conf
 [General]
 EnableNetworkConfiguration=true
+
+[Network]
+# Above networkd's default of 1024 so wired always wins. iwd adds the interface
+# index to this, so the route lands at 2000-something.
+RoutePriorityOffset=2000
 EOF
 
 cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/20-wired.network
@@ -495,6 +525,11 @@ Name=eth0
 [Network]
 DHCP=yes
 MulticastDNS=yes
+
+[DHCPv4]
+# Says "prefer wired" outright rather than relying on the default metric
+# happening to be lower than whatever iwd picks.
+RouteMetric=100
 EOF
 
 cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/30-wireless.network
@@ -502,8 +537,27 @@ cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/30-wireless.network
 Name=wlan0
 
 [Network]
-DHCP=yes
+# No DHCP here - iwd does it. Two clients on one interface is what #112 was.
+# The interface is still matched so it keeps mDNS.
+DHCP=no
 MulticastDNS=yes
+EOF
+
+# The other half of "two interfaces on one subnet" (#112): ARP flux. By default
+# Linux answers an ARP request for any local address on any interface, so the
+# board replied to "who has <wlan0 ip>" with eth0's MAC and vice versa. Peers
+# cached the addresses against the wrong interface, and the wired address then
+# accepted ping but not TCP - so a UI listing both IPs offered one that did not
+# work. arp_ignore=1 only answers for addresses on the receiving interface, and
+# arp_announce=2 picks a source address from that same interface.
+#
+# Not a sysctl.d nicety: eth0 has no MAC in the device tree or efuse, so it
+# takes a locally-administered one that changes per boot, which makes this
+# impossible to debug from a stale ARP table.
+mkdir -p "${ROOTFSDIR}"/initrd/etc/sysctl.d
+cat <<EOF > "${ROOTFSDIR}"/initrd/etc/sysctl.d/10-arp-flux.conf
+net.ipv4.conf.all.arp_ignore = 1
+net.ipv4.conf.all.arp_announce = 2
 EOF
 
 mkdir -p "${ROOTFSDIR}"/initrd/var/lib/iwd/ap/
@@ -587,6 +641,16 @@ EOF
 systemctl enable reflash --root="${ROOTFSDIR}"/initrd
 
 # Install app
+#
+# The helper directory and the web root are built from scratch rather than
+# copied into: the build context is a staging directory that the Makefile
+# populates from bin/prod and client/, and "cp" merges rather than replaces - so
+# anything deleted upstream survived in the context and kept being installed.
+# Eight dead scripts had accumulated that way, one of them (get-setting) removed
+# because it could never work. The Makefile clears the staging dir now; this
+# refuses to install a stale set even if it is handed one, e.g. when the
+# container is run against a context assembled by hand.
+sudo rm -rf "${ROOTFSDIR}"/initrd/usr/local/bin "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo mkdir -p "${ROOTFSDIR}"/initrd/usr/local/bin
 sudo cp reflash/reflash "${ROOTFSDIR}"/initrd/usr/local/bin/
 sudo mkdir -p "${ROOTFSDIR}"/initrd/usr/local/share/fonts
@@ -594,6 +658,12 @@ sudo cp reflash/Roboto-Light.ttf "${ROOTFSDIR}"/initrd/usr/local/share/fonts/
 sudo mkdir -p "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo cp -r client/dist "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo cp bin/* "${ROOTFSDIR}"/initrd/usr/local/bin
+
+# The helper set is what most of the image's behaviour hangs off, and a missing
+# or surplus script is invisible until something calls it at runtime. Record it
+# in the build log so an image can be audited from its own build output.
+echo "Installed $(ls "${ROOTFSDIR}"/initrd/usr/local/bin | wc -l) helpers:"
+ls "${ROOTFSDIR}"/initrd/usr/local/bin | sort | tr '\n' ' '; echo
 sudo mkdir -p "${ROOTFSDIR}"/initrd/mnt/usb
 sudo mkdir -p "${ROOTFSDIR}"/initrd/mnt/emmc
 

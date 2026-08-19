@@ -11,11 +11,25 @@
         <span>Reflash version: {{version}}</span><br />
         <span>Recore revision: {{revision}}</span><br />
         <span>Recore serial number: {{serialNumber}}</span>
+        <template v-for="line in networkLines" :key="line.text">
+          <br /><span>Network: {{line.text}}</span
+          ><span v-if="line.bars" class="signal" :title="line.rssi + ' dBm'">
+            <i v-for="n in 4" :key="n" :class="{ on: n <= line.bars }" :style="barStyle(n)"></i>
+          </span
+          ><span
+            v-if="line.hotspot"
+            class="badge"
+            title="Clients connect to this board - there is no internet, so downloads will fail"
+            >hotspot</span
+          ><span v-if="line.active" class="badge" title="Carries traffic (default route)">active</span>
+        </template>
       </p>
   </w-transition-expand>
 </template>
 
 <script>
+import { networkLines } from "../network";
+
 export default {
   name: "TheInfo",
   props: {
@@ -23,6 +37,46 @@ export default {
     version: String,
     revision: String,
     serialNumber: String,
+    network: Object,
+  },
+  computed: {
+    networkLines() {
+      return networkLines(this.network);
+    },
+  },
+  methods: {
+    // Rising heights, so the shape reads as strength even before colour.
+    barStyle(n) {
+      return { height: 3 + n * 2 + "px" };
+    },
   },
 };
 </script>
+
+<style scoped>
+.signal {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1px;
+  margin-left: 6px;
+  height: 11px;
+  vertical-align: -1px;
+}
+.signal i {
+  width: 3px;
+  /* Unfilled bars stay visible so the reading is "2 of 4", not "2". */
+  background: currentColor;
+  opacity: 0.25;
+}
+.signal i.on {
+  opacity: 1;
+}
+.badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  font-size: 0.75em;
+  opacity: 0.8;
+}
+</style>
