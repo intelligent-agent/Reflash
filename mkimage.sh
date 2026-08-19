@@ -497,9 +497,25 @@ fi
 
 ENDOFDEB
 
+# iwd owns wlan0's addressing, and networkd owns eth0's. Previously both ran a
+# DHCP client on wlan0, which gave it two default routes - and iwd's, at
+# RoutePriorityOffset 300 + ifindex = 304, outranked the 1024 networkd gives
+# eth0. So a board with a cable plugged in pushed a 1.2GB image over WiFi
+# instead: measured at 1.37 MB/s on wlan0 against 543 B/s on eth0 (#112).
+#
+# iwd rather than networkd owns wlan0 because the hotspot depends on it: the AP
+# profile below carries the [IPv4] block that gives 192.168.50.1, and iwd only
+# applies that - and only runs its AP DHCP server - with network configuration
+# enabled. Turning it off to let networkd own the interface would take out the
+# fallback AP, which is how a user reaches a board that has no credentials yet.
 cat <<EOF > "${ROOTFSDIR}"/initrd/etc/iwd/main.conf
 [General]
 EnableNetworkConfiguration=true
+
+[Network]
+# Above networkd's default of 1024 so wired always wins. iwd adds the interface
+# index to this, so the route lands at 2000-something.
+RoutePriorityOffset=2000
 EOF
 
 cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/20-wired.network
@@ -509,6 +525,11 @@ Name=eth0
 [Network]
 DHCP=yes
 MulticastDNS=yes
+
+[DHCPv4]
+# Says "prefer wired" outright rather than relying on the default metric
+# happening to be lower than whatever iwd picks.
+RouteMetric=100
 EOF
 
 cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/30-wireless.network
@@ -516,8 +537,27 @@ cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/30-wireless.network
 Name=wlan0
 
 [Network]
-DHCP=yes
+# No DHCP here - iwd does it. Two clients on one interface is what #112 was.
+# The interface is still matched so it keeps mDNS.
+DHCP=no
 MulticastDNS=yes
+EOF
+
+# The other half of "two interfaces on one subnet" (#112): ARP flux. By default
+# Linux answers an ARP request for any local address on any interface, so the
+# board replied to "who has <wlan0 ip>" with eth0's MAC and vice versa. Peers
+# cached the addresses against the wrong interface, and the wired address then
+# accepted ping but not TCP - so a UI listing both IPs offered one that did not
+# work. arp_ignore=1 only answers for addresses on the receiving interface, and
+# arp_announce=2 picks a source address from that same interface.
+#
+# Not a sysctl.d nicety: eth0 has no MAC in the device tree or efuse, so it
+# takes a locally-administered one that changes per boot, which makes this
+# impossible to debug from a stale ARP table.
+mkdir -p "${ROOTFSDIR}"/initrd/etc/sysctl.d
+cat <<EOF > "${ROOTFSDIR}"/initrd/etc/sysctl.d/10-arp-flux.conf
+net.ipv4.conf.all.arp_ignore = 1
+net.ipv4.conf.all.arp_announce = 2
 EOF
 
 mkdir -p "${ROOTFSDIR}"/initrd/var/lib/iwd/ap/
