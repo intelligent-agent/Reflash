@@ -100,6 +100,8 @@ export default {
     // not flash before the first probe has had a chance to run.
     boardReachable: true,
     reconnectTarget: "",
+    reconnectFromMode: "",
+    sawTransition: false,
     reconnectTimer: null,
     statusMessage: "",
   }),
@@ -232,6 +234,11 @@ export default {
       this.stopReconnectWatch();
       this.reconnecting = true;
       this.reconnectTarget = target;
+      // The state the board is in right now. Nothing it reports counts as an
+      // outcome until it has left this - straight after the request it is
+      // still here, and reading that as a result is wrong in both directions.
+      this.reconnectFromMode = this.wifi.mode || "";
+      this.sawTransition = false;
       this.progressVisible = false; // the reconnect state drives `busy` now
       this.boardReachable = true;
       this.statusMessage = `Recore is switching to ${target}.`;
@@ -265,6 +272,9 @@ export default {
       }
 
       if (wifi) {
+        if (wifi.mode !== this.reconnectFromMode) {
+          this.sawTransition = true;
+        }
         // Only "arrived" once the board reports the state we asked for. Right
         // after the request it is still on the old one, and treating that as
         // success would report a connection that has not happened.
@@ -283,7 +293,12 @@ export default {
         // Reachable, and it fell back to its own hotspot instead of joining:
         // wifi-connect does that on any failure (#90), and nothing used to say
         // so - the user was left believing they had joined their network.
-        if (wantMode === "station" && wifi.mode === "ap") {
+        //
+        // Only once it has actually left the mode it started in. Connecting
+        // *from* the hotspot is the common case, and without this the first
+        // probe sees the AP it has not torn down yet and calls the attempt
+        // failed before the board has done anything.
+        if (wantMode === "station" && wifi.mode === "ap" && this.sawTransition) {
           this.wifi = wifi;
           this.stopReconnectWatch();
           this.statusMessage =
