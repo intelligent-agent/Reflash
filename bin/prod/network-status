@@ -1,0 +1,61 @@
+#!/bin/bash
+#
+# Report how the board is reachable, as JSON, for the info panel in the UI (#117):
+#
+#   {"ethernet":{"up":true,"ip":"192.168.1.42"},
+#    "wifi":{"present":true,"mode":"station","ssid":"HomeNet","ip":"192.168.1.87"}}
+#
+# Both can be up at once, on the same subnet, and then which one is carrying
+# traffic is genuinely ambiguous (#112) - so this reports each independently
+# rather than picking a winner.
+
+# Defaults match the on-board layout; tests override via env to run hermetically.
+WIFI_INTERFACE="${WIFI_INTERFACE:-wlan0}"
+ETH_INTERFACE="${ETH_INTERFACE:-eth0}"
+SYS_NET="${SYS_NET:-/sys/class/net}"
+AP_PROFILE="Recore"
+
+# SSIDs are arbitrary bytes and a stray quote or backslash would produce invalid
+# JSON, which takes out the whole info panel rather than just this one line.
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+iface_ip() {
+    ip -4 addr show "$1" 2>/dev/null | awk '/inet /{sub(/\/.*/, "", $2); print $2; exit}'
+}
+
+# operstate rather than the presence of an IP: a cable that is plugged in but
+# has not leased yet is still "up", and saying so is more useful than silence.
+eth_up=false
+if [ "$(cat "$SYS_NET/$ETH_INTERFACE/operstate" 2>/dev/null)" = "up" ]; then
+    eth_up=true
+fi
+eth_ip=$(iface_ip "$ETH_INTERFACE")
+
+wifi_present=false
+wifi_mode=""
+wifi_ssid=""
+wifi_ip=""
+if [ -d "$SYS_NET/$WIFI_INTERFACE" ]; then
+    wifi_present=true
+    wifi_ip=$(iface_ip "$WIFI_INTERFACE")
+    wifi_mode=$(iwctl device "$WIFI_INTERFACE" show 2>/dev/null \
+        | sed $'s/\x1b\[[0-9;]*m//g' | awk '/Mode/{print $NF}')
+
+    if [ "$wifi_mode" = "ap" ]; then
+        # In AP mode the user is connected *to the board*, so there is no
+        # internet - which is why the UI needs to say so. The profile name is
+        # what wifi-bringup starts, and iwctl has no "show" for it.
+        wifi_ssid="$AP_PROFILE"
+    else
+        wifi_ssid=$(iwctl station "$WIFI_INTERFACE" show 2>/dev/null \
+            | sed $'s/\x1b\[[0-9;]*m//g' \
+            | sed -n 's/.*Connected network[[:space:]]\+//p' \
+            | sed 's/[[:space:]]*$//')
+    fi
+fi
+
+printf '{"ethernet":{"up":%s,"ip":"%s"},"wifi":{"present":%s,"mode":"%s","ssid":"%s","ip":"%s"}}\n' \
+    "$eth_up" "$(json_escape "$eth_ip")" \
+    "$wifi_present" "$(json_escape "$wifi_mode")" "$(json_escape "$wifi_ssid")" "$(json_escape "$wifi_ip")"

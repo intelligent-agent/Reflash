@@ -99,6 +99,40 @@ func TestGetInfo(t *testing.T) {
 	}
 }
 
+func TestGetNetworkStatus(t *testing.T) {
+	t.Run("passes the helper's JSON through", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "network-status", `echo '{"ethernet":{"up":true,"ip":"192.168.1.42"},`+
+			`"wifi":{"present":true,"mode":"station","ssid":"HomeNet","ip":"192.168.1.87"}}'`)
+
+		got := getNetworkStatus()
+		if !got.Ethernet.Up || got.Ethernet.IP != "192.168.1.42" {
+			t.Errorf("Ethernet = %+v", got.Ethernet)
+		}
+		if got.Wifi.Mode != "station" || got.Wifi.SSID != "HomeNet" || got.Wifi.IP != "192.168.1.87" {
+			t.Errorf("Wifi = %+v", got.Wifi)
+		}
+	})
+
+	// The info panel carries the serial number and versions too, so a broken
+	// helper must not cost the user all of it.
+	t.Run("a failing helper yields a zero status, not an error", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "network-status", `exit 1`)
+		if got := getNetworkStatus(); got.Ethernet.Up || got.Wifi.Present {
+			t.Errorf("got %+v, want zero value", got)
+		}
+	})
+
+	t.Run("unparseable output yields a zero status", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "network-status", `echo 'not json'`)
+		if got := getNetworkStatus(); got.Ethernet.Up || got.Wifi.Present {
+			t.Errorf("got %+v, want zero value", got)
+		}
+	})
+}
+
 func TestGetSerialNumber(t *testing.T) {
 	dir := setupTest(t)
 	fakeBin(t, dir, "get-recore-serial-number", `echo "RC-0042"`)

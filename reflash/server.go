@@ -31,14 +31,34 @@ type Image struct {
 }
 
 type GetInfo struct {
-	LocalImages    []Image  `json:"local_images"`
-	ReflashVersion string   `json:"reflash_version"`
-	RecoreRevision string   `json:"recore_revision"`
-	SerialNumber   string   `json:"serial_number"`
-	EmmcVersion    string   `json:"emmc_version"`
-	IsSshEnabled   bool     `json:"is_ssh_enabled"`
-	BytesAvailable int      `json:"bytes_available"`
-	IPs            []string `json:"ips"`
+	LocalImages    []Image       `json:"local_images"`
+	ReflashVersion string        `json:"reflash_version"`
+	RecoreRevision string        `json:"recore_revision"`
+	SerialNumber   string        `json:"serial_number"`
+	EmmcVersion    string        `json:"emmc_version"`
+	IsSshEnabled   bool          `json:"is_ssh_enabled"`
+	BytesAvailable int           `json:"bytes_available"`
+	IPs            []string      `json:"ips"`
+	Network        NetworkStatus `json:"network"`
+}
+
+// NetworkStatus says how the board is reachable (#117). Both transports are
+// reported independently because both can be up at once.
+type NetworkStatus struct {
+	Ethernet EthernetStatus    `json:"ethernet"`
+	Wifi     WifiNetworkStatus `json:"wifi"`
+}
+
+type EthernetStatus struct {
+	Up bool   `json:"up"`
+	IP string `json:"ip"`
+}
+
+type WifiNetworkStatus struct {
+	Present bool   `json:"present"`
+	Mode    string `json:"mode"` // "station" or "ap"
+	SSID    string `json:"ssid"`
+	IP      string `json:"ip"`
 }
 
 type GetSerialNumber struct {
@@ -276,8 +296,25 @@ func getInfo(w http.ResponseWriter, r *http.Request) {
 		IsSshEnabled:   runCommandReturnBool("is-ssh-enabled"),
 		BytesAvailable: getFreeSpace(),
 		IPs:            getIPs(),
+		Network:        getNetworkStatus(),
 	}
 	json.NewEncoder(w).Encode(get_info)
+}
+
+// getNetworkStatus rides along on get_info rather than getting an endpoint of
+// its own, so the UI picks it up on the fetch it already makes. Nothing polls
+// it - App.vue refetches when the WiFi dialog closes, which is the only thing
+// that changes it from the UI. See #115 for the unbounded-poll mistake.
+func getNetworkStatus() NetworkStatus {
+	var status NetworkStatus
+	out, _, err := runCommand2("network-status")
+	if err != nil {
+		return status
+	}
+	if err := json.Unmarshal([]byte(out), &status); err != nil {
+		logError("Could not parse network-status output: " + err.Error())
+	}
+	return status
 }
 
 func getSerialNumber(w http.ResponseWriter, r *http.Request) {

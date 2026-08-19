@@ -11,11 +11,16 @@
         <span>Reflash version: {{version}}</span><br />
         <span>Recore revision: {{revision}}</span><br />
         <span>Recore serial number: {{serialNumber}}</span>
+        <template v-for="line in networkLines" :key="line">
+          <br /><span>Network: {{line}}</span>
+        </template>
       </p>
   </w-transition-expand>
 </template>
 
 <script>
+import { networkLines } from "../network";
+
 export default {
   name: "TheInfo",
   props: {
@@ -23,6 +28,12 @@ export default {
     version: String,
     revision: String,
     serialNumber: String,
+    network: Object,
+  },
+  computed: {
+    networkLines() {
+      return networkLines(this.network);
+    },
   },
 };
 </script>

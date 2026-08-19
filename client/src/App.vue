@@ -39,6 +39,7 @@
             :version="reflash_version"
             :revision="recore_revision"
             :serialNumber="serial_number"
+            :network="network"
           />
         </div>
         <div class="xs1 pa1 align-self-center">
@@ -192,7 +193,7 @@
         <TheWifiSetup
           :open="openWifi"
           ref="TheWifiSetup"
-          @close="openWifi = false; this.checkInternet()"
+          @close="openWifi = false; this.checkInternet(); this.getInfo()"
         />
       </w-flex>
     </w-card>
@@ -268,6 +269,7 @@ export default {
     emmc_version: "Unknown",
     recore_revision: "Unknown",
     serial_number: "Unknown",
+    network: {},
     bytesAvailable: -1,
     sizeWarning: ""
   }),
@@ -827,6 +829,7 @@ export default {
       this.emmc_version = response.data.emmc_version;
       this.recore_revision = response.data.recore_revision;
       this.serial_number = response.data.serial_number;
+      this.network = response.data.network;
       this.bytesAvailable = response.data.bytes_available;
       this.openSerialNumber = (this.serial_number == "");
     },
