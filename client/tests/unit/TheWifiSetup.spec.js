@@ -149,6 +149,41 @@ describe('restoring state on open (#105)', () => {
   })
 })
 
+describe('scanning', () => {
+  beforeEach(() => vi.useFakeTimers())
+
+  // Scanning takes the hotspot down for ~5s (one radio cannot host an AP and
+  // scan at once), so if the page arrived over that hotspot every request in
+  // the window fails - or worse, hangs. The poll has to survive that and pick
+  // the results up when the board comes back.
+  it('keeps polling through the window where the AP is down', async () => {
+    stubStatus({ mode: 'ap', ssid: 'Recore' })
+    const wrapper = mountDialog(true)
+    await settle(wrapper)
+
+    await wrapper.vm.startWifiScan()
+    expect(axios.post).toHaveBeenCalledWith(
+      '/api/wifi_start_scan', null, expect.objectContaining({ timeout: expect.any(Number) })
+    )
+
+    // The AP is down: requests reject rather than hanging, because they carry
+    // a timeout. Without one the loop stops dead here (#95).
+    axios.get.mockRejectedValue(new Error('network error'))
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(wrapper.vm.availableAPs).toEqual([])
+
+    // Board is back and the scan finished.
+    axios.get.mockResolvedValue({
+      status: 200,
+      data: [{ SSID: 'HomeNet', signal: '****' }],
+    })
+    await vi.advanceTimersByTimeAsync(1500)
+
+    expect(wrapper.vm.availableAPs.map((a) => a.SSID)).toEqual(['HomeNet'])
+    expect(wrapper.vm.statusMessage).toContain('Found 1 network')
+  })
+})
+
 describe('adapter presence', () => {
   it('does not conclude the dongle is gone when a request fails', async () => {
     // Regression: the catch block set isWifiPresent = false, so any failed
@@ -192,10 +227,11 @@ describe('reconnect watch after a mode switch', () => {
     wrapper.vm.selected = { SSID: 'HomeNet' }
 
     await wrapper.vm.startWifiConnect()
-    expect(axios.post).toHaveBeenCalledWith('/api/wifi_start_connect', {
-      SSID: 'HomeNet',
-      password: '',
-    })
+    expect(axios.post).toHaveBeenCalledWith(
+      '/api/wifi_start_connect',
+      { SSID: 'HomeNet', password: '' },
+      expect.objectContaining({ timeout: expect.any(Number) })
+    )
     expect(wrapper.vm.statusMessage).toContain('switching to HomeNet')
     // Buttons stay locked while the radio is moving.
     expect(wrapper.vm.busy).toBe(true)
@@ -284,7 +320,9 @@ describe('reconnect watch after a mode switch', () => {
     await settle(wrapper)
 
     await wrapper.vm.startHotspot()
-    expect(axios.post).toHaveBeenCalledWith('/api/wifi_start_hotspot')
+    expect(axios.post).toHaveBeenCalledWith(
+      '/api/wifi_start_hotspot', null, expect.objectContaining({ timeout: expect.any(Number) })
+    )
     expect(wrapper.vm.busy).toBe(true)
     await flushProbe()
 

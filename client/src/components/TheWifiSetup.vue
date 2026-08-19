@@ -72,6 +72,17 @@ import axios from "axios";
 import { mapGetters } from "vuex";
 import { wifiSummary } from "../network";
 
+// Every request here can be in flight while the radio changes mode, and a
+// request to an origin that has just gone away does not necessarily fail -
+// confirmed live (#95) that it can hang silently, forever, with no error. Each
+// poll loop retries on rejection, so a timeout is what keeps them moving;
+// without one they stop dead the first time the AP drops.
+//
+// Scanning is the common case: one radio cannot host an AP and scan at the same
+// time, so wifi-scan takes the hotspot down for ~5s - and if this page arrived
+// over that hotspot, every request in that window hangs.
+const REQUEST_TIMEOUT = 3000;
+
 export default {
   name: "TheWifiSetup",
   props: {
@@ -143,8 +154,8 @@ export default {
     async restoreState() {
       try {
         const [wifi, aps] = await Promise.all([
-          axios.get('/api/get_wifi'),
-          axios.get('/api/wifi_poll_scan'),
+          axios.get('/api/get_wifi', { timeout: REQUEST_TIMEOUT }),
+          axios.get('/api/wifi_poll_scan', { timeout: REQUEST_TIMEOUT }),
         ]);
         this.inputSSID = wifi.data.SSID || "";
         // 204 means a scan is in flight; leave whatever is on screen alone.
@@ -174,7 +185,7 @@ export default {
     async startHotspot() {
       this.statusMessage = "Switching to the Recore hotspot...";
       try {
-        await axios.post('/api/wifi_start_hotspot');
+        await axios.post('/api/wifi_start_hotspot', null, { timeout: REQUEST_TIMEOUT });
         this.beginReconnect("Recore", "ap");
       } catch (err) {
         this.statusMessage = err.response?.data || "Could not start the hotspot.";
@@ -184,7 +195,7 @@ export default {
       this.progressVisible = true;
       this.statusMessage = "Scanning for networks...";
       try {
-        await axios.post('/api/wifi_start_scan');
+        await axios.post('/api/wifi_start_scan', null, { timeout: REQUEST_TIMEOUT });
         setTimeout(this.pollScanResults, 1000);
       } catch (err) {
          this.progressVisible = false;
@@ -193,7 +204,7 @@ export default {
     },
     async pollScanResults() {
       try {
-        const res = await axios.get('/api/wifi_poll_scan');
+        const res = await axios.get('/api/wifi_poll_scan', { timeout: REQUEST_TIMEOUT });
         if (res.status === 204) {
           setTimeout(this.pollScanResults, 1000);
         } else {
@@ -217,7 +228,7 @@ export default {
         await axios.post('/api/wifi_start_connect', {
           SSID: this.selected.SSID,
           password: this.inputPassword,
-        });
+        }, { timeout: REQUEST_TIMEOUT });
         this.beginReconnect(this.selected.SSID, "station");
       } catch (err) {
         const msg = err.response?.data || "Could not start connection";
@@ -264,7 +275,7 @@ export default {
         // An explicit timeout, because a request to an origin that has gone
         // away does not necessarily fail - confirmed live (#95) that it can
         // hang silently forever. This turns that into a normal rejection.
-        const res = await axios.get('/api/get_status', { timeout: 3000 });
+        const res = await axios.get('/api/get_status', { timeout: REQUEST_TIMEOUT });
         wifi = res.data.network?.wifi || {};
         this.boardReachable = true;
       } catch (err) {
@@ -318,7 +329,7 @@ export default {
     // timer would have caught.
     async getWifiStatus() {
       try {
-        const response = await axios.get('/api/get_status');
+        const response = await axios.get('/api/get_status', { timeout: REQUEST_TIMEOUT });
         this.wifi = response.data.network?.wifi || {};
         this.isWifiPresent = !!this.wifi.present;
         this.wifiStatusKnown = true;
