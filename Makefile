@@ -57,6 +57,12 @@ docker:
 	mkdir -p output
 	git describe --always --tags > docker-reflash/reflash-version
 	cp mkimage.sh docker-reflash
+# Same trap as rootfs_files below: "cp" merges into an existing directory rather
+# than replacing it, so a script deleted from bin/prod stayed in the build
+# context and kept being installed into the image. Eight had accumulated that
+# way, including one (get-setting) that was deleted precisely because it was
+# broken. Clear both first.
+	rm -rf docker-reflash/bin docker-reflash/client
 	mkdir -p docker-reflash/bin
 	cp bin/prod/* docker-reflash/bin
 	cp -r client docker-reflash/
