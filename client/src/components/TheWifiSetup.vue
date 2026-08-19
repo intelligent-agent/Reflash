@@ -42,7 +42,10 @@
         </div>
       </div>
 
-      <div v-else class="pa4 text-center mt4 color-error border-error-all">
+      <!-- Only once the server has actually answered: before the first reply
+           "not present" is just "not asked yet", and claiming the dongle is
+           missing on the way in is how this warning came to flash spuriously. -->
+      <div v-else-if="wifiStatusKnown" class="pa4 text-center mt4 color-error border-error-all">
         <p>⚠️ No WiFi dongle detected. Please plug in a USB WiFi adapter.</p>
       </div>
 
@@ -69,6 +72,7 @@ export default {
       width: "30%",
     },
     isWifiPresent: false,
+    wifiStatusKnown: false,
     updatePressed: false,
     serialNumber: "",
     serialNumberValid: false,
@@ -219,12 +223,17 @@ export default {
         
         this.isWifiPresent = response.data.present;
         this.wifiDetails = response.data;
+        this.wifiStatusKnown = true;
 
       } catch (err) {
+        // A failed request says nothing about the hardware, and this used to
+        // conclude the dongle was gone. Scanning takes the AP down (wifi-scan
+        // stops it to switch to station mode), so a browser reaching the board
+        // over the hotspot loses the connection for the duration of the scan -
+        // exactly when this is polling. Keep the last known answer.
         console.error("WiFi status check failed", err);
-        this.isWifiPresent = false;
       } finally {
-        setTimeout(this.getWifiStatus, 2000); 
+        setTimeout(this.getWifiStatus, 2000);
       }
     }
   },
