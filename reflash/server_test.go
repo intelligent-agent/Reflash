@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -175,6 +176,53 @@ func TestStorageReadiness(t *testing.T) {
 			t.Error("options marked dirty with no drive to save them to")
 		}
 	})
+}
+
+func TestWatchIPs(t *testing.T) {
+	// The bug this replaces: a single timer three seconds after startup, which
+	// fires before WiFi has a lease - so the panel showed nothing for the rest
+	// of the session on a board with no cable.
+	t.Run("redraws when an address event arrives", func(t *testing.T) {
+		dir := setupTest(t)
+		state = &State{State: IDLE, BytesTotal: 1}
+		setStorage(STORAGE_READY)
+
+		// One event, then hold the pipe open so watchIPs stays in its loop.
+		fakeBin(t, dir, "watch-ips", "echo 'addr event'\nsleep 30")
+		ips := filepath.Join(dir, "ips")
+		os.WriteFile(ips, []byte("first.local\n"), 0o644)
+		fakeBin(t, dir, "get-hostnames", `cat `+ips)
+
+		origDebounce := ipEventDebounce
+		ipEventDebounce = 10 * time.Millisecond
+		defer func() { ipEventDebounce = origDebounce }()
+
+		go watchIPs()
+
+		// The initial read happens before any event.
+		waitFor(t, func() bool { return ipsEqual([]string{"first.local"}) })
+
+		// Now the address changes; the event already queued drives the re-read.
+		os.WriteFile(ips, []byte("second.local\n"), 0o644)
+		waitFor(t, func() bool { return ipsEqual([]string{"second.local"}) })
+	})
+}
+
+func ipsEqual(want []string) bool {
+	state.Lock()
+	defer state.Unlock()
+	return slices.Equal(state.IPs, want)
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition not met in time")
 }
 
 func TestGetStatusMountsNothing(t *testing.T) {
@@ -761,16 +809,14 @@ func TestControlSocket(t *testing.T) {
 }
 
 func TestControlSocketPath(t *testing.T) {
-	t.Run("prod default", func(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
 		t.Setenv("REFLASH_CONTROL_SOCKET", "")
-		t.Setenv("APP_ENV", "")
 		if got := controlSocketPath(); got != "/run/reflash/control.sock" {
 			t.Errorf("got %q", got)
 		}
 	})
 	t.Run("env override wins", func(t *testing.T) {
 		t.Setenv("REFLASH_CONTROL_SOCKET", "/tmp/x.sock")
-		t.Setenv("APP_ENV", "dev")
 		if got := controlSocketPath(); got != "/tmp/x.sock" {
 			t.Errorf("got %q", got)
 		}

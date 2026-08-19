@@ -213,7 +213,6 @@ var bytes_last int
 var timeStart time.Time
 var cancelFunc context.CancelFunc
 var isDirty bool
-var env string
 var optionsLock sync.Mutex
 var (
 	cachedAccessPoints []AccessPoint
@@ -297,22 +296,12 @@ func slowInit() {
 }
 
 func ServerInit() {
-	env = os.Getenv("APP_ENV")
-	if env == "dev" {
-		static_dir = "../client/dist"
-		binDir = "../bin/dev"
-		images_folder = "/opt/reflash/images"
-		options_file = "../.tmp/opt/options.cfg"
-		log_file = "/var/log/reflash.log"
-		http_port = ":8080"
-	} else {
-		static_dir = "/var/www/html/reflash/dist"
-		binDir = "/usr/local/bin"
-		images_folder = "/mnt/usb/images"
-		options_file = "/mnt/usb/options.cfg"
-		log_file = "/var/log/reflash.log"
-		http_port = ":80"
-	}
+	static_dir = "/var/www/html/reflash/dist"
+	binDir = "/usr/local/bin"
+	images_folder = "/mnt/usb/images"
+	options_file = "/mnt/usb/options.cfg"
+	log_file = "/var/log/reflash.log"
+	http_port = ":80"
 	// Allow tests (and ad-hoc runs) to point the helper scripts elsewhere.
 	if d := os.Getenv("REFLASH_BIN_DIR"); d != "" {
 		binDir = d
@@ -336,9 +325,7 @@ func ServerInit() {
 
 	// Neither of these touches the USB drive, so they are never worth delaying.
 	go serveControlSocket(controlSocketPath())
-	if env != "dev" {
-		go serveSerialControl("/dev/ttyGS1")
-	}
+	go serveSerialControl("/dev/ttyGS1")
 
 	// Draw before doing anything slow, then get out of the way: the listener
 	// starts immediately and the drive work happens behind it. Measured, this
@@ -352,16 +339,10 @@ func ServerInit() {
 	})
 	go slowInit()
 
-	timer1 := time.NewTimer(3 * time.Second)
-	go func() {
-		<-timer1.C
-		logInfo("Updating IPs")
-		state.IPs = getIPs()
-		updateDisplay()
-	}()
+	go watchIPs()
 
 	fs := http.FileServer(http.Dir(static_dir))
-	fmt.Println("Starting Reflash go server " + reflashVersion + " env '" + env + "'")
+	fmt.Println("Starting Reflash go server " + reflashVersion)
 	http.Handle("/", fs)
 	http.HandleFunc("/api/get_info", getInfo)
 	http.HandleFunc("/api/get_status", getStatus)
@@ -1250,9 +1231,6 @@ func cancelBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func getBlockSize(file string) int {
-	if env == "dev" {
-		return 100 * 1024 * 1024
-	}
 	return runCommandReturnInt("lsblk", "-n", "-d", "-o", "SIZE", "--bytes", file)
 }
 
@@ -1786,6 +1764,69 @@ func lockSaveOptions() {
 	updateDisplay()
 }
 
+// refreshIPs re-reads the addresses and redraws if they changed.
+func refreshIPs() {
+	ips := getIPs()
+	state.Lock()
+	changed := !slices.Equal(state.IPs, ips)
+	state.IPs = ips
+	state.Unlock()
+	if changed {
+		logInfo("Addresses changed: " + strings.Join(ips, " "))
+		updateDisplay()
+	}
+}
+
+// How long to gather further address events before re-reading. One change
+// emits several netlink messages, and each re-read costs a get-hostnames
+// (~0.8s measured), so coalescing matters more than reacting instantly.
+var ipEventDebounce = 500 * time.Millisecond
+
+// watchIPs refreshes the panel when the addresses actually change.
+//
+// This replaced a single timer that fired three seconds after startup. That is
+// before WiFi has associated - measured at ~15s to a lease - so the panel
+// showed whatever was true at three seconds for the whole session, and a board
+// on WiFi alone never displayed an address at all.
+func watchIPs() {
+	refreshIPs()
+	for {
+		cmd := exec.Command(resolveCmd("watch-ips"))
+		stdout, err := cmd.StdoutPipe()
+		if err != nil || cmd.Start() != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		events := make(chan struct{}, 1)
+		go func() {
+			scanner := bufio.NewScanner(stdout)
+			for scanner.Scan() {
+				// Non-blocking: a burst collapses into the one buffered slot
+				// rather than queueing a re-read per netlink message.
+				select {
+				case events <- struct{}{}:
+				default:
+				}
+			}
+			close(events)
+		}()
+
+		for range events {
+			time.Sleep(ipEventDebounce)
+			select { // swallow anything that arrived while settling
+			case <-events:
+			default:
+			}
+			refreshIPs()
+		}
+
+		cmd.Wait()
+		// The monitor should not exit; if it does, do not spin on restarting it.
+		time.Sleep(2 * time.Second)
+	}
+}
+
 func startWatchdog() {
 	// Check every 2 seconds
 	ticker := time.NewTicker(2 * time.Second)
@@ -1911,13 +1952,10 @@ func serveSerialControl(devPath string) {
 
 // controlSocketPath is where the local transport listens. `reflash-ctl` uses
 // it, so a user logged in over USB can drive a flash without taking the tty
-// flasher-pi is talking on.
+// flasher-pi is talking on. REFLASH_CONTROL_SOCKET overrides it for tests.
 func controlSocketPath() string {
 	if p := os.Getenv("REFLASH_CONTROL_SOCKET"); p != "" {
 		return p
-	}
-	if os.Getenv("APP_ENV") == "dev" {
-		return "../.tmp/control.sock"
 	}
 	return "/run/reflash/control.sock"
 }

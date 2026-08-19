@@ -24,11 +24,8 @@ func main() {
 	// config to reload. See issue #113.
 	signal.Ignore(syscall.SIGHUP)
 
-	env := os.Getenv("APP_ENV")
-	if env != "dev" {
-		fmt.Println("Starting Screen")
-		ScreenInit()
-	}
+	fmt.Println("Starting Screen")
+	ScreenInit()
 	fmt.Println("Starting Server")
 	ServerInit()
 }

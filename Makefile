@@ -1,11 +1,5 @@
 REMOTE=recore.local
 
-# Was an eighteen-line list naming each script, which went stale the moment one
-# was added or removed. This covers exactly what was just copied.
-install_bins:
-	cp bin/dev/* /usr/local/bin
-	chmod +x $(patsubst bin/dev/%,/usr/local/bin/%,$(wildcard bin/dev/*))
-
 upload-bins:
 	scp bin/prod/* debian@recore.local:/usr/local/bin
 
@@ -36,17 +30,6 @@ test-vue:
 
 test: test-go test-bats test-vue
 
-dev-clean:
-	rm -rf .tmp
-	mkdir -p .tmp/opt/reflash/images
-	mkdir -p .tmp/dev/
-	mkdir -p .tmp/etc/
-	dd if=/dev/random of=.tmp/dev/mmcblk0 count=1000 bs=1M
-	echo "0.1.2" > .tmp/etc/reflash_version
-	touch /opt/reflash/xorg
-	touch /opt/reflash/fbcon
-	touch /opt/reflash/
-
 run-vue:
 	cd client; npm run serve
 
@@ -58,10 +41,6 @@ upload-vue:
 
 build-go:
 	cd reflash; GOOS=linux GOARCH=arm64 go build -o reflash main.go server.go screen.go
-
-run-go:
-	git describe --always --tags > /etc/reflash-version
-	cd reflash; APP_ENV=dev go run main.go server.go screen.go
 
 upload-go:
 	scp reflash/reflash debian@${REMOTE}:/usr/local/bin

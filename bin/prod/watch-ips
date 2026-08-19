@@ -1,0 +1,15 @@
+#!/bin/bash
+#
+# Emit a line whenever an address is added or removed, so the server can
+# refresh what it shows instead of guessing when to look.
+#
+# The addresses this board answers on appear at times that cannot be predicted:
+# DHCP on a cable is quick, WiFi association plus a lease was measured at ~15s
+# from boot, and switching between AP and station mode changes them again mid
+# session. A fixed delay after startup - which is what this replaces - fires
+# before any of that and then never looks again.
+#
+# `ip monitor` blocks until something happens, so this costs nothing while
+# nothing is changing, unlike polling `ip addr` (get-hostnames takes ~0.8s).
+
+exec ip -o monitor address

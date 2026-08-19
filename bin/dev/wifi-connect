@@ -1,7 +1,0 @@
-#!/bin/bash
-
-BSSID=$1
-PASS=$2
-
-wpa_cli list_networks
-

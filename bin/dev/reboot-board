@@ -1,8 +1,0 @@
-#!/bin/bash
-
-info() {
-    echo "[info] $1" >> /var/log/reflash.log
-    echo "$1"
-}
-
-info "reboot"
