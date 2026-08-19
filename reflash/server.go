@@ -268,7 +268,7 @@ func slowInit() {
 	// underneath hit a read-only filesystem - the first options save was lost.
 	bootPhase("wait-for-usb", func() {
 		for i := 0; i < mountRetries; i++ {
-			if _, _, err := runCommand2("usb-ready"); err == nil {
+			if runCommandReturnBool("usb-ready") {
 				return
 			}
 			time.Sleep(mountRetryDelay)
@@ -684,15 +684,20 @@ func updateDisplay() {
 	// still busy. Say what is actually happening instead - this is the frame
 	// the user sees for most of the boot on a slow stick (#116).
 	shown := state.State
+	// Negative progress: no bar. Neither of these has a measurable duration -
+	// mkfs on a worn stick took 198s (#116) and reports nothing along the way.
+	progress := float64(state.Progress)
 	if st := getStorage(); st == STORAGE_PREPARING {
 		shown = "Preparing USB drive"
+		progress = -1
 	} else if st == STORAGE_FAILED {
 		shown = "No USB drive"
+		progress = -1
 	}
 
 	state.Lock()
 	if oldState.State != shown || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
-		Draw(float32(state.Progress)/100, shown, options.ScreenRotation, state.IPs, reflashVersion)
+		Draw(float32(progress)/100, shown, options.ScreenRotation, state.IPs, reflashVersion)
 		oldState.State = shown
 		oldState.Progress = state.Progress
 		oldRotation = options.ScreenRotation
@@ -1772,7 +1777,11 @@ func refreshIPs() {
 	state.IPs = ips
 	state.Unlock()
 	if changed {
-		logInfo("Addresses changed: " + strings.Join(ips, " "))
+		shown := strings.Join(ips, " ")
+		if shown == "" {
+			shown = "(none)"
+		}
+		logInfo("Addresses changed: " + shown)
 		updateDisplay()
 	}
 }

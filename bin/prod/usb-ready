@@ -1,7 +1,9 @@
 #!/bin/bash
 #
-# Exit 0 when /mnt/usb is Reflash's to take, non-zero while something else
-# still needs it.
+# Prints true when /mnt/usb is Reflash's to take, false while something else
+# still needs it. Always exits 0: "not yet" is an answer, not a failure, and
+# exiting non-zero made runCommand2 log an [error] for every poll - six of them
+# on a normal boot, for a wait that was working exactly as intended.
 #
 # Reflash mounts the drive and then holds it for the life of the process, so it
 # has to be the *last* party to mount. ssh-keygen-boot needs it read-write for
@@ -25,9 +27,15 @@ set -uo pipefail
 DEVICE="${USB_DEVICE:-/dev/sda2}"
 UNIT="${USB_OWNER_UNIT:-ssh-keygen-boot.service}"
 
-[ -b "$DEVICE" ] || exit 1
+if [ ! -b "$DEVICE" ]; then
+    echo "false"
+    exit 0
+fi
 
 state=$(systemctl show -p ActiveState --value "$UNIT" 2>/dev/null || echo "unknown")
-[ "$state" = "activating" ] && exit 1
+if [ "$state" = "activating" ]; then
+    echo "false"
+    exit 0
+fi
 
-exit 0
+echo "true"

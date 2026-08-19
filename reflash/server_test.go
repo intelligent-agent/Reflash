@@ -151,7 +151,7 @@ func TestStorageReadiness(t *testing.T) {
 		dir := setupTest(t)
 		fakeBin(t, dir, "get-hostnames", `echo "recore.local"`)
 		fakeBin(t, dir, "expand-usb", `exit 0`)
-		fakeBin(t, dir, "usb-ready", `exit 0`)
+		fakeBin(t, dir, "usb-ready", `echo true`)
 		fakeBin(t, dir, "mount-unmount-usb", `exit 1`)
 		origRetries, origDelay := mountRetries, mountRetryDelay
 		mountRetries, mountRetryDelay = 2, time.Millisecond

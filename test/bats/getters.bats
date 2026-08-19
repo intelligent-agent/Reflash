@@ -53,7 +53,8 @@ teardown() { teardown_sandbox; }
 activating
 OUT
   run "$PROD_BIN/usb-ready"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
 }
 
 @test "usb-ready: not ready while the partition does not exist" {
@@ -63,7 +64,8 @@ OUT
 active
 OUT
   run "$PROD_BIN/usb-ready"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
 }
 
 # A unit skipped by its ConditionPathExists reports inactive, never active -
@@ -79,4 +81,5 @@ inactive
 OUT
   run "$PROD_BIN/usb-ready"
   [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
 }
