@@ -13,6 +13,19 @@ upload-bins:
 test-bats:
 	bats test/bats
 
+# Live checks against a running board, over SSH. Not part of `make test`: that
+# has to pass on a laptop with no hardware attached.
+#
+# Read-only - nothing here reflashes, switches WiFi mode, writes to the eMMC or
+# restarts a service, so it is safe to run against a board mid-use.
+#
+#   make test-live                          # RECORE_HOST defaults to recore.local
+#   make test-live RECORE_HOST=192.168.1.5
+test-live:
+	RECORE_HOST=$(RECORE_HOST) bats test/live
+
+RECORE_HOST ?= recore.local
+
 # Run the Go server unit tests.
 test-go:
 	cd reflash; go test ./...
