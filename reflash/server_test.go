@@ -30,6 +30,7 @@ func setupTest(t *testing.T) string {
 	}
 	options = &Options{}
 	reflashVersion = ""
+	storageState = STORAGE_PREPARING
 	return dir
 }
 
@@ -119,6 +120,59 @@ func TestGetStatus(t *testing.T) {
 // The split only pays off if the expensive half stays out of the polled half:
 // get-recore-revision, get-recore-serial-number and get-emmc-version each mount
 // a partition.
+// The server now answers before the drive is mounted, so the state it reports
+// while doing so is what both the banner and the panel key off.
+func TestStorageReadiness(t *testing.T) {
+	t.Run("get_status reports the storage state", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "get-free-space", `echo "1"`)
+		fakeBin(t, dir, "network-status", `echo '{}'`)
+		state = &State{State: IDLE, BytesTotal: 1}
+		setStorage(STORAGE_PREPARING)
+
+		rr := httptest.NewRecorder()
+		getStatus(rr, httptest.NewRequest("GET", "/api/get_status", nil))
+
+		var got GetStatus
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Storage != STORAGE_PREPARING {
+			t.Errorf("Storage = %q, want %q", got.Storage, STORAGE_PREPARING)
+		}
+	})
+
+	// A failed mount must not look like an empty drive: loadOptions would
+	// invent defaults and mark them dirty, and saveOptions would then write
+	// options.cfg into the bare mountpoint on tmpfs - losing the user's
+	// settings silently on the next boot.
+	t.Run("a failed mount does not load or dirty the options", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "get-hostnames", `echo "recore.local"`)
+		fakeBin(t, dir, "expand-usb", `exit 0`)
+		fakeBin(t, dir, "mount-unmount-usb", `exit 1`)
+		// Keep the test synchronous: the real one is a goroutine that would
+		// still be writing the log while TempDir is being removed.
+		origWifi := startWifiBringup
+		startWifiBringup = func() {}
+		defer func() { startWifiBringup = origWifi }()
+
+		state = &State{State: IDLE, BytesTotal: 1}
+		options = &Options{}
+		isDirty = false
+		setStorage(STORAGE_PREPARING)
+
+		slowInit()
+
+		if getStorage() != STORAGE_FAILED {
+			t.Errorf("Storage = %q, want %q", getStorage(), STORAGE_FAILED)
+		}
+		if isDirty {
+			t.Error("options marked dirty with no drive to save them to")
+		}
+	})
+}
+
 func TestGetStatusMountsNothing(t *testing.T) {
 	dir := setupTest(t)
 	fakeBin(t, dir, "get-free-space", `echo "1"`)

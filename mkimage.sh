@@ -598,7 +598,12 @@ EOF
 cat <<EOF >"${ROOTFSDIR}"/initrd/etc/systemd/system/ssh-keygen-boot.service
 [Unit]
 Description=Restore or generate persistent SSH host keys from USB storage (see #80)
-Before=ssh.service reflash.service
+# Not Before=reflash.service any more. Generating host keys takes ~9s on a
+# fresh stick and Reflash's UI does not need them, so ordering the server
+# behind this was ~9s of blank screen for nothing. The ordering only ever
+# stood in for /mnt/usb exclusivity, which mount-unmount-usb now enforces
+# with an flock - so the two can run concurrently.
+Before=ssh.service
 ConditionPathExists=!/etc/ssh/ssh_host_rsa_key
 
 [Service]
@@ -615,7 +620,8 @@ systemctl enable ssh-keygen-boot --root="${ROOTFSDIR}"/initrd
 cat <<EOF >"${ROOTFSDIR}"/initrd/etc/systemd/system/reflash.service
 [Unit]
 Description=Refactor flashing server
-After=network.target
+# No After=network.target: ListenAndServe binds with no interfaces up, and
+# waiting for it only delayed the first frame.
 Conflicts=getty@tty1.service
 Before=getty.target
 StartLimitIntervalSec=0

@@ -47,6 +47,33 @@ type GetStatus struct {
 	LocalImages    []Image       `json:"local_images"`
 	BytesAvailable int           `json:"bytes_available"`
 	Network        NetworkStatus `json:"network"`
+	// Storage is PREPARING until the USB drive is partitioned and mounted.
+	// The server now starts before that finishes, so the UI needs to be able
+	// to say "still working" rather than showing an empty image list as if the
+	// drive were simply empty.
+	Storage string `json:"storage"`
+}
+
+const (
+	STORAGE_PREPARING = "PREPARING"
+	STORAGE_READY     = "READY"
+	STORAGE_FAILED    = "FAILED"
+)
+
+var storageState = STORAGE_PREPARING
+var storageLock sync.Mutex
+
+func setStorage(s string) {
+	storageLock.Lock()
+	storageState = s
+	storageLock.Unlock()
+	updateDisplay()
+}
+
+func getStorage() string {
+	storageLock.Lock()
+	defer storageLock.Unlock()
+	return storageState
 }
 
 // NetworkStatus says how the board is reachable (#117). Both transports are
@@ -209,28 +236,39 @@ func bootPhase(name string, f func()) {
 	logInfo(fmt.Sprintf("boot: %-16s %6.2fs", name, time.Since(t).Seconds()))
 }
 
-// earlyUI brings the panel and the HTTP listener up *before* the slow startup
-// work rather than after it. Off by default: it is an experiment, and it is not
-// safe to ship as-is - serving from /mnt/usb before it is mounted reports an
-// empty image list rather than "not ready", and starting before
-// ssh-keygen-boot has finished races it for the mount, which today is prevented
-// only by the Before=reflash.service ordering.
-func earlyUI() bool {
-	return os.Getenv("REFLASH_EARLY_UI") == "1"
-}
-
 // slowInit is everything that can block: mkfs on a fresh stick (measured at
 // 198s on a worn one), mounting, and a WiFi connect that waits up to 30s for
 // DHCP. Split out so it can be run either before the listener (current
 // behaviour) or alongside it (the experiment).
+// WiFi bring-up is off the critical path: it waits up to 30s for DHCP and
+// nothing in startup depends on it, yet it was 2.62s of a 3.08s startup even
+// when it went well. A package var like startInstall so tests can stub it and
+// stay synchronous.
+var startWifiBringup = func() {
+	go bootPhase("wifi-bringup", func() { bringupWifi() })
+}
+
 func slowInit() {
 	bootPhase("get-ips", func() { state.IPs = getIPs() })
 	bootPhase("expand-usb", func() { expandUsb() })
-	bootPhase("mount-usb", func() { mountUsb(MODE_RO) })
-	bootPhase("load-options", func() { loadOptions() })
-	bootPhase("wifi-bringup", func() { bringupWifi() })
-	updateDisplay()
+
+	var mountErr error
+	bootPhase("mount-usb", func() { mountErr = mountUsb(MODE_RO) })
+	if mountErr != nil {
+		// Do not carry on as if the drive were simply empty. loadOptions would
+		// invent defaults and mark them dirty, and saveOptions would then write
+		// options.cfg into the bare mountpoint on the tmpfs rootfs - losing the
+		// user's settings on the next reboot, silently.
+		logError("USB storage unavailable: " + mountErr.Error())
+		setStorage(STORAGE_FAILED)
+	} else {
+		bootPhase("load-options", func() { loadOptions() })
+		setStorage(STORAGE_READY)
+	}
+
 	startWatchdog()
+
+	startWifiBringup()
 }
 
 func ServerInit() {
@@ -277,17 +315,17 @@ func ServerInit() {
 		go serveSerialControl("/dev/ttyGS1")
 	}
 
-	if earlyUI() {
-		// Something true on the panel before the slow work, not after it.
-		// Rotation is a stored option and is not known yet, so this first frame
-		// is unrotated and may flip once load-options completes.
-		bootPhase("early-draw", func() {
-			Draw(0, "Preparing USB drive", 0, nil, reflashVersion)
-		})
-		go slowInit()
-	} else {
-		slowInit()
-	}
+	// Draw before doing anything slow, then get out of the way: the listener
+	// starts immediately and the drive work happens behind it. Measured, this
+	// is worth ~3s; the ~9s that used to sit in front of the server was
+	// ssh-keygen-boot, fixed by dropping its ordering (see mkimage.sh).
+	//
+	// Rotation is a stored option on the drive, so this first frame is
+	// unrotated and may flip once load-options completes.
+	bootPhase("first-draw", func() {
+		Draw(0, "Preparing USB drive", 0, nil, reflashVersion)
+	})
+	go slowInit()
 
 	timer1 := time.NewTimer(3 * time.Second)
 	go func() {
@@ -360,6 +398,7 @@ func getStatus(w http.ResponseWriter, r *http.Request) {
 		LocalImages:    getLocalImages(),
 		BytesAvailable: getFreeSpace(),
 		Network:        getNetworkStatus(),
+		Storage:        getStorage(),
 	}
 	json.NewEncoder(w).Encode(get_status)
 }
@@ -622,10 +661,26 @@ func updateDisplay() {
 	if oldState == nil {
 		oldState = &State{}
 	}
+	// state needs the same treatment now that setStorage redraws: storage can
+	// fail before ServerInit has finished building it.
+	if state == nil {
+		state = &State{State: IDLE, BytesTotal: 1}
+	}
+	// Until the drive is mounted there is nothing meaningful to report about
+	// flashing, and IDLE would draw an empty "ready" screen while the board is
+	// still busy. Say what is actually happening instead - this is the frame
+	// the user sees for most of the boot on a slow stick (#116).
+	shown := state.State
+	if st := getStorage(); st == STORAGE_PREPARING {
+		shown = "Preparing USB drive"
+	} else if st == STORAGE_FAILED {
+		shown = "No USB drive"
+	}
+
 	state.Lock()
-	if oldState.State != state.State || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
-		Draw(float32(state.Progress)/100, state.State, options.ScreenRotation, state.IPs, reflashVersion)
-		oldState.State = state.State
+	if oldState.State != shown || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
+		Draw(float32(state.Progress)/100, shown, options.ScreenRotation, state.IPs, reflashVersion)
+		oldState.State = shown
 		oldState.Progress = state.Progress
 		oldRotation = options.ScreenRotation
 	}

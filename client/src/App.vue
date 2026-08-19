@@ -1,5 +1,15 @@
 <template>
   <w-app>
+    <!-- The server starts before the USB drive is ready, so the page can load
+         while the board is still partitioning it - which on a worn stick takes
+         minutes (#116). Saying so beats an empty image list that looks like a
+         board with nothing on it. -->
+    <div v-if="storage === 'PREPARING'" class="banner banner-busy">
+      Preparing the USB drive - this can take a few minutes on a slow drive.
+    </div>
+    <div v-else-if="storage === 'FAILED'" class="banner banner-error">
+      No USB drive available. Images cannot be listed or stored.
+    </div>
     <TheLogger :open="openLog" @close="openLog = false" />
     <TheOptions
       :open="openOptions"
@@ -270,6 +280,7 @@ export default {
     recore_revision: "Unknown",
     serial_number: "Unknown",
     network: {},
+    storage: "",
     bytesAvailable: -1,
     sizeWarning: ""
   }),
@@ -839,6 +850,13 @@ export default {
       this.localImages = response.data.local_images;
       this.bytesAvailable = response.data.bytes_available;
       this.network = response.data.network;
+      this.storage = response.data.storage;
+      // The server now answers before the USB drive is mounted, so keep asking
+      // until it is. Bounded by construction: it stops as soon as storage
+      // leaves PREPARING, and only fires while the board is still starting up.
+      if (this.storage === "PREPARING") {
+        setTimeout(this.getStatus, 1000);
+      }
     },
     async getGithubImages() {
       // Reset first - this can now be called again (see checkInternet())
@@ -968,5 +986,19 @@ body {
 }
 .w-button.size--xl span {
   color: var(--w-primary-color);
+}
+
+.banner {
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 0.95em;
+}
+.banner-busy {
+  background: #04a3e5;
+  color: #fff;
+}
+.banner-error {
+  background: #b3261e;
+  color: #fff;
 }
 </style>
