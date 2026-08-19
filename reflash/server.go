@@ -295,7 +295,32 @@ func getWifi(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(get_wifi)
 }
 
+// wifiAdapterPresent reports whether a WiFi interface exists at all. WiFi on
+// Recore is a USB dongle, so on a board with none fitted there is nothing to
+// connect to and nothing to run an AP on. The env seams and the wlan0 default
+// mirror the bin/prod wifi-* scripts, which make the same check.
+func wifiAdapterPresent() bool {
+	iface := os.Getenv("WIFI_INTERFACE")
+	if iface == "" {
+		iface = "wlan0"
+	}
+	sysNet := os.Getenv("SYS_NET")
+	if sysNet == "" {
+		sysNet = "/sys/class/net"
+	}
+	_, err := os.Stat(filepath.Join(sysNet, iface))
+	return err == nil
+}
+
 func bringupWifi() {
+	// Without this the boot always ends in a failed wifi-connect: the script
+	// refuses (correctly) and exits 1, which reads as an error in the log the
+	// user is looking at even though nothing is wrong.
+	if !wifiAdapterPresent() {
+		logInfo("Boot: No WiFi adapter present, skipping WiFi bring-up.")
+		return
+	}
+
 	// If we have saved credentials, try to connect immediately
 	if options.WifiSSID != "" && options.WifiPSK != "" {
 		logInfo("Boot: Attempting auto-connect to " + options.WifiSSID)
@@ -1393,6 +1418,30 @@ func expandUSB() error {
 	return err
 }
 
+// Helper commands that are handed a secret on the command line, and which
+// argument holds it. runCommand2 logs the argv of anything that fails, and
+// /var/log/reflash.log is streamed straight to the browser log viewer - so
+// without this the user's WiFi passphrase is printed in clear text every time
+// one of these fails, which is on every boot of a board with no adapter.
+var secretArgs = map[string][]int{
+	"wifi-connect":  {2}, // wifi-connect <SSID> <PASSPHRASE>
+	"save-settings": {1}, // the settings blob carries WIFI_PSK='...'
+}
+
+func redactArgs(cmds []string) []string {
+	idxs, ok := secretArgs[cmds[0]]
+	if !ok {
+		return cmds
+	}
+	out := append([]string(nil), cmds...)
+	for _, i := range idxs {
+		if i < len(out) && out[i] != "" {
+			out[i] = "<redacted>"
+		}
+	}
+	return out
+}
+
 func runCommand2(cmds ...string) (string, string, error) {
 	cmd := exec.Command(resolveCmd(cmds[0]), cmds[1:]...)
 	var out bytes.Buffer
@@ -1401,7 +1450,7 @@ func runCommand2(cmds ...string) (string, string, error) {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err != nil {
-		logError(fmt.Sprintf("%s", cmds) + ": " + fmt.Sprint(err) + ": " + strings.TrimSpace(stderr.String()))
+		logError(fmt.Sprintf("%s", redactArgs(cmds)) + ": " + fmt.Sprint(err) + ": " + strings.TrimSpace(stderr.String()))
 	}
 	return out.String(), stderr.String(), err
 }

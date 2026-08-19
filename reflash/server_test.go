@@ -146,6 +146,63 @@ func TestGetWifi(t *testing.T) {
 	}
 }
 
+func TestRunCommand2KeepsSecretsOutOfTheLog(t *testing.T) {
+	dir := setupTest(t)
+	// A helper that fails is what makes runCommand2 log the argv it ran.
+	fakeBin(t, dir, "wifi-connect", `exit 1`)
+	fakeBin(t, dir, "save-settings", `exit 1`)
+
+	runCommand2("wifi-connect", "HomeNet", "hunter2secret")
+	runCommand2("save-settings", "WIFI_PSK='hunter2secret'")
+
+	logged, err := os.ReadFile(log_file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(logged), "hunter2secret") {
+		t.Errorf("passphrase leaked into %s:\n%s", log_file, logged)
+	}
+	// The SSID is not a secret and stays, so the log is still useful.
+	if !strings.Contains(string(logged), "HomeNet") {
+		t.Errorf("SSID missing from log, redaction too broad:\n%s", logged)
+	}
+}
+
+func TestWifiAdapterPresent(t *testing.T) {
+	sysNet := t.TempDir()
+	t.Setenv("SYS_NET", sysNet)
+	t.Setenv("WIFI_INTERFACE", "wlan0")
+
+	if wifiAdapterPresent() {
+		t.Error("no adapter directory, want false")
+	}
+	if err := os.Mkdir(filepath.Join(sysNet, "wlan0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !wifiAdapterPresent() {
+		t.Error("adapter directory exists, want true")
+	}
+}
+
+func TestBringupWifiSkippedWithoutAdapter(t *testing.T) {
+	dir := setupTest(t)
+	t.Setenv("SYS_NET", t.TempDir())
+	t.Setenv("WIFI_INTERFACE", "wlan0")
+	options.WifiSSID = "HomeNet"
+	options.WifiPSK = "hunter2secret"
+
+	// Both helpers record that they ran; neither should.
+	ran := filepath.Join(dir, "ran")
+	fakeBin(t, dir, "wifi-connect", `echo connect >> `+ran)
+	fakeBin(t, dir, "wifi-bringup", `echo bringup >> `+ran)
+
+	bringupWifi()
+
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("bringupWifi ran a wifi helper with no adapter present")
+	}
+}
+
 func TestSetThenGetOptions(t *testing.T) {
 	setupTest(t)
 
