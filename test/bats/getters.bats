@@ -39,3 +39,44 @@ teardown() { teardown_sandbox; }
   [ "$status" -ne 0 ]
   assert_called_with "unmount-config"
 }
+
+# --- usb-ready: Reflash must mount last ------------------------------------
+#
+# Reflash holds /mnt/usb for the life of the process, so it waits for whatever
+# needs the drive read-write to finish rather than racing it.
+
+@test "usb-ready: not ready while the owning unit is still running" {
+  export USB_DEVICE="$SANDBOX/sda2"
+  export USB_OWNER_UNIT="fake.service"
+  printf '' > "$USB_DEVICE"   # not a block device, but present
+  stub systemctl <<'OUT'
+activating
+OUT
+  run "$PROD_BIN/usb-ready"
+  [ "$status" -ne 0 ]
+}
+
+@test "usb-ready: not ready while the partition does not exist" {
+  export USB_DEVICE="$SANDBOX/absent"
+  export USB_OWNER_UNIT="fake.service"
+  stub systemctl <<'OUT'
+active
+OUT
+  run "$PROD_BIN/usb-ready"
+  [ "$status" -ne 0 ]
+}
+
+# A unit skipped by its ConditionPathExists reports inactive, never active -
+# that must count as "not going to touch the drive", not as "wait forever".
+@test "usb-ready: an inactive owner does not block forever" {
+  # Needs a real block device: the check is -b, and creating one needs root.
+  dev=$(ls /dev/loop0 /dev/sda /dev/nvme0n1 /dev/vda 2>/dev/null | head -1)
+  [ -b "$dev" ] || skip "no block device available to point USB_DEVICE at"
+  export USB_DEVICE="$dev"
+  export USB_OWNER_UNIT="fake.service"
+  stub systemctl <<'OUT'
+inactive
+OUT
+  run "$PROD_BIN/usb-ready"
+  [ "$status" -eq 0 ]
+}

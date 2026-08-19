@@ -259,19 +259,26 @@ func slowInit() {
 	bootPhase("get-ips", func() { state.IPs = getIPs() })
 	bootPhase("expand-usb", func() { expandUsb() })
 
-	// Retry rather than concluding there is no drive: ssh-keygen-boot mounts it
-	// rw for the duration of restoring or generating host keys, and a mount
-	// attempt inside that window fails with "Can't open blockdev". Confirmed
-	// live - the first boot after removing the ordering hit exactly that.
-	var mountErr error
-	bootPhase("mount-usb", func() {
+	// Wait for the drive to be ours before taking it, rather than racing for
+	// it. Reflash mounts /mnt/usb and holds it for the life of the process, so
+	// it has to mount last: ssh-keygen-boot needs the drive read-write first,
+	// and a lock cannot share a mount with a process that never lets go.
+	//
+	// Confirmed live: mounting into that window stacked two mounts, after which
+	// a remount read-write failed with "already mounted" and the write
+	// underneath hit a read-only filesystem - the first options save was lost.
+	bootPhase("wait-for-usb", func() {
 		for i := 0; i < mountRetries; i++ {
-			if mountErr = mountUsb(MODE_RO); mountErr == nil {
+			if _, _, err := runCommand2("usb-ready"); err == nil {
 				return
 			}
 			time.Sleep(mountRetryDelay)
 		}
+		logError("Timed out waiting for the USB drive to become available")
 	})
+
+	var mountErr error
+	bootPhase("mount-usb", func() { mountErr = mountUsb(MODE_RO) })
 	if mountErr != nil {
 		// Do not carry on as if the drive were simply empty. loadOptions would
 		// invent defaults and mark them dirty, and saveOptions would then write

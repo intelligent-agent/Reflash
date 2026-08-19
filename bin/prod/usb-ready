@@ -1,0 +1,33 @@
+#!/bin/bash
+#
+# Exit 0 when /mnt/usb is Reflash's to take, non-zero while something else
+# still needs it.
+#
+# Reflash mounts the drive and then holds it for the life of the process, so it
+# has to be the *last* party to mount. ssh-keygen-boot needs it read-write for
+# as long as restoring or generating host keys takes (~9s on a fresh stick),
+# and there is no way to share a mount with a process that never lets go - a
+# lock only serialises the mount call, not the holding.
+#
+# Rather than ordering the whole server behind that unit, which cost ~9s of
+# blank screen, Reflash starts immediately and polls this. Two conditions:
+#
+#   - the partition exists at all (expand-usb creates it on a fresh stick)
+#   - the unit that wants it read-write is no longer running
+#
+# "activating" is the state a Type=oneshot unit is in while its ExecStart runs.
+# Anything else - active, inactive, failed - means it is not going to touch the
+# drive again this boot, including the case where its ConditionPathExists
+# skipped it entirely.
+
+set -uo pipefail
+
+DEVICE="${USB_DEVICE:-/dev/sda2}"
+UNIT="${USB_OWNER_UNIT:-ssh-keygen-boot.service}"
+
+[ -b "$DEVICE" ] || exit 1
+
+state=$(systemctl show -p ActiveState --value "$UNIT" 2>/dev/null || echo "unknown")
+[ "$state" = "activating" ] && exit 1
+
+exit 0

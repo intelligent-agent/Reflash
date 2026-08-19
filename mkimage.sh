@@ -598,11 +598,12 @@ EOF
 cat <<EOF >"${ROOTFSDIR}"/initrd/etc/systemd/system/ssh-keygen-boot.service
 [Unit]
 Description=Restore or generate persistent SSH host keys from USB storage (see #80)
-# Not Before=reflash.service any more. Generating host keys takes ~9s on a
-# fresh stick and Reflash's UI does not need them, so ordering the server
-# behind this was ~9s of blank screen for nothing. The ordering only ever
-# stood in for /mnt/usb exclusivity, which mount-unmount-usb now enforces
-# with an flock - so the two can run concurrently.
+# Only Before=ssh.service. Reflash no longer needs to be ordered after this:
+# it starts immediately, draws, and serves, and waits for the drive in a
+# goroutine instead. What it waits for is this unit finishing - see usb-ready -
+# because Reflash mounts /mnt/usb and then holds it for the life of the
+# process, while this unit needs it read-write. Two parties cannot share a
+# mount when one holds it indefinitely, so Reflash takes it last and keeps it.
 Before=ssh.service
 ConditionPathExists=!/etc/ssh/ssh_host_rsa_key
 
