@@ -19,13 +19,40 @@ wired_up() {
     || skip "no ethernet carrier (cable out)"
 }
 
-@test "iwd owns wlan0's addressing, networkd does not" {
+@test "iwd owns wlan0's addressing, networkd does not manage it" {
   has_wifi
-  # Two DHCP clients on one interface is what gave wlan0 two default routes.
-  run board_ssh "grep -c '^DHCP=no' /etc/systemd/network/30-wireless.network"
-  [ "$output" -eq 1 ]
+  # Any .network file matching wlan0 - even one with DHCP=no, which reads as
+  # inert - makes networkd manage the link, and a managed link refuses iwd's
+  # addressing. The old version of this test grepped that file for DHCP=no and
+  # passed happily while iwd associated and no IPv4 address ever arrived.
+  run board_ssh "networkctl status wlan0 --no-pager"
+  [[ "$output" == *unmanaged* ]] || { echo "networkd is managing wlan0:"; echo "$output"; false; }
   run board_ssh "grep -c 'EnableNetworkConfiguration=true' /etc/iwd/main.conf"
   [ "$output" -eq 1 ]
+}
+
+# The symptom users saw: associated, but wifi-connect times out after 30s
+# looking for an inet address and falls back to the hotspot.
+@test "an associated wlan0 actually has an IPv4 address" {
+  has_wifi
+  # Via network-status rather than iwctl: iwd rejects its D-Bus calls from a
+  # non-root login, so an iwctl-based check skips itself instead of running.
+  run board_ssh "sudo network-status"
+  local mode
+  mode=$(echo "$output" | json_get wifi.mode)
+  [ "$mode" = "station" ] || skip "not in station mode (mode=$mode)"
+  [ -n "$(echo "$output" | json_get wifi.ssid)" ] || skip "not associated"
+  run board_ssh "ip -4 addr show wlan0"
+  [[ "$output" == *"inet "* ]] || { echo "associated with no IPv4 address"; false; }
+}
+
+# regulatory.db is a signed blob the kernel silently discards if the signature
+# does not match a key it was built with, leaving the board in domain 00 with
+# reduced channels and TX power. The file being present proves nothing.
+@test "the kernel accepted the regulatory database" {
+  run board_ssh "dmesg | grep -a regulatory.db"
+  [[ "$output" != *"malformed or signature is missing"* ]] \
+    || { echo "regulatory.db rejected:"; echo "$output"; false; }
 }
 
 @test "wlan0 has exactly one default route" {

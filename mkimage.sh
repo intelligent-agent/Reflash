@@ -205,14 +205,17 @@ firmware-realtek \
 firmware-mediatek \
 firmware-ath9k-htc
 
-# wireless-regdb ships regulatory.db-debian and relies on
-# update-alternatives to create the regulatory.db symlink the kernel
-# actually asks for - and that did not survive the chroot install.
-# Create it directly; a missing regulatory.db means the wifi stack falls
-# back to the most restrictive channel/power set on every dongle.
-for f in regulatory.db regulatory.db.p7s; do
-  [ -e /usr/lib/firmware/\$f ] || ln -sf \$f-debian /usr/lib/firmware/\$f
-done
+# wireless-regdb ships the same database twice - regulatory.db-debian and
+# regulatory.db-upstream are byte-identical, only the detached .p7s signature
+# differs - and update-alternatives prefers the Debian one (priority 100 against
+# 50). That is right on a Debian kernel, which has the Debian signing key built
+# in. Ours comes from Armbian and carries only sforshee's, so the signature
+# check fails and the kernel throws the whole database away:
+#   cfg80211: loaded regulatory.db is malformed or signature is missing/invalid
+# The board is then stuck in regulatory domain 00 permanently, which costs
+# channels and TX power on every dongle. Note the file is still *present* and a
+# plain -e test on it passes, which is why the check below resolves the symlink.
+update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream
 
 dpkg -i ${KERNEL_DEB}
 
@@ -422,6 +425,17 @@ if [ -n "\$FW_MISSING" ]; then
   exit 1
 fi
 
+# The presence check above cannot catch this: the Debian-signed database is a
+# perfectly good file that our kernel rejects at load time, leaving the board
+# in regulatory domain 00 with no error the build would ever see.
+REGDB=\$(readlink -f /usr/lib/firmware/regulatory.db)
+case "\$REGDB" in
+  *-upstream) ;;
+  *) echo "FATAL: regulatory.db resolves to \$REGDB, not the -upstream variant" >&2
+     echo "FATAL: our kernel only carries sforshee's key; any other signature is discarded" >&2
+     exit 1 ;;
+esac
+
 ENDOFDEB
 
 # iwd owns wlan0's addressing, and networkd owns eth0's. Previously both ran a
@@ -459,16 +473,20 @@ MulticastDNS=yes
 RouteMetric=100
 EOF
 
-cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/30-wireless.network
-[Match]
-Name=wlan0
-
-[Network]
-# No DHCP here - iwd does it. Two clients on one interface is what #112 was.
-# The interface is still matched so it keeps mDNS.
-DHCP=no
-MulticastDNS=yes
-EOF
+# Deliberately no .network file for wlan0. There used to be one carrying
+# DHCP=no + MulticastDNS=yes, on the theory that matching the interface without
+# a DHCP client was inert and only bought mDNS. It is not inert: any match makes
+# networkd *manage* the link, and a managed link refuses iwd's addressing. iwd
+# associated fine and then never got an IPv4 address, so wifi-connect timed out
+# after 30s and fell back to the hotspot - every time, on any network.
+#
+# What it looked like on the board: `networkctl status wlan0` reporting
+# "routable (configured)" with only an IPv6 address (DHCP=no still leaves
+# IPv6AcceptRA on, so networkd quietly took the v6 side), no IPv4, and iwd
+# logging "Failed to modify the DNS entries ... Link wlan0 is managed".
+#
+# mDNS is not lost with the file gone: the resolved drop-in below sets
+# MulticastDNS=yes globally, and `resolvectl mdns` shows it on for wlan0.
 
 # The other half of "two interfaces on one subnet" (#112): ARP flux. By default
 # Linux answers an ARP request for any local address on any interface, so the

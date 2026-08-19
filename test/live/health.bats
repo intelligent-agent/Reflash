@@ -31,8 +31,15 @@ setup() { require_board; }
 # straight to the browser. wifi-connect and save-settings take a secret on the
 # command line, so their args are redacted - this proves it on a live log.
 @test "no WiFi passphrase in the log" {
-  run board_ssh "grep -c 'Passphrase=\|wifi-connect [^ ]* [^ ]' /var/log/reflash.log || true"
-  [ "$output" -eq 0 ] || { board_ssh "grep 'wifi-connect' /var/log/reflash.log"; false; }
+  run board_ssh "grep -c 'Passphrase=' /var/log/reflash.log || true"
+  [ "$output" -eq 0 ] || { echo "a passphrase reached the log"; false; }
+
+  # Assert the placeholder is present rather than that a third field is absent.
+  # The old pattern was "wifi-connect <ssid> <something>", and the placeholder
+  # is itself a something - so it flagged correctly redacted lines, and only
+  # passed on boards where no connection had ever failed.
+  run board_ssh "grep 'wifi-connect ' /var/log/reflash.log | grep -vc '<redacted>' || true"
+  [ "$output" -eq 0 ] || { board_ssh "grep 'wifi-connect ' /var/log/reflash.log"; false; }
 }
 
 # Deleted upstream but still shipped is invisible until someone runs one and

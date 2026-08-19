@@ -166,6 +166,53 @@ EOF
   assert_called_with "ap wlan0 start-profile Recore"
 }
 
+# Three different problems used to produce one message. They need three
+# different actions from the user, so the log has to tell them apart.
+
+# Stub iwctl so that connect succeeds but no lease ever arrives, with the
+# station left in $1 - which is the only thing that says why.
+no_lease_in_state() {
+  cat > "$SHIMDIR/iwctl" <<EOF
+#!/usr/bin/env bash
+echo "iwctl \$*" >> "\$CALLS"
+if [ "\$1 \$2 \$3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "\$1 \$2 \$3" = "station wlan0 show" ]; then echo "      State       $1"; fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+}
+
+@test "wifi-connect: associated but no lease is reported as a DHCP problem" {
+  with_adapter
+  no_lease_in_state connected
+  run "$PROD_BIN/wifi-connect" HomeNet hunter2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DHCP problem, not a password one"* ]]
+}
+
+@test "wifi-connect: never associating points at the passphrase" {
+  with_adapter
+  no_lease_in_state disconnected
+  run "$PROD_BIN/wifi-connect" HomeNet hunter2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Never associated"* ]]
+  [[ "$output" == *"Check the passphrase"* ]]
+}
+
+@test "wifi-connect: still associating is not blamed on DHCP" {
+  with_adapter
+  no_lease_in_state connecting
+  run "$PROD_BIN/wifi-connect" HomeNet hunter2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Still trying to associate"* ]]
+}
+
 # --- switching back to the hotspot on request (#105) -------------------------
 
 @test "wifi-hotspot: no adapter exits 1" {
