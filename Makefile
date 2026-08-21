@@ -45,7 +45,13 @@ build-go:
 upload-go:
 	scp reflash/reflash debian@${REMOTE}:/usr/local/bin
 
-docker:
+# Depends on build-go: this target copies reflash/reflash into the image and
+# stamps the version from `git describe`, so without it the image ships whatever
+# binary happened to be lying around while claiming to be the current commit.
+# That is exactly what happened with the #123 fix - an image labelled
+# v1.1.0-RC6-43-g34f295d carried a binary built two days earlier, and the
+# hardware test "passed" by showing pre-fix behaviour.
+docker: build-go
 	mkdir -p output
 	git describe --always --tags > docker-reflash/reflash-version
 	cp mkimage.sh docker-reflash
