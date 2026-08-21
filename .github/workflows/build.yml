@@ -39,15 +39,12 @@ jobs:
       with:
         node-version: 18
 
-    - name: install and build usb version
+    # Only the dependency install stays here: `make docker` now depends on
+    # build-go and build-vue, so building them separately in CI would just be a
+    # second place that has to be kept in step with the Makefile.
+    - name: Install client deps
       working-directory: ./client
-      run: |
-        npm ci
-        npm run build
-
-    - name: Make archive with version file
-      run: |
-        make build-go
+      run: npm ci
 
     - name: Make image
       run: |
