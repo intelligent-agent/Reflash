@@ -178,7 +178,20 @@ func Draw(progress float32, state string, rot int, ips []string, version string)
 		drawLogo(img, (fb_min/2)-95)
 		drawText(img, "REFLASH", 50, (fb_min/2)+55)
 		drawText(img, "Flash complete", 28, (fb_min/2)+110)
-		drawText(img, "Remove USB drive", 28, (fb_min/2)+145)
+		// Acknowledge the removal. This used to say "Remove USB drive"
+		// regardless, so after pulling the drive the panel went on instructing
+		// the user to do the thing they had just done, with no feedback until
+		// the screen changed for an unrelated reason - the reboot. Observed
+		// live: "I did not see any change on the screen as I pulled the usb
+		// stick". Wording follows TheUsbChecker.vue so the panel and the web
+		// UI say the same thing.
+		if usbStillPresent() {
+			drawText(img, "Remove USB drive", 28, (fb_min/2)+145)
+		} else if rebootWhenDone() {
+			drawText(img, "USB removed, rebooting", 28, (fb_min/2)+145)
+		} else {
+			drawText(img, "USB removed, ready to reboot", 28, (fb_min/2)+145)
+		}
 	} else if state == "IDLE" {
 		drawLogo(img, (fb_min/2)-95)
 		drawText(img, "REFLASH", 50, (fb_min/2)+55)

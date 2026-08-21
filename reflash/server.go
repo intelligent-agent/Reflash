@@ -199,6 +199,7 @@ var state *State
 
 var oldState *State
 var oldRotation int
+var oldUsb = true
 
 var static_dir string
 var binDir string
@@ -691,7 +692,13 @@ func updateDisplay() {
 	}
 
 	state.Lock()
-	if oldState.State != shown || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) {
+	// oldUsb is in the comparison because the armed screen's text depends on
+	// the drive being present, and nothing else in this condition changes when
+	// it is pulled - without it the repaint from refreshUsbPresence is dropped
+	// here and the panel never acknowledges the removal.
+	usbNow := usbStillPresent()
+	if oldState.State != shown || oldState.Progress != state.Progress || oldRotation != options.ScreenRotation || !slices.Equal(oldState.IPs, state.IPs) || oldUsb != usbNow {
+		oldUsb = usbNow
 		Draw(float32(progress)/100, shown, options.ScreenRotation, state.IPs, reflashVersion)
 		oldState.State = shown
 		oldState.Progress = state.Progress
@@ -1900,6 +1907,9 @@ func startWatchdog() {
 		for range ticker.C {
 			// This is the function we built in the previous step
 			lockSaveOptions()
+			// Show the drive being pulled, then act on it. Order matters only
+			// in that the panel should acknowledge before the board reboots.
+			refreshUsbPresence()
 			// Reboot into the freshly flashed image once the USB is pulled.
 			checkAutoReboot()
 		}
@@ -1915,7 +1925,57 @@ var (
 	rebootArmed bool
 )
 
-func armReboot()    { rebootMutex.Lock(); rebootArmed = true; rebootMutex.Unlock() }
+// usbWasPresent is what the panel last drew. Cached rather than probed from
+// Draw(): usbPresent() shells out to is-usb-present, and the draw path must not
+// block on a subprocess.
+//
+// Guarded by rebootMutex because it is only meaningful while rebootArmed is
+// set, and that keeps it to one lock rather than introducing another.
+var usbWasPresent = true
+
+func usbStillPresent() bool {
+	rebootMutex.Lock()
+	defer rebootMutex.Unlock()
+	return usbWasPresent
+}
+
+func rebootWhenDone() bool {
+	optionsLock.Lock()
+	defer optionsLock.Unlock()
+	return options != nil && options.RebootWhenDone
+}
+
+// refreshUsbPresence repaints the panel when the drive is pulled while a
+// finished flash waits for it. Nothing else notices: the web UI polls
+// is_usb_present itself and drives its own reboot, and checkAutoReboot only
+// consults the drive to decide whether to reboot - so the panel went on saying
+// "Remove USB drive" after it had been removed, with no acknowledgement until
+// the screen changed for an unrelated reason.
+//
+// Does nothing unless a flash is armed, so it costs one is-usb-present per 2s
+// only in the window between a finished flash and the reboot.
+func refreshUsbPresence() {
+	if !isRebootArmed() {
+		return
+	}
+	present := usbPresent()
+	rebootMutex.Lock()
+	changed := present != usbWasPresent
+	usbWasPresent = present
+	rebootMutex.Unlock()
+	if changed {
+		updateDisplay()
+	}
+}
+
+func armReboot() {
+	rebootMutex.Lock()
+	rebootArmed = true
+	// The drive is necessarily still in - the flash just read from it - so
+	// start from "present" and let refreshUsbPresence notice it leave.
+	usbWasPresent = true
+	rebootMutex.Unlock()
+}
 func disarmReboot() { rebootMutex.Lock(); rebootArmed = false; rebootMutex.Unlock() }
 func isRebootArmed() bool {
 	rebootMutex.Lock()
