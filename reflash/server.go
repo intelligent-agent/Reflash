@@ -981,7 +981,15 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 		state.State = ERROR
 		state.Error = "An error was encountered during magic. Check log for details"
 	} else {
+		// Same tail as goInstall and goMagic. Without armReboot() this path
+		// finished silently (#123): drawScreen() keys "Flash complete / Remove
+		// USB drive" off the arm flag rather than the state, because
+		// getProgress flips FINISHED to IDLE on the first poll - so the panel
+		// never showed the prompt - and checkAutoReboot() returns at its first
+		// line, so "reboot when done" did nothing at all on a magic upload.
+		armReboot()
 		state.State = FINISHED
+		updateDisplay()
 	}
 }
 
@@ -1134,8 +1142,11 @@ func goMagic(url string) {
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 
-	state.State = FINISHED
+	// Arm before publishing FINISHED, not after: getProgress and the panel
+	// both read the flag, and a poll landing between the two saw a finished
+	// flash with no "Remove USB drive" prompt (#123).
 	armReboot()
+	state.State = FINISHED
 	updateDisplay()
 }
 
@@ -1388,8 +1399,11 @@ func goInstall(filename string) {
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Installation finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 
-	state.State = FINISHED
+	// Arm before publishing FINISHED, not after: getProgress and the panel
+	// both read the flag, and a poll landing between the two saw a finished
+	// flash with no "Remove USB drive" prompt (#123).
 	armReboot()
+	state.State = FINISHED
 	updateDisplay()
 }
 

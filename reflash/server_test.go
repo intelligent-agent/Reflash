@@ -1036,3 +1036,54 @@ func TestBandwidthIsNotLoggedWhenNothingIsTransferring(t *testing.T) {
 		t.Errorf("logged a rate with no transfer in progress:\n%s", logged)
 	}
 }
+
+// A magic upload must finish like the other two flash paths do. It did not:
+// armReboot() was missing, so the panel never showed "Remove USB drive" (that
+// prompt is keyed off the arm flag, not the state) and checkAutoReboot() bailed
+// at its first line, silently ignoring "reboot when done" (#123).
+func TestUploadMagicFinishArmsReboot(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "get-recore-revision", `echo a8`)
+	fakeBin(t, dir, "flash-cleanup", `exit 0`)
+
+	f, err := os.Create(filepath.Join(dir, "pipe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{State: UPLOADING_MAGIC, File: f}
+	disarmReboot()
+
+	uploadMagicFinish(httptest.NewRecorder(),
+		httptest.NewRequest("PUT", "/api/upload_magic_finish", nil))
+
+	if state.State != FINISHED {
+		t.Errorf("state = %q, want %q", state.State, FINISHED)
+	}
+	if !isRebootArmed() {
+		t.Error("reboot not armed: the panel prompt and rebootWhenDone both depend on it")
+	}
+}
+
+// A failed cleanup must not look like a finished flash.
+func TestUploadMagicFinishDoesNotArmOnError(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "get-recore-revision", `echo a8`)
+	fakeBin(t, dir, "flash-cleanup", `echo "resizepart failed"; exit 1`)
+
+	f, err := os.Create(filepath.Join(dir, "pipe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{State: UPLOADING_MAGIC, File: f}
+	disarmReboot()
+
+	uploadMagicFinish(httptest.NewRecorder(),
+		httptest.NewRequest("PUT", "/api/upload_magic_finish", nil))
+
+	if state.State != ERROR {
+		t.Errorf("state = %q, want %q", state.State, ERROR)
+	}
+	if isRebootArmed() {
+		t.Error("must not arm a reboot when the flash did not complete")
+	}
+}
