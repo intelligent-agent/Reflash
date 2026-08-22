@@ -20,7 +20,10 @@
 
     <w-flex justify-space-between class="wrapper">
       <div class="align-self-start">{{minutes}}m:{{seconds}}s</div>
-      <div class="align-self-center">{{bandwidth}} MB/s<span v-if="history.length > 1" class="peak"> (peak {{peak}})</span></div>
+      <!-- Instantaneous only. Peak and average belong with the trace they
+           summarise, in the popup - on the line they competed with the number
+           beside them and left three figures to read where one was wanted. -->
+      <div class="align-self-center">{{bandwidth}} MB/s</div>
       <div class="align-self-end">{{minutesR}}m:{{secondsR}}s</div>
     </w-flex>
 
@@ -41,7 +44,7 @@
       class="speed-popup"
       :style="{ left: popupLeft + 'px', top: popupTop + 'px' }">
       <div class="speed-popup-title">
-        throughput <span class="peak">peak {{peak}} MB/s</span>
+        throughput <span class="peak">peak {{peak}} · avg {{average}} MB/s</span>
       </div>
       <svg
         class="sparkline"
@@ -85,6 +88,15 @@ export default {
     },
     peak: function() {
       return Math.max(...this.history, 0).toFixed(1);
+    },
+    // Mean over the whole plotted window, stalls included. Averaging only the
+    // moving samples would report a rate the transfer never achieved, and
+    // hiding the stalls is the opposite of what this plot is for.
+    average: function() {
+      if (this.history.length === 0) {
+        return '0.0';
+      }
+      return (this.history.reduce((a, b) => a + b, 0) / this.history.length).toFixed(1);
     },
     // Nothing to show until there are two points to draw a line between.
     plotVisible: function() {

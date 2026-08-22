@@ -98,3 +98,61 @@ describe('ProgressBar throughput popup', () => {
     expect(w.vm.plotVisible).toBe(false);
   });
 });
+
+describe('ProgressBar throughput figures', () => {
+  it('averages over the whole window, stalls included', () => {
+    const w = mount();
+    // A transfer that stalled for half the window: averaging only the moving
+    // samples would claim 4.0, a rate this transfer never sustained.
+    w.vm.history = [4, 4, 0, 0];
+    expect(w.vm.average).toBe('2.0');
+    expect(w.vm.peak).toBe('4.0');
+  });
+
+  it('reports both peak and average in the popup', () => {
+    const w = mount();
+    w.vm.history = [1, 3];
+    w.vm.pinned = true;
+    expect(w.vm.peak).toBe('3.0');
+    expect(w.vm.average).toBe('2.0');
+  });
+
+  it('does not divide by zero on an empty history', () => {
+    const w = mount();
+    expect(w.vm.average).toBe('0.0');
+  });
+
+  // The default w-flex stub renders no slot content, so asserting on the
+  // rendered output through it would pass whatever the template said. Stub it
+  // with something that does render its slot, or this test proves nothing.
+  function mountRendered() {
+    return shallowMount(ProgressBar, {
+      global: {
+        mocks: { $store: { getters: { progress } } },
+        stubs: {
+          'w-progress': true,
+          'w-flex': { template: '<div><slot /></div>' }
+        }
+      }
+    });
+  }
+
+  it('keeps peak and average out of the timing line', async () => {
+    const w = mountRendered();
+    w.vm.history = [1, 3];
+    await w.vm.$nextTick();
+    // Nothing but the instantaneous rate on the line under the bar.
+    expect(w.html()).toContain('MB/s');
+    expect(w.html()).not.toContain('peak');
+    expect(w.html()).not.toContain('avg');
+  });
+
+  it('puts peak and average in the popup instead', async () => {
+    const w = mountRendered();
+    w.vm.history = [1, 3];
+    w.vm.pinned = true;
+    await w.vm.$nextTick();
+    expect(w.html()).toContain('peak 3.0');
+    expect(w.html()).toContain('avg 2.0');
+  });
+});
