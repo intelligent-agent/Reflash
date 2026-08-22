@@ -1,8 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
-import { readFileSync } from 'fs'
-import { fileURLToPath } from 'url'
 import { shallowMount } from '@vue/test-utils'
 import TheOptions from '../../src/components/TheOptions.vue'
+// ?raw hands us the file's text at transform time. Reading it with fs and
+// import.meta.url instead passed locally and threw ERR_INVALID_ARG_TYPE on the
+// CI runner, because that URL resolves differently there - a test that depends
+// on how it is run, which is not a property worth having.
+import theOptionsSource from '../../src/components/TheOptions.vue?raw'
 
 // mapGetters/mapActions reach into a store the tests do not build, so the
 // component gets a stub $store and assertions go against dispatch().
@@ -49,11 +52,7 @@ describe('TheOptions', () => {
   // green through the entire outage - shallowMount stubs the radio away, so
   // the binding has to be asserted on the source itself.
   it('wires the rotation control to the screenRotation key', () => {
-    const template = readFileSync(
-      fileURLToPath(new URL('../../src/components/TheOptions.vue', import.meta.url)),
-      'utf8')
-
-    const binding = template.match(
+    const binding = theOptionsSource.match(
       /@change="onChange\('([^']+)',\s*options\.screenRotation\)"/)
 
     expect(binding).not.toBeNull()
