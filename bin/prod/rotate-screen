@@ -89,7 +89,13 @@ update_cmdline(){
     umount -q /mnt/emmc/
     mount "${EMMC}p1" /mnt/emmc
 
-    if [[ $(grep 'fbcon=' /mnt/emmc/armbianEnv.txt) ]]; then
+    # Test for the thing the sed below actually rewrites, not merely for
+    # "fbcon=". There is more than one fbcon parameter: barebone images ship
+    # fbcon=nodefer so the console takes over the panel at boot (Rebuild #90),
+    # and matching that made this take the first branch, find no
+    # "fbcon=rotate:" to substitute, and silently leave the image with no
+    # rotation at all.
+    if grep -q 'fbcon=rotate:[0-3]' /mnt/emmc/armbianEnv.txt; then
         sed -i "s/\(fbcon=rotate:\)[0-3]/\1${ROT_FBCON}/" /mnt/emmc/armbianEnv.txt
     else
         sed -i "/extraargs=/ s/$/ fbcon=rotate:${ROT_FBCON}/" /mnt/emmc/armbianEnv.txt
