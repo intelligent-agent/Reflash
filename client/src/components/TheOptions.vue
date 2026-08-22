@@ -34,7 +34,7 @@
         <w-divider class="my6 mx-3"></w-divider>
         <h4>Screen rotation</h4>
         <w-radios
-          @change="onChange('rotateScreen', options.screenRotation)"
+          @change="onChange('screenRotation', options.screenRotation)"
           v-model="options.screenRotation"
           :items="radioItems"
           inline
