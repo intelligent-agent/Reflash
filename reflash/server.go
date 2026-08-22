@@ -1234,7 +1234,19 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	// Closing the FIFO is what signals end-of-stream to the decompressor, so
 	// a failure here means the flash is incomplete - but it is still an
 	// error to report, not a reason to kill the server.
-	if err := state.File.Close(); err != nil {
+	// Clear the handle on both paths, or the *next* magic upload never opens
+	// a new one: writeChunk only calls openLate when state.File is nil, so it
+	// would write into this closed file and fail on the very first chunk with
+	//
+	//   write /tmp/mypipe: file already closed
+	//
+	// and no "Open file" line to explain it. That made a second magic flash
+	// in one Reflash session impossible - it needed a reboot in between,
+	// which looked like a flaky board rather than leaked state. Every other
+	// close site here already nils it; this one did not.
+	err := state.File.Close()
+	state.File = nil
+	if err != nil {
 		logError("Could not close the flash pipe: " + err.Error())
 		state.State = ERROR
 		state.Error = "The flash did not complete cleanly. Reboot and try again."

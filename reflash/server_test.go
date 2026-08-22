@@ -1571,3 +1571,74 @@ func TestOptionsResponsesDoNotCarryThePassphrase(t *testing.T) {
 		}
 	})
 }
+
+// The second magic upload in one Reflash session failed on its very first
+// chunk with "write /tmp/mypipe: file already closed", and nothing in the log
+// said why - the giveaway was the *absence* of the "Open file" line.
+//
+// uploadMagicFinish closed the FIFO but left state.File pointing at it, and
+// writeChunk only calls openLate when state.File is nil. So the next upload
+// wrote into the closed handle. Every other close site in server.go already
+// nils the pointer; this one did not, which made a second magic flash
+// impossible without rebooting the board in between.
+func TestUploadMagicFinishClearsFileHandle(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "get-recore-revision", `echo a8`)
+	fakeBin(t, dir, "flash-cleanup", `exit 0`)
+
+	f, err := os.Create(filepath.Join(dir, "pipe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{State: UPLOADING_MAGIC, File: f}
+
+	uploadMagicFinish(httptest.NewRecorder(),
+		httptest.NewRequest("PUT", "/api/upload_magic_finish", nil))
+
+	if state.File != nil {
+		t.Fatal("state.File still set after finish: the next magic upload " +
+			"would skip openLate and write into a closed file")
+	}
+}
+
+// The end-to-end version of the same thing: finish one magic upload, then run
+// another, and assert the second one's bytes actually reach the pipe.
+func TestSecondMagicUploadOpensAFreshPipe(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "get-recore-revision", `echo a8`)
+	fakeBin(t, dir, "flash-cleanup", `exit 0`)
+
+	// First upload: finish it the way the client does.
+	first := newFifo(t, magic_pipe)
+	state = &State{State: UPLOADING_MAGIC}
+	writeChunk(httptest.NewRecorder(),
+		httptest.NewRequest("PUT", "/api/upload_magic_chunk",
+			bytes.NewReader([]byte("first"))), magicSink)
+	uploadMagicFinish(httptest.NewRecorder(),
+		httptest.NewRequest("PUT", "/api/upload_magic_finish", nil))
+	if got := string(first()); got != "first" {
+		t.Fatalf("first upload wrote %q, want %q", got, "first")
+	}
+
+	// Second upload, same process - this is what used to fail.
+	os.Remove(magic_pipe)
+	second := newFifo(t, magic_pipe)
+	state.State = UPLOADING_MAGIC
+	rec := httptest.NewRecorder()
+	writeChunk(rec, httptest.NewRequest("PUT", "/api/upload_magic_chunk",
+		bytes.NewReader([]byte("second"))), magicSink)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("second upload chunk: HTTP %d, want 200", rec.Code)
+	}
+
+	// The reader returns on EOF, and only closing the write end produces one -
+	// which on this path is exactly what uploadMagicFinish does. Without it the
+	// collector blocks and reports an empty read, which looks like the bug
+	// under test rather than a test that forgot to finish the upload.
+	uploadMagicFinish(httptest.NewRecorder(),
+		httptest.NewRequest("PUT", "/api/upload_magic_finish", nil))
+	if got := string(second()); got != "second" {
+		t.Errorf("second upload wrote %q, want %q", got, "second")
+	}
+}
