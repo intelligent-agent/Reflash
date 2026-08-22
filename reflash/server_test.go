@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -32,7 +33,45 @@ func setupTest(t *testing.T) string {
 	options = &Options{}
 	reflashVersion = ""
 	storageState = STORAGE_PREPARING
+	// Package-level upload state outlives a single test, and a stale
+	// lastChunkAt would make the liveness check fire in an unrelated one.
+	lastChunkAt = time.Time{}
+	chunksInFlight = 0
+	uploadFailed = false
+	// Never the real /tmp/mypipe: a test must not write into whatever a
+	// running server on the same machine has open.
+	magic_pipe = filepath.Join(dir, "mypipe")
 	return dir
+}
+
+// newFifo creates the magic pipe with a reader attached, and returns a func
+// that yields everything written to it. Opening a FIFO for writing blocks
+// until a reader arrives, so the reader has to exist before the first chunk.
+func newFifo(t *testing.T, path string) func() []byte {
+	t.Helper()
+	if err := syscall.Mkfifo(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan []byte, 1)
+	go func() {
+		f, err := os.Open(path)
+		if err != nil {
+			got <- nil
+			return
+		}
+		defer f.Close()
+		b, _ := io.ReadAll(f)
+		got <- b
+	}()
+	return func() []byte {
+		select {
+		case b := <-got:
+			return b
+		case <-time.After(5 * time.Second):
+			t.Error("timed out waiting for the FIFO reader")
+			return nil
+		}
+	}
 }
 
 // fakeBin installs an executable stub helper script in dir (which is binDir).
@@ -1085,5 +1124,270 @@ func TestUploadMagicFinishDoesNotArmOnError(t *testing.T) {
 	}
 	if isRebootArmed() {
 		t.Error("must not arm a reboot when the flash did not complete")
+	}
+}
+
+// The magic path had no test at all in Go or bash, which is why a watchdog
+// that cancels an in-flight upload could not be added safely (#118). This is
+// the plain path's round trip, against a real FIFO instead of a file.
+func TestUploadMagicRoundTrip(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "flash-mkfifo", `exit 0`)
+	fakeBin(t, dir, "get-recore-revision", `echo a8`)
+	fakeBin(t, dir, "flash-cleanup", `exit 0`)
+	state = &State{State: IDLE}
+	disarmReboot()
+
+	// The pipe normally comes from flash-mkfifo, whose reader is the
+	// decompressor writing to the eMMC. Here the reader just collects.
+	collect := newFifo(t, magic_pipe)
+
+	payload := bytes.Repeat([]byte("magic upload payload block. "), 4000) // ~112KB
+	startBody, _ := json.Marshal(map[string]any{
+		"filename":   "magic.img.xz",
+		"size":       len(payload),
+		"start_time": 0,
+	})
+	uploadMagicStart(httptest.NewRecorder(),
+		httptest.NewRequest("PUT", "/api/upload_magic_start", bytes.NewReader(startBody)))
+	if state.State != UPLOADING_MAGIC {
+		t.Fatalf("state = %q, want %q", state.State, UPLOADING_MAGIC)
+	}
+
+	const chunkSize = 8 * 1024
+	for i := 0; i < len(payload); i += chunkSize {
+		end := min(i+chunkSize, len(payload))
+		w := httptest.NewRecorder()
+		uploadMagicChunk(w, httptest.NewRequest("POST", "/api/upload_magic_chunk", bytes.NewReader(payload[i:end])))
+
+		var resp map[string]bool
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("chunk at offset %d: bad response body: %v", i, err)
+		}
+		if !resp["success"] {
+			t.Fatalf("chunk at offset %d: server reported failure: %s", i, state.Error)
+		}
+	}
+
+	uploadMagicFinish(httptest.NewRecorder(),
+		httptest.NewRequest("PUT", "/api/upload_magic_finish", nil))
+
+	if got := collect(); !bytes.Equal(got, payload) {
+		t.Errorf("FIFO received %d bytes, want %d", len(got), len(payload))
+	}
+	if state.State != FINISHED {
+		t.Errorf("state = %q, want %q", state.State, FINISHED)
+	}
+	if state.BytesNow != len(payload) {
+		t.Errorf("state.BytesNow = %d, want %d", state.BytesNow, len(payload))
+	}
+}
+
+// Merging the two chunk handlers is only safe if the messages stay distinct: a
+// failed plain upload has wasted time, a failed magic upload has left an eMMC
+// that will not boot, and the user has to be able to tell those apart (#114).
+func TestChunkFailureMessagesStayDistinct(t *testing.T) {
+	dir := setupTest(t)
+
+	// A closed file fails every Write, which is the failure both paths share.
+	closedFile := func() *os.File {
+		f, err := os.Create(filepath.Join(dir, "closed"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		return f
+	}
+
+	state = &State{State: UPLOADING, Filename: "plain.img.xz", File: closedFile(), BytesTotal: 100}
+	uploadChunk(httptest.NewRecorder(),
+		httptest.NewRequest("POST", "/api/upload_chunk", bytes.NewReader([]byte("data"))))
+	if state.State != ERROR {
+		t.Fatalf("plain: state = %q, want %q", state.State, ERROR)
+	}
+	if !strings.Contains(state.Error, "USB drive") {
+		t.Errorf("plain failure should name the USB drive, got %q", state.Error)
+	}
+
+	state = &State{State: UPLOADING_MAGIC, File: closedFile(), BytesTotal: 100}
+	uploadMagicChunk(httptest.NewRecorder(),
+		httptest.NewRequest("POST", "/api/upload_magic_chunk", bytes.NewReader([]byte("data"))))
+	if state.State != ERROR {
+		t.Fatalf("magic: state = %q, want %q", state.State, ERROR)
+	}
+	if !strings.Contains(state.Error, "eMMC") {
+		t.Errorf("magic failure should warn about the partially written eMMC, got %q", state.Error)
+	}
+}
+
+// startAbandonedUpload puts the server in the state a vanished browser leaves
+// behind: UPLOADING, file open, last chunk long ago.
+func startAbandonedUpload(t *testing.T, dir string, stateName string) *os.File {
+	t.Helper()
+	f, err := os.Create(filepath.Join(dir, "partial.img.xz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{State: stateName, Filename: "partial.img.xz", File: f, BytesNow: 500, BytesTotal: 1000}
+	markUploadStarted()
+	uploadMutex.Lock()
+	lastChunkAt = time.Now().Add(-2 * uploadTimeout)
+	uploadMutex.Unlock()
+	return f
+}
+
+func TestAbandonedUploadIsGivenUpOn(t *testing.T) {
+	dir := setupTest(t)
+	mounts := filepath.Join(dir, "mounts")
+	fakeBin(t, dir, "mount-unmount-usb", `echo "$@" >> `+mounts)
+	startAbandonedUpload(t, dir, UPLOADING)
+
+	checkUploadLiveness()
+
+	if state.State != ERROR {
+		t.Errorf("state = %q, want %q - UPLOADING is only ever left by the client that started it", state.State, ERROR)
+	}
+	if state.File != nil {
+		t.Error("the partial image was left open")
+	}
+	if !uploadFailed {
+		t.Error("uploadFailed not set: a late upload_cancel would relabel this as a clean cancel")
+	}
+	// The drive being left writable is the part of #118 that can lose data:
+	// a user facing a frozen UI pulls the stick.
+	got, err := os.ReadFile(mounts)
+	if err != nil {
+		t.Fatalf("mount-unmount-usb was never called: %v", err)
+	}
+	if !strings.Contains(string(got), "mounted "+MODE_RO) {
+		t.Errorf("drive not returned to read-only, mount calls were: %q", got)
+	}
+}
+
+func TestAbandonedMagicUploadWarnsAboutTheEmmc(t *testing.T) {
+	dir := setupTest(t)
+	startAbandonedUpload(t, dir, UPLOADING_MAGIC)
+
+	checkUploadLiveness()
+
+	if state.State != ERROR {
+		t.Fatalf("state = %q, want %q", state.State, ERROR)
+	}
+	if !strings.Contains(state.Error, "eMMC") {
+		t.Errorf("an abandoned magic upload leaves a half-written eMMC; message was %q", state.Error)
+	}
+}
+
+// A chunk blocked inside Write - a slow drive, or a FIFO whose reader is
+// behind - looks exactly like an abandoned upload from the outside. Closing
+// state.File underneath it would turn a stall into a crash.
+func TestLivenessLeavesAnInFlightChunkAlone(t *testing.T) {
+	dir := setupTest(t)
+	startAbandonedUpload(t, dir, UPLOADING)
+	uploadMutex.Lock()
+	chunksInFlight = 1
+	uploadMutex.Unlock()
+
+	checkUploadLiveness()
+
+	if state.State != UPLOADING {
+		t.Errorf("state = %q, want %q: a write in progress is not an abandoned upload", state.State, UPLOADING)
+	}
+	if state.File == nil {
+		t.Error("closed the file underneath a chunk that is still writing to it")
+	}
+}
+
+func TestLivenessIgnoresAnUploadThatIsStillBeingDriven(t *testing.T) {
+	dir := setupTest(t)
+	startAbandonedUpload(t, dir, UPLOADING)
+	endChunk() // a chunk just arrived
+	chunksInFlight = 0
+
+	checkUploadLiveness()
+
+	if state.State != UPLOADING {
+		t.Errorf("state = %q, want %q", state.State, UPLOADING)
+	}
+}
+
+// The watchdog ticks twice a second whatever the server is doing, so it has to
+// be inert outside an upload - including after one has finished, where the
+// timestamp would otherwise go stale and fire against an idle server.
+func TestLivenessIgnoresEverythingButAnUpload(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+
+	for _, s := range []string{IDLE, FINISHED, CANCELLED, ERROR, MAGIC, INSTALLING} {
+		startAbandonedUpload(t, dir, s)
+		checkUploadLiveness()
+		if state.State != s {
+			t.Errorf("state %q was changed to %q", s, state.State)
+		}
+	}
+
+	startAbandonedUpload(t, dir, UPLOADING)
+	markUploadDone()
+	checkUploadLiveness()
+	if state.State != UPLOADING {
+		t.Error("fired after markUploadDone, against an upload nobody is watching any more")
+	}
+}
+
+// Once the server has given up, a client that comes back must not be able to
+// write into the file that was closed, or to relabel the failure as a clean
+// cancellation.
+func TestChunksAndCancelAfterAbandonment(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	startAbandonedUpload(t, dir, UPLOADING)
+	checkUploadLiveness()
+
+	w := httptest.NewRecorder()
+	uploadChunk(w, httptest.NewRequest("POST", "/api/upload_chunk", bytes.NewReader([]byte("late"))))
+	var resp map[string]bool
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad response body: %v", err)
+	}
+	if resp["success"] {
+		t.Error("accepted a chunk after the upload was abandoned and the file closed")
+	}
+
+	uploadCancel(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/upload_cancel", nil))
+	if state.State != ERROR {
+		t.Errorf("state = %q, want %q: the page should say the upload died, not that it was cancelled", state.State, ERROR)
+	}
+}
+
+// The watchdog and the client's retry logic are coupled through a number that
+// lives in neither file: how long uploadLocalFile will keep trying before it
+// gives up and sends upload_cancel. If the server fires first it kills uploads
+// the client would have recovered - and on this board's WiFi, which has real
+// multi-minute dead spells (#61), that is not a hypothetical.
+//
+// The arithmetic is here rather than in a comment so that shortening
+// uploadTimeout, or lengthening the client's budget, fails a test instead of
+// quietly reintroducing #61 in a new form.
+func TestUploadTimeoutOutlastsTheClientRetryBudget(t *testing.T) {
+	// Mirrors client/src/App.vue, uploadLocalFile.
+	const (
+		chunkTimeout   = 20 * time.Second
+		maxRetries     = 20
+		backoffBase    = 2 * time.Second
+		backoffCeiling = 30 * time.Second
+	)
+
+	budget := time.Duration(maxRetries+1) * chunkTimeout // every attempt times out
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		backoff := backoffBase * (1 << attempt)
+		if backoff > backoffCeiling {
+			backoff = backoffCeiling
+		}
+		budget += backoff
+	}
+
+	if uploadTimeout <= budget {
+		t.Errorf("uploadTimeout = %v, but the client keeps retrying for %v - "+
+			"the server would abandon an upload that is still being driven", uploadTimeout, budget)
 	}
 }

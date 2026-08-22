@@ -209,6 +209,12 @@ var log_file string
 var http_port string
 var reflashVersion string
 
+// The FIFO the magic upload writes into, with flash-mkfifo's reader on the
+// other end. A variable rather than a literal so tests can substitute a real
+// FIFO in a temp dir - without that seam the whole magic path was unreachable
+// from a test, which is how it stayed at 0% coverage (#118).
+var magic_pipe = "/tmp/mypipe"
+
 var last_size_check time.Time
 var bytes_last int
 var timeStart time.Time
@@ -830,6 +836,7 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	state.BytesTotal = data.Size
 	state.State = UPLOADING
 	uploadFailed = false
+	markUploadStarted()
 	mountUsb(MODE_RW)
 
 	timeStart = time.Now()
@@ -865,6 +872,7 @@ func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
 	state.BytesTotal = data.Size
 	state.State = UPLOADING_MAGIC
 	uploadFailed = false
+	markUploadStarted()
 
 	go goUploadMagic()
 	time.Sleep(1 * time.Second)
@@ -899,6 +907,137 @@ func goUploadMagic() {
 // separately; it is cleared when a new upload starts.
 var uploadFailed bool
 
+// An upload is only ever left by a request from the client that started it:
+// upload_finish or upload_cancel. So a browser that goes away mid-upload - page
+// refresh, closed tab, network drop - used to leave the server in UPLOADING
+// forever: no other flash could start, state.File stayed open on a partial
+// image, and the USB drive stayed mounted rw, which is exactly the state you do
+// not want when the user reacts to a frozen UI by pulling the drive (#118).
+//
+// The watchdog is already ticking, so liveness is tracked here and checked
+// there. chunksInFlight matters as much as the timestamp: a chunk blocked
+// inside Write - on a slow drive, or on a FIFO whose reader is behind - looks
+// exactly like an abandoned upload from the outside, and closing state.File
+// underneath that write would turn a stall into a crash.
+//
+// Its own mutex rather than state's embedded one: the chunk handlers have never
+// taken state.Lock(), so locking it here would guard the watchdog against
+// lockSaveOptions (which cannot collide - both run on this same goroutine) and
+// not against the writer this actually has to exclude.
+var (
+	uploadMutex    sync.Mutex
+	lastChunkAt    time.Time
+	chunksInFlight int
+)
+
+// This has to outlast the client's own patience, not the normal inter-chunk
+// gap. The normal gap is well under a second, but uploadLocalFile is built to
+// ride out the multi-minute dead spells this board's WiFi actually has (#61):
+// 20s per-chunk timeout, 20 retries, exponential backoff capped at 30s. When
+// the network is down the server sees nothing at all during that - the requests
+// never arrive - so the gap it observes is the client's entire retry budget:
+//
+//	21 attempts x 20s timeout                       = 420s
+//	backoffs 2+4+8+16s then 16 x 30s                = 510s
+//	                                                 ~930s = 15.5 min
+//
+// Fire before that and the server kills an upload the client would have
+// recovered, which is strictly worse than the bug being fixed here. After it,
+// the client has already given up and sent upload_cancel, so the watchdog only
+// ever acts when nobody is driving the upload at all - which is the point.
+//
+// The cost of erring long is that an abandoned upload leaves the drive mounted
+// rw for up to this long. Bounded and recoverable, where before it was forever.
+//
+// The magic path needs less (300s timeout, no retry) and is covered anyway:
+// its slow chunks are slow inside the handler - blocked on the FIFO or on
+// io.ReadAll - so chunksInFlight holds them.
+var uploadTimeout = 20 * time.Minute
+
+// beginChunk admits a chunk only while the upload is still live, and marks it
+// in flight so the watchdog cannot close the destination underneath it.
+func beginChunk() bool {
+	uploadMutex.Lock()
+	defer uploadMutex.Unlock()
+	if state.State == CANCELLED || state.State == ERROR {
+		return false
+	}
+	chunksInFlight++
+	return true
+}
+
+func endChunk() {
+	uploadMutex.Lock()
+	defer uploadMutex.Unlock()
+	chunksInFlight--
+	lastChunkAt = time.Now()
+}
+
+// markUploadStarted starts the clock at the start handler rather than at the
+// first chunk, so an upload abandoned before it ever sends data still times
+// out - which is the common case when a page is refreshed just after starting.
+func markUploadStarted() {
+	uploadMutex.Lock()
+	defer uploadMutex.Unlock()
+	lastChunkAt = time.Now()
+	chunksInFlight = 0
+}
+
+// markUploadDone stops the clock, so the watchdog has nothing to act on once an
+// upload has finished or been cancelled.
+func markUploadDone() {
+	uploadMutex.Lock()
+	defer uploadMutex.Unlock()
+	lastChunkAt = time.Time{}
+}
+
+// checkUploadLiveness gives up on an upload whose client has stopped driving
+// it. Called from the watchdog tick.
+func checkUploadLiveness() {
+	uploadMutex.Lock()
+	if state == nil || (state.State != UPLOADING && state.State != UPLOADING_MAGIC) ||
+		chunksInFlight > 0 || lastChunkAt.IsZero() || time.Since(lastChunkAt) < uploadTimeout {
+		uploadMutex.Unlock()
+		return
+	}
+	// Leave UPLOADING while still holding the lock. beginChunk refuses to
+	// admit anything once the state is ERROR, so by the time the file is
+	// closed below, nothing can be writing to it.
+	magic := state.State == UPLOADING_MAGIC
+	silent := time.Since(lastChunkAt)
+	state.State = ERROR
+	// A late upload_cancel from a client that comes back must not relabel
+	// this as a clean cancellation - same reasoning as a failed chunk (#114).
+	uploadFailed = true
+	lastChunkAt = time.Time{}
+	uploadMutex.Unlock()
+
+	if magic {
+		// Closing the FIFO signals end-of-stream to the decompressor, so the
+		// eMMC is left with a truncated image. Say so: the board will not
+		// boot, and the user needs to know that rather than retrying into a
+		// half-written device and wondering why.
+		state.Error = "The magic flash stopped receiving data and was abandoned. The eMMC is partially written - reboot and flash again."
+	} else {
+		state.Error = "The upload stopped receiving data and was abandoned. Check the network connection and try again."
+	}
+	logError(fmt.Sprintf("No upload data for %d seconds; abandoning at %d of %d bytes",
+		int(silent.Seconds()), state.BytesNow, state.BytesTotal))
+
+	if state.File != nil {
+		if err := state.File.Close(); err != nil {
+			logError("Could not close the file: " + err.Error())
+		}
+		state.File = nil
+	}
+	// Get the drive back to read-only as soon as the file is flushed. Being
+	// left writable is the part of this bug that can lose data, since a user
+	// facing a stuck UI is likely to pull the drive.
+	if !magic {
+		mountUsb(MODE_RO)
+	}
+}
+
 func failChunk(w http.ResponseWriter, code int, what string, userMsg string, err error) {
 	progress := ""
 	if state.BytesTotal > 0 {
@@ -912,52 +1051,114 @@ func failChunk(w http.ResponseWriter, code int, what string, userMsg string, err
 	http.Error(w, userMsg, code)
 }
 
-func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
-	var err error
+// chunkSink is everything the two upload paths do differently: where the bytes
+// go, and what to say when they do not get there. Everything else - the
+// CANCELLED/ERROR guard, reading the body, the write, the progress update, the
+// response - was duplicated between uploadChunk and uploadMagicChunk, and the
+// duplication was not free: the base64 -> raw-binary change had to be made
+// twice, and both copies still carry a comment about it.
+//
+// The messages stay distinct on purpose. A failed plain upload has wasted the
+// user's time; a failed magic upload has left a half-written eMMC that will not
+// boot. Telling those apart is the whole value of #114, so they are parameters
+// here rather than one shared string.
+type chunkSink struct {
+	// openLate opens the destination on the first chunk. nil when a start
+	// handler has already opened it.
+	openLate    func() (*os.File, error)
+	openFailMsg string
+	// destName appears in the write-failure log line, and is only evaluated
+	// on failure since it can depend on state.
+	destName func() string
 
+	readLog, readMsg   string
+	writeLog, writeMsg string
+}
+
+var plainSink = chunkSink{
+	destName: func() string { return state.Filename },
+	readLog:  "Could not read a chunk of the upload from the network",
+	readMsg:  "The upload failed while receiving data. Check the network connection and try again.",
+	writeLog: "Could not write a chunk of the upload to ",
+	writeMsg: "The upload failed while writing to the USB drive. Check that it is present and has free space.",
+}
+
+var magicSink = chunkSink{
+	// Unlike the plain upload path, the destination here is a FIFO that the
+	// flashing process reads from, opened lazily on the first chunk rather
+	// than in a start handler.
+	openLate: func() (*os.File, error) {
+		logInfo("Open file " + magic_pipe)
+		return os.OpenFile(magic_pipe, os.O_APPEND|os.O_WRONLY, 0644)
+	},
+	openFailMsg: "Could not open the flash pipe. Reboot and try again.",
+	destName:    func() string { return magic_pipe },
+	readLog:     "Could not read a chunk of the magic upload from the network",
+	readMsg:     "The magic flash failed while receiving data. The eMMC is partially written - reboot and try again.",
+	writeLog:    "Could not write a chunk of the magic upload to ",
+	writeMsg:    "The magic flash failed while writing to the flash pipe. The eMMC is partially written - reboot and try again.",
+}
+
+func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
+	writeChunk(w, r, magicSink)
+}
+
+func uploadChunk(w http.ResponseWriter, r *http.Request) {
+	writeChunk(w, r, plainSink)
+}
+
+func writeChunk(w http.ResponseWriter, r *http.Request, sink chunkSink) {
 	// ERROR as well as CANCELLED: any chunk still in flight when one fails
-	// must not overwrite state.Error with a fresh failure of its own.
-	if state.State == CANCELLED || state.State == ERROR {
+	// must not overwrite state.Error with a fresh failure of its own. This
+	// also admits the chunk for liveness purposes, so the watchdog cannot
+	// close state.File while the write below is in progress (#118).
+	if !beginChunk() {
 		response := map[string]bool{"success": false}
 		json.NewEncoder(w).Encode(response)
 		return
 	}
+	defer endChunk()
 
-	// Unlike the plain upload path, the destination here is a FIFO that
-	// the flashing process reads from, opened lazily on the first chunk
-	// rather than in a start handler.
-	path := "/tmp/mypipe"
-	if state.File == nil {
-		logInfo("Open file " + path)
-		state.File, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if state.File == nil && sink.openLate != nil {
+		f, err := sink.openLate()
 		if err != nil {
-			// Same reasoning as uploadStart: failing to open the FIFO must
-			// not take the whole server down mid-flash.
-			logError("Could not open " + path + ": " + err.Error())
+			// Same reasoning as uploadStart: failing to open the
+			// destination must not take the whole server down mid-flash.
+			logError("Could not open " + sink.destName() + ": " + err.Error())
 			state.State = ERROR
-			state.Error = "Could not open the flash pipe. Reboot and try again."
+			state.Error = sink.openFailMsg
 			http.Error(w, state.Error, http.StatusInternalServerError)
 			return
 		}
+		state.File = f
 	}
 
-	// The client posts the chunk as a raw binary body, same as
-	// uploadChunk. This used to be base64 inside a JSON body, which
-	// inflated the wire size by ~33% - on a >1GB magic upload over this
-	// board's WiFi that is a lot of avoidable transfer.
+	// The client posts the chunk as a raw binary body. This used to be
+	// base64 inside a JSON body, which inflated the wire size by ~33% - on a
+	// >1GB upload over this board's WiFi that is a lot of avoidable transfer.
 	decoded, err := io.ReadAll(r.Body)
 	if err != nil {
-		failChunk(w, http.StatusBadRequest,
-			"Could not read a chunk of the magic upload from the network",
-			"The magic flash failed while receiving data. The eMMC is partially written - reboot and try again.",
-			err)
+		failChunk(w, http.StatusBadRequest, sink.readLog, sink.readMsg, err)
 		return
 	}
+
+	// state.File is opened once (in uploadStart, or on the first chunk for
+	// the magic path) and closed in uploadFinish/uploadCancel - opening,
+	// writing and closing it on every chunk was real per-chunk overhead
+	// (syscalls plus an implicit flush on close), especially costly against
+	// the FAT-formatted USB target.
+	//
+	// Chunks are sent one at a time (not pipelined/concurrent) - this
+	// board's USB hub (WiFi NIC + storage share a single Transaction
+	// Translator, confirmed from the hub's datasheet) can't reliably
+	// handle simultaneous network-receive and disk-write transactions.
+	// Concurrent chunks caused a real disk-write pileup (kernel threads
+	// stuck in D-state) and, even after serializing the writes,
+	// intermittent connection resets - a hardware constraint, not
+	// something fixable by tuning the write path further.
 	if _, err := state.File.Write(decoded); err != nil {
 		failChunk(w, http.StatusInternalServerError,
-			"Could not write a chunk of the magic upload to "+path,
-			"The magic flash failed while writing to the flash pipe. The eMMC is partially written - reboot and try again.",
-			err)
+			sink.writeLog+sink.destName(), sink.writeMsg, err)
 		return
 	}
 
@@ -969,6 +1170,7 @@ func uploadMagicChunk(w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
+	markUploadDone()
 	// Closing the FIFO is what signals end-of-stream to the decompressor, so
 	// a failure here means the flash is incomplete - but it is still an
 	// error to report, not a reason to kill the server.
@@ -1000,55 +1202,8 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func uploadChunk(w http.ResponseWriter, r *http.Request) {
-	if state.State == CANCELLED || state.State == ERROR {
-		response := map[string]bool{"success": false}
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	// The client posts the chunk as a raw binary body (not base64/JSON -
-	// that inflated the wire size by ~33% and cost real time on the
-	// WiFi-constrained upload path). Read it straight off the request
-	// body.
-	decoded, err := io.ReadAll(r.Body)
-	if err != nil {
-		failChunk(w, http.StatusBadRequest,
-			"Could not read a chunk of the upload from the network",
-			"The upload failed while receiving data. Check the network connection and try again.",
-			err)
-		return
-	}
-
-	// state.File is opened once in uploadStart and closed in
-	// uploadFinish/uploadCancel - opening, writing and closing it on
-	// every chunk here was real per-chunk overhead (syscalls plus an
-	// implicit flush on close), especially costly against the
-	// FAT-formatted USB target.
-	//
-	// Chunks are sent one at a time (not pipelined/concurrent) - this
-	// board's USB hub (WiFi NIC + storage share a single Transaction
-	// Translator, confirmed from the hub's datasheet) can't reliably
-	// handle simultaneous network-receive and disk-write transactions.
-	// Concurrent chunks caused a real disk-write pileup (kernel threads
-	// stuck in D-state) and, even after serializing the writes,
-	// intermittent connection resets - a hardware constraint, not
-	// something fixable by tuning the write path further.
-	if _, err := state.File.Write(decoded); err != nil {
-		failChunk(w, http.StatusInternalServerError,
-			"Could not write a chunk of the upload to "+state.Filename,
-			"The upload failed while writing to the USB drive. Check that it is present and has free space.",
-			err)
-		return
-	}
-	state.BytesNow += len(decoded)
-	state.Progress = float64(state.BytesNow) * 100 / float64(state.BytesTotal)
-
-	response := map[string]bool{"success": true}
-	json.NewEncoder(w).Encode(response)
-}
-
 func uploadFinish(w http.ResponseWriter, r *http.Request) {
+	markUploadDone()
 	if state.File != nil {
 		if err := state.File.Close(); err != nil {
 			// The last flush to the USB drive lands here, so this is
@@ -1075,6 +1230,7 @@ func uploadCancel(w http.ResponseWriter, r *http.Request) {
 	// chunk has failed, so an ERROR state has to survive - overwriting it
 	// with CANCELLED is what made the two indistinguishable in the first
 	// place, in the UI as well as the log. See issue #114.
+	markUploadDone()
 	failed := uploadFailed || state.State == ERROR
 	uploadFailed = false
 	if !failed {
@@ -1908,7 +2064,8 @@ func startWatchdog() {
 	//
 	// Affordable because every step below returns immediately when there is
 	// nothing to do: lockSaveOptions on !isDirty, the armed-window work on
-	// !isRebootArmed(). A tick costs three mutex acquisitions when idle.
+	// !isRebootArmed(), the liveness check on a state that is not UPLOADING.
+	// A tick costs four mutex acquisitions when idle.
 	ticker := time.NewTicker(500 * time.Millisecond)
 
 	go func() {
@@ -1918,6 +2075,9 @@ func startWatchdog() {
 			// the freshly flashed image once it is pulled. Both come off one
 			// USB sample - see armedTick.
 			refreshUsbPresence()
+			// Give up on an upload whose client has gone away, rather than
+			// sitting in UPLOADING with the drive mounted rw forever (#118).
+			checkUploadLiveness()
 		}
 	}()
 }

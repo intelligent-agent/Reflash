@@ -525,6 +525,13 @@ export default {
       }
     },
     async uploadLocalFile() {
+      // These four set how long this client will keep trying before giving up,
+      // and the server's abandoned-upload watchdog has to outlast that: when
+      // the network is down the requests never arrive, so all the server sees
+      // is silence, and if it gives up first it kills an upload that was still
+      // being driven. Currently ~15.5 minutes against uploadTimeout's 20.
+      // Lengthening any of these means raising uploadTimeout in server.go -
+      // TestUploadTimeoutOutlastsTheClientRetryBudget fails if you do not.
       const CHUNK_SIZE = 3 * 1024 * 1024;
       const MAX_CHUNK_RETRIES = 20;
       const CHUNK_TIMEOUT_MS = 20000;
