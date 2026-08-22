@@ -583,12 +583,17 @@ func startConnectWifi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Update Global Options and lock memory
-	optionsLock.Lock()
-	options.WifiSSID = strings.TrimSpace(get_wifi.SSID)
-	options.WifiPSK = strings.TrimSpace(get_wifi.Password)
-	isDirty = true
-	optionsLock.Unlock()
+	// 1. Hold the attempted credentials locally. They are NOT written to
+	// options yet: doing that here persisted them whether or not they worked,
+	// so a mistyped passphrase went into options.cfg, was retried on every
+	// boot, failed, and dropped the board into AP mode with nothing to say why
+	// - and worse, got written into every image flashed from that board (#124).
+	//
+	// Locals rather than globals also settle the data race this had: the
+	// goroutine below used to read options.WifiSSID/WifiPSK with no lock held
+	// while setOptions could be writing them from another request.
+	ssid := strings.TrimSpace(get_wifi.SSID)
+	psk := strings.TrimSpace(get_wifi.Password)
 
 	// 2. Prepare Connection State
 	connectMutex.Lock()
@@ -603,10 +608,10 @@ func startConnectWifi(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Run connection in background
 	go func() {
-		logInfo("Attempting to connect to: " + options.WifiSSID)
+		logInfo("Attempting to connect to: " + ssid)
 
 		// This command usually takes down the AP and brings up the Station
-		_, _, err := runCommand2("wifi-connect", options.WifiSSID, options.WifiPSK)
+		_, _, err := runCommand2("wifi-connect", ssid, psk)
 
 		connectMutex.Lock()
 		connectError = err
@@ -614,10 +619,20 @@ func startConnectWifi(w http.ResponseWriter, r *http.Request) {
 		connectMutex.Unlock()
 
 		if err != nil {
+			// Nothing is stored, so the previous working credentials - if there
+			// were any - survive a failed attempt to replace them.
 			logError("WiFi Connection failed: " + err.Error())
-		} else {
-			logInfo("WiFi Connection successful")
+			return
 		}
+
+		// Only now are these credentials known to work, so only now are they
+		// worth keeping and worth copying into a flashed image.
+		optionsLock.Lock()
+		options.WifiSSID = ssid
+		options.WifiPSK = psk
+		isDirty = true
+		optionsLock.Unlock()
+		logInfo("WiFi Connection successful")
 	}()
 
 	// Respond immediately so Vue knows the process started

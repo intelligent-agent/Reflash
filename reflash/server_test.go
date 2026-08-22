@@ -1391,3 +1391,96 @@ func TestUploadTimeoutOutlastsTheClientRetryBudget(t *testing.T) {
 			"the server would abandon an upload that is still being driven", uploadTimeout, budget)
 	}
 }
+
+func TestConnectWifiStoresCredentialsOnlyOnSuccess(t *testing.T) {
+	connect := func(t *testing.T, dir, ssid, psk string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]string{"SSID": ssid, "password": psk})
+		rr := httptest.NewRecorder()
+		startConnectWifi(rr, httptest.NewRequest("POST", "/api/wifi_start_connect", bytes.NewReader(body)))
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202", rr.Code)
+		}
+	}
+
+	// A typo used to be persisted regardless, retried on every boot, and
+	// written into every image flashed from the board - with nothing anywhere
+	// to say the stored credentials were the problem (#124).
+	t.Run("a failed connection leaves the stored credentials alone", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "wifi-connect", `echo "no network with SSID found"; exit 1`)
+		options = &Options{WifiSSID: "Works", WifiPSK: "correct-horse"}
+		isDirty = false
+		isConnecting = false
+
+		connect(t, dir, "Typo", "wrongpassphrase")
+
+		waitFor(t, func() bool {
+			connectMutex.Lock()
+			defer connectMutex.Unlock()
+			return !isConnecting
+		})
+
+		optionsLock.Lock()
+		defer optionsLock.Unlock()
+		if options.WifiSSID != "Works" || options.WifiPSK != "correct-horse" {
+			t.Errorf("stored credentials were overwritten by a failed attempt: %q/%q",
+				options.WifiSSID, options.WifiPSK)
+		}
+		if isDirty {
+			t.Error("marked dirty for credentials that never worked")
+		}
+	})
+
+	t.Run("a successful connection stores them", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "wifi-connect", `exit 0`)
+		options = &Options{}
+		isDirty = false
+		isConnecting = false
+
+		connect(t, dir, "  Kraakeslottet  ", "  goodpassphrase  ")
+
+		waitFor(t, func() bool {
+			optionsLock.Lock()
+			defer optionsLock.Unlock()
+			return options.WifiSSID == "Kraakeslottet"
+		})
+
+		optionsLock.Lock()
+		defer optionsLock.Unlock()
+		// Trimmed: the dialog's input picks up stray whitespace, and a PSK
+		// with a trailing space fails in a way nothing reports.
+		if options.WifiPSK != "goodpassphrase" {
+			t.Errorf("PSK = %q, want it trimmed", options.WifiPSK)
+		}
+		if !isDirty {
+			t.Error("working credentials were not marked for saving")
+		}
+	})
+
+	// The passphrase reaches wifi-connect as an argument, and the log line for
+	// every command runs through the same redaction table.
+	t.Run("the attempt does not put the passphrase in the log", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "wifi-connect", `exit 0`)
+		options = &Options{}
+		isConnecting = false
+
+		connect(t, dir, "Net", "hunter2hunter2")
+
+		waitFor(t, func() bool {
+			optionsLock.Lock()
+			defer optionsLock.Unlock()
+			return options.WifiSSID == "Net"
+		})
+
+		log, err := os.ReadFile(log_file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(log), "hunter2hunter2") {
+			t.Error("the passphrase was written to the log")
+		}
+	})
+}

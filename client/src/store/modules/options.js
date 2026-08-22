@@ -23,9 +23,19 @@ const actions = {
     const response = await axios.get(`/api/get_options`)
     commit('getOptions', response.data);
   },
+  // Post only what changed, never the whole cached object. The server merges
+  // by unmarshalling onto its live struct, so a partial object leaves every
+  // other field alone - including ones this client has never seen.
+  //
+  // Posting `state.options` was a lost update (#124). The page caches options
+  // once at load and nothing re-fetches, while the server changes them
+  // underneath: connecting to WiFi sets SSID and PSK server-side. So a page
+  // loaded before that, then used to toggle rotation, wrote its stale empty
+  // SSID back over working credentials - and the next flash produced an image
+  // with no network, which looks like a flashing bug rather than a UI one.
   async setOption({ commit }, option){
     commit('setOption', option);
-    await axios.post(`/api/set_options`, state.options);
+    await axios.post(`/api/set_options`, option);
   },
   setVisible({ commit }, payload){
     commit('setVisible', payload);

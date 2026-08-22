@@ -50,6 +50,25 @@ describe('options store actions', () => {
     const commit = vi.fn()
     await optionsModule.actions.setOption({ commit }, { enableSsh: true })
     expect(commit).toHaveBeenCalledWith('setOption', { enableSsh: true })
-    expect(axios.post).toHaveBeenCalledWith('/api/set_options', expect.anything())
+    // Not expect.anything(): that is what let #124 through this test. The
+    // payload is the whole point.
+    expect(axios.post).toHaveBeenCalledWith('/api/set_options', { enableSsh: true })
+  })
+
+  // #124. The page caches options once at load and nothing re-fetches, while
+  // the server changes them underneath - connecting to WiFi sets SSID and PSK
+  // server-side. Posting the whole cached object therefore wrote a stale empty
+  // SSID back over working credentials on the next toggle of anything, and the
+  // next flash produced an image with no network.
+  it('posts only the changed key, never the whole cached object', async () => {
+    axios.post.mockResolvedValue({})
+    const commit = vi.fn()
+
+    await optionsModule.actions.setOption({ commit }, { screenRotation: 90 })
+
+    const [, body] = axios.post.mock.calls[0]
+    expect(Object.keys(body)).toEqual(['screenRotation'])
+    expect(body).not.toHaveProperty('SSID')
+    expect(body).not.toHaveProperty('PSK')
   })
 })
