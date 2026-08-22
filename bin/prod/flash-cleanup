@@ -24,6 +24,32 @@ parted -s "${OUTFILE}" resizepart 2 100%
 # Re-read partition table
 partprobe ${OUTFILE}
 
+# ...then wait for the partition nodes to come back.
+#
+# partprobe returns once the kernel has re-read the table, but the kernel first
+# *removes* the partition devices and udev recreates them asynchronously
+# afterwards. So there is a window where /dev/mmcblk2p1 does not exist. udev
+# usually wins that race, which is why this went unnoticed - when it loses, the
+# very next line dies under set -e:
+#
+#   e2fsck: No such file or directory while trying to open /dev/mmcblk2p1
+#   [flash-cleanup a5]: exit status 8
+#
+# and because that is line 2's `set -euo pipefail`, everything after is skipped:
+# the filesystem resize, the UUID randomisation that stops the eMMC colliding
+# with the USB image it was flashed from, and the per-revision device tree
+# symlink. The board is left bootable but subtly wrong, which is worse than a
+# clean failure. Observed flashing an A5.
+udevadm settle --timeout=30 || true
+for _ in $(seq 1 100); do
+    if [ -b "${OUTFILE}p1" ] && [ -b "${OUTFILE}p2" ]; then break; fi
+    sleep 0.1
+done
+if [ ! -b "${OUTFILE}p1" ] || [ ! -b "${OUTFILE}p2" ]; then
+    info "Partition nodes did not reappear after partprobe - aborting before we half-finish"
+    exit 1
+fi
+
 info "Checking filesystems"
 e2fsck -y -f ${OUTFILE}p1
 e2fsck -y -f ${OUTFILE}p2
