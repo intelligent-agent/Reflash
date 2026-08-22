@@ -1900,18 +1900,24 @@ func watchIPs() {
 }
 
 func startWatchdog() {
-	// Check every 2 seconds
-	ticker := time.NewTicker(2 * time.Second)
+	// 500ms, matching what the web UI used to poll at. The server is now the
+	// only thing that reboots on drive removal (the UI no longer races it), so
+	// this interval is what the user actually waits between pulling the drive
+	// and the board restarting - at 2s that was a noticeable lag, and it made
+	// the panel's "USB removed" frame nearly impossible to see.
+	//
+	// Affordable because every step below returns immediately when there is
+	// nothing to do: lockSaveOptions on !isDirty, the armed-window work on
+	// !isRebootArmed(). A tick costs three mutex acquisitions when idle.
+	ticker := time.NewTicker(500 * time.Millisecond)
 
 	go func() {
 		for range ticker.C {
-			// This is the function we built in the previous step
 			lockSaveOptions()
-			// Show the drive being pulled, then act on it. Order matters only
-			// in that the panel should acknowledge before the board reboots.
+			// Repaint the panel when the drive comes or goes, and reboot into
+			// the freshly flashed image once it is pulled. Both come off one
+			// USB sample - see armedTick.
 			refreshUsbPresence()
-			// Reboot into the freshly flashed image once the USB is pulled.
-			checkAutoReboot()
 		}
 	}()
 }
@@ -1958,7 +1964,15 @@ func refreshUsbPresence() {
 	if !isRebootArmed() {
 		return
 	}
-	present := usbPresent()
+	armedTick(usbPresent())
+}
+
+// armedTick is everything the armed window needs from one USB sample: repaint
+// the panel if the drive came or went, then reboot if that is what was asked
+// for. One sample because usbPresent() shells out to is-usb-present, and the
+// watchdog now ticks twice a second - sampling separately for the panel and for
+// the reboot decision would be four subprocesses a second for the same answer.
+func armedTick(present bool) {
 	rebootMutex.Lock()
 	changed := present != usbWasPresent
 	usbWasPresent = present
@@ -1966,6 +1980,7 @@ func refreshUsbPresence() {
 	if changed {
 		updateDisplay()
 	}
+	checkAutoRebootWith(present)
 }
 
 func armReboot() {
@@ -1994,6 +2009,15 @@ func checkAutoReboot() {
 	if !isRebootArmed() {
 		return
 	}
+	checkAutoRebootWith(usbPresent())
+}
+
+// checkAutoRebootWith takes the drive's presence rather than probing for it, so
+// a caller that has already sampled does not pay for a second subprocess.
+func checkAutoRebootWith(present bool) {
+	if !isRebootArmed() {
+		return
+	}
 
 	optionsLock.Lock()
 	rebootWhenDone := options.RebootWhenDone
@@ -2014,7 +2038,7 @@ func checkAutoReboot() {
 		return
 	}
 
-	if usbPresent() {
+	if present {
 		return // wait for the user to remove the USB drive
 	}
 

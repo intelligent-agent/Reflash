@@ -88,7 +88,15 @@ export default {
       const response = await axios.get(`/api/is_usb_present`);
       this.isUsbPresent = response.data.result;
       if (this.options.rebootWhenDone && this.isUsbPresent == false) {
-        this.$emit("reboot-board");
+        // Deliberately does NOT reboot. The server does that itself, in
+        // checkAutoReboot, off the same condition. Both used to do it, and at
+        // 500ms here against the server's 2s tick the browser always won - so
+        // the server path was never exercised by anyone using the UI and stayed
+        // broken unnoticed (#123). It is also the only path a non-browser
+        // client has: the USB serial protocol offers LIST/STATUS/FLASH/CANCEL
+        // and no reboot at all.
+        //
+        // So just watch for the board to go away and come back.
         this.rebootPressed = true;
         this.serverResponding = false;
         setTimeout(this.checkServerResponse, 1000);
