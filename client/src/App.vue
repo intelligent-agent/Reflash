@@ -159,7 +159,6 @@
             :items="localImages"
             item-label-key="name"
             placeholder="Please select one"
-            :item-click="onSelectedFileChanged()"
           >
           </w-select>
           <w-button
@@ -171,7 +170,10 @@
           >
             <span> {{ this.computeMagicButtonText() }} </span>
           </w-button>
-          <IntegrityChecker ref="integritychecker" v-if="!options.magicmode" />
+          <IntegrityChecker
+            ref="integritychecker"
+            v-if="!options.magicmode"
+            @integrity="imageIntegrity = $event" />
         </w-flex>
         <div class="xs1 align-self-center">
           <w-button
@@ -179,6 +181,7 @@
             outline
             @click="onInstallButtonClick()"
             v-if="isInstallButtonVisibile()"
+            :disabled="isInstallButtonDisabled()"
           >
             <span>
               {{ this.installButtonText() }}
@@ -247,6 +250,8 @@ export default {
     // open tab sees UPLOADING, and cancelling on that basis would let closing
     // an idle spectator tab kill an upload another tab is driving.
     ownsUpload: false,
+    // null = unknown or still checking, true = passed, false = failed.
+    imageIntegrity: null,
     state: "IDLE",
     previousState: "IDLE",
     installFinished: false,
@@ -348,6 +353,25 @@ export default {
         return this.selectedLocalImage;
       }
     },
+    // Installing an image that failed its integrity check writes a truncated
+    // .img.xz to the eMMC and produces a board that will not boot. An abandoned
+    // upload leaves exactly such a file sitting in the list (#118), so the X
+    // beside the filename was the only thing standing between the user and a
+    // bricked board - and nothing stopped them clicking Install anyway.
+    //
+    // Disabled rather than hidden: a button that vanishes reads as a bug, where
+    // a greyed-out one next to a red X explains itself.
+    isInstallButtonDisabled() {
+      // Backups write no image, so there is nothing to verify.
+      if (this.flash.selectedMethod == 1) return false;
+      // Once something is running this button means Cancel, which must stay
+      // reachable regardless of what the image turned out to be.
+      if (this.state != "IDLE") return false;
+      // null covers both "still checking" and "the check did not answer".
+      // Neither is a pass, and enabling on either is how a truncated image
+      // gets flashed during the second the spinner is up.
+      return this.imageIntegrity !== true;
+    },
     isMagicButtonVisible() {
       if (!this.options.magicmode) return false;
       if (this.selectedMethod.id == 0 && this.selectedRebuildImage) return true;
@@ -382,7 +406,11 @@ export default {
       }
     },
     onSelectedFileChanged() {
-      if (this.$refs.integritychecker && this.selectedLocalImage != []) {
+      // Whatever the previous image checked out as says nothing about this one,
+      // and leaving the old verdict up would leave Install enabled for a
+      // filename nobody has verified yet.
+      this.imageIntegrity = null;
+      if (this.$refs.integritychecker && this.selectedLocalImage) {
         this.$refs.integritychecker.fileSelected(this.selectedLocalImage);
       }
     },
@@ -932,6 +960,17 @@ export default {
       } else if (this.selectedMethod.id != 2) {
         this.selectedMethod = this.availableMethods.find((m) => m.id == 2);
       }
+    },
+  },
+  watch: {
+    // This used to hang off `:item-click="onSelectedFileChanged()"` on the
+    // w-select, which called the method during render rather than passing it as
+    // a handler - so the integrity check re-fired on every re-render of the
+    // page, and the prop itself received the method's undefined return value.
+    // A watcher runs when the selection actually changes, which is also what
+    // keeps the Install button's state from flickering while polling redraws.
+    selectedLocalImage() {
+      this.onSelectedFileChanged();
     },
   },
   created() {
