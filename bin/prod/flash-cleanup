@@ -102,6 +102,18 @@ if [ -f /mnt/emmc/etc/default/armbian-firstrun ]; then
 fi
 
 info "Pre-generating SSH host keys"
+# Delete first, or this generates nothing. `ssh-keygen -A` creates host keys
+# only "if they do not already exist", and the images do ship them - baked into
+# a cached Armbian rootfs, so every board flashed from any image built on that
+# cache got the same key pair. Observed on two boards flashed from
+# rebuild-barebone-891e72c, both presenting
+# SHA256:tADe3k31lQ/ApIZZe6lGD0A3bFrI/argPFJ5aeIlPQo, with a comment of
+# root@0306b8450d0c - a build-container hostname - and an mtime two weeks older
+# than the image itself.
+#
+# The line above makes this worse rather than harmless: it turns off Armbian's
+# own first-boot regeneration, so nothing else would ever have replaced them.
+rm -f /mnt/emmc/etc/ssh/ssh_host_*
 ssh-keygen -A -f /mnt/emmc
 
 cd /

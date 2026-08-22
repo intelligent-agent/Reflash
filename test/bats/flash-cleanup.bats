@@ -44,3 +44,55 @@ line_of() { grep -n "$1" "$SCRIPT" | head -1 | cut -d: -f1; }
   [ "$status" -eq 0 ]
   [ "$output" -eq 1 ]
 }
+
+# Every board flashed from an image built on the same cached Armbian rootfs got
+# the same SSH host keys. `ssh-keygen -A` only generates keys "if they do not
+# already exist", the images do ship them, and flash-cleanup disables Armbian's
+# own first-boot regeneration a few lines earlier - so nothing ever replaced
+# them. Two boards flashed from rebuild-barebone-891e72c both presented
+# SHA256:tADe3k31lQ/ApIZZe6lGD0A3bFrI/argPFJ5aeIlPQo.
+@test "flash-cleanup: removes shipped host keys before pre-generating" {
+  run grep -c '^rm -f /mnt/emmc/etc/ssh/ssh_host_\*$' "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ "$output" -eq 1 ]
+}
+
+@test "flash-cleanup: the removal comes before ssh-keygen -A, not after" {
+  local rm_line keygen_line
+  # Anchored to the commands: both strings also appear in the comment above them.
+  rm_line=$(grep -n '^rm -f /mnt/emmc/etc/ssh/ssh_host_\*$' "$SCRIPT" | cut -d: -f1)
+  keygen_line=$(grep -n '^ssh-keygen -A ' "$SCRIPT" | cut -d: -f1)
+  [ -n "$rm_line" ]
+  [ -n "$keygen_line" ]
+  # Ordering is the whole point: after the generate, it would delete the fresh
+  # keys and leave the board with none.
+  [ "$rm_line" -lt "$keygen_line" ]
+}
+
+# Guards the assumption the fix rests on. If a future ssh-keygen overwrote
+# existing keys, the rm would be redundant - but it does not, and this fails
+# loudly if that ever changes.
+@test "ssh-keygen -A does not replace keys that already exist" {
+  setup_sandbox
+  local dir="$SANDBOX/root"
+  mkdir -p "$dir/etc/ssh"
+
+  ssh-keygen -A -f "$dir" >/dev/null 2>&1
+  local before
+  before=$(ssh-keygen -lf "$dir/etc/ssh/ssh_host_ed25519_key.pub" | awk '{print $2}')
+
+  ssh-keygen -A -f "$dir" >/dev/null 2>&1
+  local after
+  after=$(ssh-keygen -lf "$dir/etc/ssh/ssh_host_ed25519_key.pub" | awk '{print $2}')
+
+  [ "$before" = "$after" ]
+
+  # ...and that deleting first does produce a different key.
+  rm -f "$dir"/etc/ssh/ssh_host_*
+  ssh-keygen -A -f "$dir" >/dev/null 2>&1
+  local regenerated
+  regenerated=$(ssh-keygen -lf "$dir/etc/ssh/ssh_host_ed25519_key.pub" | awk '{print $2}')
+  [ "$regenerated" != "$after" ]
+
+  teardown_sandbox
+}
