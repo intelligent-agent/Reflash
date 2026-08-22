@@ -1372,7 +1372,7 @@ func TestUploadTimeoutOutlastsTheClientRetryBudget(t *testing.T) {
 	// Mirrors client/src/App.vue, uploadLocalFile.
 	const (
 		chunkTimeout   = 20 * time.Second
-		maxRetries     = 20
+		maxRetries     = 6
 		backoffBase    = 2 * time.Second
 		backoffCeiling = 30 * time.Second
 	)

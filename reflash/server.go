@@ -931,28 +931,33 @@ var (
 )
 
 // This has to outlast the client's own patience, not the normal inter-chunk
-// gap. The normal gap is well under a second, but uploadLocalFile is built to
-// ride out the multi-minute dead spells this board's WiFi actually has (#61):
-// 20s per-chunk timeout, 20 retries, exponential backoff capped at 30s. When
-// the network is down the server sees nothing at all during that - the requests
-// never arrive - so the gap it observes is the client's entire retry budget:
+// gap. The normal gap is well under a second, but uploadLocalFile retries to
+// ride out the WiFi dead spells this board actually has (#61): 20s per-chunk
+// timeout, 6 retries, exponential backoff capped at 30s. When the network is
+// down the server sees nothing at all during that - the requests never arrive -
+// so the gap it observes is the client's entire retry budget:
 //
-//	21 attempts x 20s timeout                       = 420s
-//	backoffs 2+4+8+16s then 16 x 30s                = 510s
-//	                                                 ~930s = 15.5 min
+//	7 attempts x 20s timeout          = 140s
+//	backoffs 2+4+8+16+30+30s          =  90s
+//	                                    230s = 3m50s
 //
 // Fire before that and the server kills an upload the client would have
 // recovered, which is strictly worse than the bug being fixed here. After it,
 // the client has already given up and sent upload_cancel, so the watchdog only
 // ever acts when nobody is driving the upload at all - which is the point.
 //
-// The cost of erring long is that an abandoned upload leaves the drive mounted
-// rw for up to this long. Bounded and recoverable, where before it was forever.
+// 5 minutes leaves ~70s of margin over that budget. It was 20 minutes when the
+// client retried 20 times; both came down together, because the number here is
+// a consequence of the client's budget and cannot be lowered on its own.
+//
+// This is now the backstop rather than the first line of defence: the client
+// sends upload_cancel from a pagehide handler, so a refresh or a closed tab is
+// handled at once and only a crash, a kill or a dropped network gets this far.
 //
 // The magic path needs less (300s timeout, no retry) and is covered anyway:
 // its slow chunks are slow inside the handler - blocked on the FIFO or on
 // io.ReadAll - so chunksInFlight holds them.
-var uploadTimeout = 20 * time.Minute
+var uploadTimeout = 5 * time.Minute
 
 // beginChunk admits a chunk only while the upload is still live, and marks it
 // in flight so the watchdog cannot close the destination underneath it.

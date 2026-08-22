@@ -242,6 +242,11 @@ export default {
     return { waveui };
   },
   data: () => ({
+    // True only in the tab that started the upload currently running. `state`
+    // cannot stand in for this: it is refreshed from get_progress, so every
+    // open tab sees UPLOADING, and cancelling on that basis would let closing
+    // an idle spectator tab kill an upload another tab is driving.
+    ownsUpload: false,
     state: "IDLE",
     previousState: "IDLE",
     installFinished: false,
@@ -387,6 +392,15 @@ export default {
     },
     async apiCall(call) {
       var self = this;
+      // Whatever ends the upload also ends this tab's ownership of it, so a
+      // later unload does not fire a cancel at whatever is running by then.
+      if (
+        call == "upload_finish" ||
+        call == "upload_magic_finish" ||
+        call == "upload_cancel"
+      ) {
+        this.ownsUpload = false;
+      }
       await axios.put(`/api/` + call).then(function (response) {
         if (response.data.status == "ERROR") {
           self.$waveui.notify(response.data.error, "error", 0);
@@ -409,6 +423,7 @@ export default {
       if (this.state == "IDLE") {
         this.resetProgressBars();
         this.state = "UPLOADING_MAGIC";
+        this.ownsUpload = true;
         await axios
           .put(`/api/upload_magic_start`, {
             filename: self.file.name,
@@ -504,11 +519,37 @@ export default {
         postChunk();
       }
     },
+    // A refresh or a closed tab used to strand the server in UPLOADING with the
+    // drive still mounted rw, recoverable only by waiting out the server's
+    // watchdog (#118). Tell it on the way out instead, so the common case is
+    // instant rather than a timeout.
+    //
+    // sendBeacon, not axios: the page is being torn down, and a normal XHR or
+    // fetch issued from an unload handler is routinely cancelled mid-flight.
+    // sendBeacon exists for exactly this and is handed to the browser to
+    // deliver after the page is gone.
+    //
+    // "pagehide" rather than "beforeunload": beforeunload is unreliable on
+    // mobile Safari and is ignored entirely for pages restored from the
+    // back/forward cache, and this UI is used from the board's own panel.
+    //
+    // Still best-effort - it cannot fire on a crash, a kill, or the network
+    // dropping - so the server-side watchdog stays as the backstop.
+    cancelUploadOnUnload() {
+      if (!this.ownsUpload) {
+        return;
+      }
+      this.ownsUpload = false;
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon("/api/upload_cancel");
+      }
+    },
     async uploadSelected() {
       let self = this;
       if (this.state == "IDLE") {
         this.resetProgressBars();
         this.state = "UPLOADING";
+        this.ownsUpload = true;
         await axios
           .put(`/api/upload_start`, {
             filename: self.file.name,
@@ -529,11 +570,17 @@ export default {
       // and the server's abandoned-upload watchdog has to outlast that: when
       // the network is down the requests never arrive, so all the server sees
       // is silence, and if it gives up first it kills an upload that was still
-      // being driven. Currently ~15.5 minutes against uploadTimeout's 20.
+      // being driven. ~3m50s here against uploadTimeout's 5 minutes.
       // Lengthening any of these means raising uploadTimeout in server.go -
       // TestUploadTimeoutOutlastsTheClientRetryBudget fails if you do not.
+      //
+      // 6 retries, not the 20 this had originally. 20 meant hanging on for
+      // 15.5 minutes, which is far too long to leave someone watching a frozen
+      // progress bar, and it forced the server to wait even longer than that
+      // before it could conclude anything. Six still rides out a ~3.5 minute
+      // dropout, which covers the WiFi dead spells #61 was about.
       const CHUNK_SIZE = 3 * 1024 * 1024;
-      const MAX_CHUNK_RETRIES = 20;
+      const MAX_CHUNK_RETRIES = 6;
       const CHUNK_TIMEOUT_MS = 20000;
       const RETRY_BACKOFF_MS = 2000;
       const RETRY_BACKOFF_MAX_MS = 30000;
@@ -894,6 +941,10 @@ export default {
     this.getStatus();
     this.checkInternet();
     this.checkOnLoadProgress();
+    window.addEventListener("pagehide", this.cancelUploadOnUnload);
+  },
+  unmounted() {
+    window.removeEventListener("pagehide", this.cancelUploadOnUnload);
   },
 };
 </script>
