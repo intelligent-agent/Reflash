@@ -351,3 +351,71 @@ describe('reconnect watch after a mode switch', () => {
     expect(axios.get.mock.calls.length).toBe(before)
   })
 })
+
+// The cached scan lives in the server's memory, so it is empty after a boot or
+// a service restart. The dialog then opened showing nothing at all, with no
+// clue that "Scan for Networks" was the thing to press.
+describe('scanning automatically when there is nothing cached', () => {
+  it('starts a scan when the cache is empty and the radio is in station mode', async () => {
+    stubStatus({ mode: 'station' }, [])
+    const w = mountDialog(false)
+    await w.setProps({ open: true })
+    await settle(w, 8)
+
+    expect(axios.post).toHaveBeenCalledWith('/api/wifi_start_scan', null, expect.anything())
+  })
+
+  it('leaves a cached list alone rather than rescanning over it', async () => {
+    stubStatus({ mode: 'station' }, [{ SSID: 'Kraakeslottet', signal: '****' }])
+    const w = mountDialog(false)
+    await w.setProps({ open: true })
+    await settle(w, 8)
+
+    expect(axios.post).not.toHaveBeenCalledWith('/api/wifi_start_scan', null, expect.anything())
+    expect(w.vm.availableAPs).toHaveLength(1)
+  })
+
+  // The important one. Scanning stops the AP for ~5s, and a page loaded over
+  // that AP would lose the connection it is being viewed through - for a list
+  // nobody asked for. The button is still there if the user wants it.
+  it('does not scan on its own while hosting the hotspot', async () => {
+    stubStatus({ mode: 'ap' }, [])
+    const w = mountDialog(false)
+    await w.setProps({ open: true })
+    await settle(w, 8)
+
+    expect(axios.post).not.toHaveBeenCalledWith('/api/wifi_start_scan', null, expect.anything())
+  })
+
+  it('does not scan with no adapter fitted', async () => {
+    stubStatus({ present: false, mode: 'station' }, [])
+    const w = mountDialog(false)
+    await w.setProps({ open: true })
+    await settle(w, 8)
+
+    expect(axios.post).not.toHaveBeenCalledWith('/api/wifi_start_scan', null, expect.anything())
+  })
+})
+
+// pollScanResults reschedules itself on a 204 and again on every error, so it
+// needs the same bound as the reconnect watch (#115). This mattered less when
+// only the Scan button could start it; an automatic scan on open means anyone
+// who opens the WiFi page and closes it again would leave one running.
+describe('the scan poll stops with the dialog', () => {
+  beforeEach(() => vi.useFakeTimers())
+
+  it('stops polling once the dialog is closed', async () => {
+    stubStatus({ mode: 'station' }, [])
+    const w = mountDialog(false)
+    await w.setProps({ open: true })
+    await settle(w, 8)
+    expect(axios.post).toHaveBeenCalledWith('/api/wifi_start_scan', null, expect.anything())
+
+    await w.setProps({ open: false })
+    const before = axios.get.mock.calls.length
+    await vi.advanceTimersByTimeAsync(10000)
+
+    expect(axios.get.mock.calls.length).toBe(before)
+    expect(w.vm.progressVisible).toBe(false)
+  })
+})

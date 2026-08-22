@@ -203,6 +203,16 @@ export default {
       }
     },
     async pollScanResults() {
+      // Bounded by the dialog being open, like the reconnect watch (#115).
+      // This reschedules itself on a 204 and again on every error, so a scan
+      // still in flight when the dialog closes would poll the board forever.
+      // Previously that needed the user to press Scan and then close mid-scan;
+      // now that opening the dialog can start one by itself, it would happen to
+      // anyone who opened the WiFi page and closed it again.
+      if (!this.open) {
+        this.progressVisible = false;
+        return;
+      }
       try {
         const res = await axios.get('/api/wifi_poll_scan', { timeout: REQUEST_TIMEOUT });
         if (res.status === 204) {
@@ -327,6 +337,33 @@ export default {
     // makes and kept reporting the dongle as missing mid-scan, collapsing the
     // dialog. A scan cannot add or remove hardware, so there is nothing here a
     // timer would have caught.
+    // Both still go out together - they are independent, and the dialog should
+    // not take two round trips to populate. The join is only so that
+    // autoScanIfEmpty can see the radio mode and the cached list, which come
+    // from different requests, before deciding whether to scan.
+    async openDialog() {
+      await Promise.all([this.getWifiStatus(), this.restoreState()]);
+      this.autoScanIfEmpty();
+    },
+    // The cached scan lives in the server's memory, so it is empty after a
+    // boot or a service restart - and the dialog then opened with an empty
+    // list and no indication that pressing "Scan for Networks" was what you
+    // were supposed to do. Start one automatically when there is nothing to
+    // show.
+    //
+    // Deliberately not in AP mode. One radio cannot host an AP and scan at the
+    // same time, so wifi-scan stops the hotspot for ~5s - and if this page was
+    // loaded over that hotspot, an automatic scan would drop the connection it
+    // is being viewed through, for a list nobody asked for. The button stays,
+    // so it is still a choice there. In station mode wifi-scan leaves the mode
+    // alone and the existing connection is unaffected.
+    autoScanIfEmpty() {
+      if (this.availableAPs.length > 0) return;
+      if (this.busy) return;
+      if (!this.isWifiPresent) return;
+      if (this.wifi.mode !== "station") return;
+      this.startWifiScan();
+    },
     async getWifiStatus() {
       try {
         const response = await axios.get('/api/get_status', { timeout: REQUEST_TIMEOUT });
@@ -347,9 +384,8 @@ export default {
       handler(is_open) {
         if (is_open) {
           this.statusMessage = "";
-          this.getWifiStatus();
-          this.restoreState();
           this.dialog.show = true;
+          this.openDialog();
         } else {
           // The watch is bounded by the dialog being open; without this it
           // would keep polling an invisible dialog forever (#115).
