@@ -1484,3 +1484,90 @@ func TestConnectWifiStoresCredentialsOnlyOnSuccess(t *testing.T) {
 		}
 	})
 }
+
+// Reflash has no authentication, so anything in these responses is readable by
+// anyone who can reach port 80 - and in hotspot mode, by anyone in radio range
+// of an AP whose passphrase is fixed and documented (#125).
+func TestOptionsResponsesDoNotCarryThePassphrase(t *testing.T) {
+	setupTest(t)
+	options = &Options{
+		Darkmode:       true,
+		RebootWhenDone: true,
+		EnableSsh:      true,
+		ScreenRotation: 270,
+		WifiSSID:       "Kraakeslottet_5GHz",
+		WifiPSK:        "hunter2hunter2",
+	}
+
+	check := func(t *testing.T, what string, body []byte) {
+		t.Helper()
+		if strings.Contains(string(body), "hunter2hunter2") {
+			t.Errorf("%s leaked the passphrase: %s", what, body)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("%s: %v (body=%q)", what, err, body)
+		}
+		if _, present := got["PSK"]; present {
+			t.Errorf("%s still has a PSK key", what)
+		}
+		// Everything else must survive: the UI reads its whole state from here,
+		// and the SSID is what preselects the network in the WiFi dialog.
+		if got["SSID"] != "Kraakeslottet_5GHz" {
+			t.Errorf("%s dropped the SSID: %v", what, got["SSID"])
+		}
+		for _, k := range []string{"darkmode", "rebootWhenDone", "enableSsh", "magicmode", "screenRotation"} {
+			if _, present := got[k]; !present {
+				t.Errorf("%s dropped %q", what, k)
+			}
+		}
+	}
+
+	t.Run("get_options", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		getOptions(rr, httptest.NewRequest("GET", "/api/get_options", nil))
+		check(t, "get_options", rr.Body.Bytes())
+	})
+
+	// The echo from a set is the same disclosure by another route, and it is
+	// the one a browser hits on every toggle.
+	t.Run("set_options echo", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		setOptions(rr, httptest.NewRequest("POST", "/api/set_options",
+			bytes.NewReader([]byte(`{"screenRotation":90}`))))
+		check(t, "set_options", rr.Body.Bytes())
+	})
+
+	// Only the way back is closed. startConnectWifi stores the passphrase, the
+	// installer copies it into flashed images, and reflash-connect restores it
+	// through set_options - so it still has to be settable and still has to
+	// survive a redacted round trip.
+	t.Run("the passphrase is still stored and still settable", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		setOptions(rr, httptest.NewRequest("POST", "/api/set_options",
+			bytes.NewReader([]byte(`{"PSK":"a-new-passphrase"}`))))
+
+		optionsLock.Lock()
+		defer optionsLock.Unlock()
+		if options.WifiPSK != "a-new-passphrase" {
+			t.Errorf("WifiPSK = %q, want it stored", options.WifiPSK)
+		}
+	})
+
+	// A partial post must not blank the passphrase just because the response it
+	// was built from never carried one (#124's fix is what makes this safe).
+	t.Run("an unrelated toggle leaves the stored passphrase alone", func(t *testing.T) {
+		optionsLock.Lock()
+		options.WifiPSK = "still-here"
+		optionsLock.Unlock()
+
+		setOptions(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/set_options",
+			bytes.NewReader([]byte(`{"darkmode":false}`))))
+
+		optionsLock.Lock()
+		defer optionsLock.Unlock()
+		if options.WifiPSK != "still-here" {
+			t.Errorf("WifiPSK = %q, want it untouched", options.WifiPSK)
+		}
+	})
+}

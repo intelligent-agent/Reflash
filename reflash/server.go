@@ -674,14 +674,54 @@ func pollConnectWifi(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// writeOptions sends the options with the WiFi passphrase removed. Both
+// handlers used to encode the struct directly, which published the passphrase
+// in plaintext to anything that could reach port 80 - and Reflash has no
+// authentication, so that is one unauthenticated GET (#125).
+//
+// The sharp case is hotspot mode: the Recore AP has a fixed, documented
+// passphrase, so anyone in radio range could join it and read the passphrase of
+// the *home* network off 192.168.50.1.
+//
+// Redacted by key rather than by a parallel "public" struct on purpose. A
+// second struct has to be kept in step with Options by hand, and the failure
+// mode when someone forgets is that a newly added option silently never
+// reaches the UI. Deleting one known key cannot drift: new fields appear
+// automatically and PSK never does.
+//
+// Nothing in the client ever read it - PSK appears nowhere in client/src - so
+// this removes a field that existed only to leak. Setting it still works; it is
+// only the way back that closes.
+func writeOptions(w http.ResponseWriter) {
+	optionsLock.Lock()
+	raw, err := json.Marshal(options)
+	optionsLock.Unlock()
+	if err != nil {
+		logError("Could not encode options: " + err.Error())
+		http.Error(w, "Could not encode options", http.StatusInternalServerError)
+		return
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		logError("Could not redact options: " + err.Error())
+		http.Error(w, "Could not encode options", http.StatusInternalServerError)
+		return
+	}
+	delete(fields, "PSK")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(fields)
+}
+
 func getOptions(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(options)
+	writeOptions(w)
 }
 
 func setOptions(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	lockSetOptions(reqBody)
-	json.NewEncoder(w).Encode(options)
+	writeOptions(w)
 }
 
 func updateDisplay() {
