@@ -55,6 +55,59 @@ load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
 
+# Raise the DRAM rail on boards that fit 1.5V memory.
+#
+# Reflash ships ONE universal DTB (model "Recore-all") because the stick goes
+# into any revision, so it cannot carry a per-board value. That DTB pins
+# vcc-dram at 1.36V, which is right for A7/A8/B0 - Samsung K4B4G1646E-BYMA,
+# DDR3L at 1.35V - and wrong for A5/A6, which fit K4B4G1646E-BCMA: DDR3 at
+# 1.5V nominal, minimum 1.425V. Running those 65mV under their own minimum
+# corrupts memory under load, and Reflash's whole job is writing an OS image.
+#
+# The revision is not guessed from a serial number: the eMMC already holds the
+# answer. flash-cleanup points /boot/dtb/allwinner/sun50i-a64-recore.dtb at the
+# per-revision DTB, so reading that symlink's model property is the same fact
+# the installed system boots with, and cannot drift from it.
+#
+# Deliberately fails safe. A blank, half-flashed or unreadable eMMC - exactly
+# the boards Reflash exists to fix - leaves emmcmodel empty and the rail at
+# 1.36V. Under-volting an A5 makes it marginal; over-volting DDR3L on an A7 is
+# out of spec, so the default must be the low one.
+setenv dram_probe "0x46000000"
+setenv emmcmodel
+setenv dram_uv
+if mmc dev 1; then
+	if load mmc 1:1 ${dram_probe} /dtb/allwinner/sun50i-a64-recore.dtb; then
+		fdt addr ${dram_probe}
+		fdt get value emmcmodel / model
+	fi
+fi
+# Back to our own DTB before anything else touches the working FDT - the
+# fixup script below and every fdt command operate on whatever was set last.
+fdt addr ${fdt_addr_r}
+
+if test "${emmcmodel}" = "Recore-A5"; then setenv dram_uv "0x16e360"; fi
+if test "${emmcmodel}" = "Recore-A6"; then setenv dram_uv "0x16e360"; fi
+
+if test -n "${dram_uv}"; then
+	setenv dram_node "/soc/rsb@1f03400/pmic@3a3/regulators/dcdc5"
+	fdt set ${dram_node} regulator-min-microvolt <${dram_uv}>
+	fdt set ${dram_node} regulator-max-microvolt <${dram_uv}>
+	# Read back rather than trust the write: the node path is hardcoded, and
+	# a silent miss here boots an A5 at 1.36V looking exactly like success.
+	fdt get value dram_check ${dram_node} regulator-min-microvolt
+	# itest, not test: fdt get value returns a padded uppercase word
+	# (0x0016E360), so a string compare against 0x16e360 never matches and
+	# would report a warning on every successful boot.
+	if itest ${dram_check} -eq ${dram_uv}; then
+		echo "DRAM rail raised to 1.5V for ${emmcmodel}"
+	else
+		echo "WARNING: could not raise DRAM rail for ${emmcmodel} (got ${dram_check})"
+	fi
+else
+	echo "DRAM rail left at 1.36V (eMMC model: ${emmcmodel})"
+fi
+
 if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/allwinner/overlay/${overlay_prefix}-fixup.scr; then
 	echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
 	source ${load_addr}
