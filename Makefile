@@ -1,7 +1,11 @@
 REMOTE=recore.local
 
+# Two sources on purpose: bin/prod is what the Go server shells out to, and
+# rootfs_files/rootfs/usr/local/bin is what systemd and udev run (today just
+# usb-gadget-init.sh). Both land in the same directory on the board, so a
+# manual sync has to cover both or it silently ships the older half.
 upload-bins:
-	scp bin/prod/* debian@recore.local:/usr/local/bin
+	scp bin/prod/* rootfs_files/rootfs/usr/local/bin/* debian@$(REMOTE):/usr/local/bin
 
 # Run the bash-helper test suite (bats-core). Install with: apt-get install bats
 test-bats:

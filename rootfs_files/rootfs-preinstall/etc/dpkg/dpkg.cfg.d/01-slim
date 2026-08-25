@@ -1,0 +1,74 @@
+# Never unpack things this image has no use for. Done as dpkg excludes rather
+# than deleting afterwards so the files are never written at all - that saves
+# build time as well as space, and it also applies to the kernel package.
+#
+# The kernel package is by far the biggest thing in this image (208MB of
+# ~366MB installed), and the initramfs is unpacked into a tmpfs that the
+# kernel caps at half of RAM (~367MB on this 1GB board). Without this the
+# rootfs boots essentially 100% full, and anything that writes - logging,
+# ssh host keys, even login - fails with ENOSPC.
+path-exclude /usr/share/doc/*
+path-include /usr/share/doc/*/copyright
+path-exclude /usr/share/man/*
+path-exclude /usr/share/info/*
+path-exclude /usr/share/locale/*
+path-exclude /usr/share/lintian/*
+
+# Sound: this image never plays audio.
+path-exclude /lib/modules/*/kernel/sound/*
+path-exclude /lib/modules/*/kernel/drivers/media/*
+
+# Firewalling/QoS/bluetooth: not used while flashing.
+#
+# net/ipv4/netfilter and net/ipv6/netfilter have to go too, not just
+# net/netfilter: x_tables.ko lives in the latter, and leaving ip_tables.ko
+# behind without it means every boot logs
+#   ip_tables: Unknown symbol xt_compat_unlock (err -2)
+# for a module that then fails to load anyway.
+path-exclude /lib/modules/*/kernel/net/netfilter/*
+path-exclude /lib/modules/*/kernel/net/ipv4/netfilter/*
+path-exclude /lib/modules/*/kernel/net/ipv6/netfilter/*
+path-exclude /lib/modules/*/kernel/net/bluetooth/*
+path-exclude /lib/modules/*/kernel/net/sched/*
+
+# Filesystems we never mount. ext4/vfat/fuse/nls are deliberately kept:
+# ext4 for the USB and eMMC partitions, vfat+nls for FAT boot partitions.
+path-exclude /lib/modules/*/kernel/fs/xfs/*
+path-exclude /lib/modules/*/kernel/fs/btrfs/*
+path-exclude /lib/modules/*/kernel/fs/f2fs/*
+path-exclude /lib/modules/*/kernel/fs/jfs/*
+path-exclude /lib/modules/*/kernel/fs/ocfs2/*
+path-exclude /lib/modules/*/kernel/fs/gfs2/*
+path-exclude /lib/modules/*/kernel/fs/nfs/*
+path-exclude /lib/modules/*/kernel/fs/nfsd/*
+path-exclude /lib/modules/*/kernel/fs/smb/*
+path-exclude /lib/modules/*/kernel/fs/ceph/*
+path-exclude /lib/modules/*/kernel/net/sunrpc/*
+
+# iSCSI target (exporting storage over the network). Note this is NOT
+# the USB drive's path - that is usb-storage/uas on top of drivers/scsi,
+# both of which are kept.
+path-exclude /lib/modules/*/kernel/drivers/target/*
+path-exclude /lib/modules/*/kernel/drivers/infiniband/*
+
+# Firmware: default-deny, then allow only what a USB wifi dongle needs.
+# Note the path spelling - firmware packages record ./usr/lib/firmware
+# while the kernel package records ./lib/modules, so the two need
+# different prefixes and an exclude written against the wrong one
+# silently matches nothing.
+#
+# Taken whole these packages are 236MB; the USB-dongle parts are ~15MB.
+# The bulk is PCIe/SDIO cards, bluetooth, ethernet NICs and audio
+# codecs, none of which exist on this board.
+#
+# Adding support for another dongle family = add a path-include here.
+path-exclude /usr/lib/firmware/*
+path-include /usr/lib/firmware/rtw88/*
+path-include /usr/lib/firmware/rtlwifi/*
+path-include /usr/lib/firmware/ath9k_htc/*
+path-include /usr/lib/firmware/mediatek/mt76*
+path-include /usr/lib/firmware/mediatek/mt7601u.bin
+path-include /usr/lib/firmware/rt2*.bin
+path-include /usr/lib/firmware/rt3*.bin
+path-include /usr/lib/firmware/rt73.bin
+path-include /usr/lib/firmware/regulatory.db*

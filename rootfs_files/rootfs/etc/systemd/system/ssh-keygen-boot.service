@@ -1,0 +1,26 @@
+# This board's root fs runs from initrd and doesn't persist writes across
+# reboots, so keys generated straight into /etc/ssh would be regenerated (and
+# thus change) every boot. ssh-keygen-boot restores/saves them against /mnt/usb
+# instead - the one thing that actually persists - so a given board keeps a
+# stable identity while still not sharing a key with every other image/board
+# (#80). The keys openssh-server generated at build time are deleted in the
+# chroot, which is what leaves the ConditionPathExists below unsatisfied on a
+# fresh board.
+[Unit]
+Description=Restore or generate persistent SSH host keys from USB storage (see #80)
+# Only Before=ssh.service. Reflash no longer needs to be ordered after this:
+# it starts immediately, draws, and serves, and waits for the drive in a
+# goroutine instead. What it waits for is this unit finishing - see usb-ready -
+# because Reflash mounts /mnt/usb and then holds it for the life of the
+# process, while this unit needs it read-write. Two parties cannot share a
+# mount when one holds it indefinitely, so Reflash takes it last and keeps it.
+Before=ssh.service
+ConditionPathExists=!/etc/ssh/ssh_host_rsa_key
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ssh-keygen-boot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
