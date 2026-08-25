@@ -34,6 +34,13 @@ sudo cp rootfs_files/debs/${KERNEL_DEB} "${ROOTFSDIR}"/initrd
 
 sudo bash -c "echo recore > ${ROOTFSDIR}/initrd/etc/hostname"
 
+# apt/dpkg policy, copied in before anything installs. These four have to be in
+# place before the second stage and before apt-get update below - dpkg reads
+# 01-slim as it unpacks, so writing it later would mean the base system and
+# whatever apt pulled in were unpacked whole. Everything else the image needs
+# lives in rootfs_files/rootfs and is copied in after the chroot; see there.
+sudo cp -a rootfs_files/rootfs-preinstall/. "${ROOTFSDIR}"/initrd/
+
 sudo chroot "${ROOTFSDIR}"/initrd /bin/bash <<ENDOFDEB
 export DEBIAN_FRONTEND="noninteractive"
 export TERM=xterm-color
@@ -44,102 +51,6 @@ mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev || mount --bind /dev /dev
 mount -t devpts pts /dev/pts
-
-cat <<EOF > /etc/apt/apt.conf.d/01norecommend
-APT::Install-Recommends "0";
-APT::Install-Suggests "0";
-EOF
-
-cat <<EOF > /etc/apt/apt.conf.d/80-retries
-Acquire::Retries "3";
-Acquire::http::Timeout "10";
-Acquire::https::Timeout "10";
-EOF
-
-cat <<EOF > /usr/sbin/policy-rc.d
-#!/bin/sh
-exit 101
-EOF
-
-chmod +x /usr/sbin/policy-rc.d
-
-# Never unpack things this image has no use for. Done as dpkg excludes
-# rather than deleting afterwards so the files are never written at all -
-# that saves build time as well as space, and it also applies to the
-# kernel package installed further down.
-#
-# The kernel package is by far the biggest thing in this image (208MB of
-# ~366MB installed), and the initramfs is unpacked into a tmpfs that the
-# kernel caps at half of RAM (~367MB on this 1GB board). Without this the
-# rootfs boots essentially 100% full, and anything that writes - logging,
-# ssh host keys, even login - fails with ENOSPC.
-cat <<EOF > /etc/dpkg/dpkg.cfg.d/01-slim
-path-exclude /usr/share/doc/*
-path-include /usr/share/doc/*/copyright
-path-exclude /usr/share/man/*
-path-exclude /usr/share/info/*
-path-exclude /usr/share/locale/*
-path-exclude /usr/share/lintian/*
-
-# Sound: this image never plays audio.
-path-exclude /lib/modules/*/kernel/sound/*
-path-exclude /lib/modules/*/kernel/drivers/media/*
-
-# Firewalling/QoS/bluetooth: not used while flashing.
-#
-# net/ipv4/netfilter and net/ipv6/netfilter have to go too, not just
-# net/netfilter: x_tables.ko lives in the latter, and leaving ip_tables.ko
-# behind without it means every boot logs
-#   ip_tables: Unknown symbol xt_compat_unlock (err -2)
-# for a module that then fails to load anyway.
-path-exclude /lib/modules/*/kernel/net/netfilter/*
-path-exclude /lib/modules/*/kernel/net/ipv4/netfilter/*
-path-exclude /lib/modules/*/kernel/net/ipv6/netfilter/*
-path-exclude /lib/modules/*/kernel/net/bluetooth/*
-path-exclude /lib/modules/*/kernel/net/sched/*
-
-# Filesystems we never mount. ext4/vfat/fuse/nls are deliberately kept:
-# ext4 for the USB and eMMC partitions, vfat+nls for FAT boot partitions.
-path-exclude /lib/modules/*/kernel/fs/xfs/*
-path-exclude /lib/modules/*/kernel/fs/btrfs/*
-path-exclude /lib/modules/*/kernel/fs/f2fs/*
-path-exclude /lib/modules/*/kernel/fs/jfs/*
-path-exclude /lib/modules/*/kernel/fs/ocfs2/*
-path-exclude /lib/modules/*/kernel/fs/gfs2/*
-path-exclude /lib/modules/*/kernel/fs/nfs/*
-path-exclude /lib/modules/*/kernel/fs/nfsd/*
-path-exclude /lib/modules/*/kernel/fs/smb/*
-path-exclude /lib/modules/*/kernel/fs/ceph/*
-path-exclude /lib/modules/*/kernel/net/sunrpc/*
-
-# iSCSI target (exporting storage over the network). Note this is NOT
-# the USB drive's path - that is usb-storage/uas on top of drivers/scsi,
-# both of which are kept.
-path-exclude /lib/modules/*/kernel/drivers/target/*
-path-exclude /lib/modules/*/kernel/drivers/infiniband/*
-
-# Firmware: default-deny, then allow only what a USB wifi dongle needs.
-# Note the path spelling - firmware packages record ./usr/lib/firmware
-# while the kernel package records ./lib/modules, so the two need
-# different prefixes and an exclude written against the wrong one
-# silently matches nothing.
-#
-# Taken whole these packages are 236MB; the USB-dongle parts are ~15MB.
-# The bulk is PCIe/SDIO cards, bluetooth, ethernet NICs and audio
-# codecs, none of which exist on this board.
-#
-# Adding support for another dongle family = add a path-include here.
-path-exclude /usr/lib/firmware/*
-path-include /usr/lib/firmware/rtw88/*
-path-include /usr/lib/firmware/rtlwifi/*
-path-include /usr/lib/firmware/ath9k_htc/*
-path-include /usr/lib/firmware/mediatek/mt76*
-path-include /usr/lib/firmware/mediatek/mt7601u.bin
-path-include /usr/lib/firmware/rt2*.bin
-path-include /usr/lib/firmware/rt3*.bin
-path-include /usr/lib/firmware/rt73.bin
-path-include /usr/lib/firmware/regulatory.db*
-EOF
 
 # firmware-* live in non-free-firmware, which debootstrap does not
 # enable. Without them most wifi dongles fail at probe with "Direct
@@ -253,66 +164,12 @@ echo "debian ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/debian
 echo 'debian:temppwd' | chpasswd
 echo 'root:temppwd' | chpasswd
 
-cat <<EOF > /etc/udev/rules.d/99-recore-otg.rules
-# Reflash boots a universal dr_mode=peripheral DTB (model "Recore-all") with no
-# Type-C role-switch, so a usb_role role==device event never fires. Bring the
-# gadget up when the USB device controller (UDC) appears instead — this works on
-# every Recore revision regardless of DTB.
-SUBSYSTEM=="udc", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-gadget-setup.service"
-
-# A login getty on ttyGS0 (host: /dev/ttyACM0). Without one there is no console
-# a user can reach without opening the case: Reflash owns the framebuffer so
-# tty1 has no getty, and SSH needs a network that a board with failed WiFi setup
-# does not have. That left only the UART header - exactly when a console is most
-# needed. The Reflash control protocol has its own ACM function on ttyGS1
-# (host: /dev/ttyACM1); a getty and the protocol cannot share one tty.
-KERNEL=="ttyGS0", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="serial-getty@ttyGS0.service"
-EOF
-
-cat <<EOF > /etc/udev/rules.d/99-recore-rps.rules
-# Spread WiFi receive processing off cpu0. Without this, everything about an
-# inbound transfer happens on cpu0 - the EHCI interrupt, the rtw88 USB RX path
-# and the whole IP/TCP stack all run in softirq on that one core, which sat at
-# 73% softirq while receiving a mere 1.2 MB/s. That, not the radio and not the
-# USB drive, is what capped image uploads at ~1.5 MB/s.
-#
-# Measured on a Recore A8 with an RTL8821CU dongle: receive went from 1.0 MB/s
-# to 3.3 MB/s, and a real 1.2GB image upload from ~13 minutes to ~8. See #119.
-#
-# Mask "e" is cpus 1-3, leaving cpu0 for the driver itself. Do not also pin the
-# EHCI interrupt to one of those cores - that was measured and it is worse, as
-# the driver then competes with the stack for the same cpu.
-#
-# This has to run on hotplug rather than once at boot: rps_cpus lives on the
-# netdev, so it resets whenever the dongle is plugged in or the interface is
-# recreated. Only wlan* is set here - ethernet is native (dwmac-sun8i), does
-# not go through EHCI, and has not been measured.
-SUBSYSTEM=="net", ACTION=="add", KERNEL=="wlan*", RUN+="/bin/sh -c 'echo e > /sys/class/net/%k/queues/rx-0/rps_cpus'"
-EOF
-
-# usb-gadget-init.sh is not written here any more: it lives in bin/prod and is
-# installed with the other helpers below. It used to be a heredoc nested inside
-# the unquoted ENDOFDEB block, so every dollar sign and backtick in it had to be
-# backslash-escaped to survive the outer expansion - and it was then silently
-# deleted by the rm -rf that rebuilds /usr/local/bin further down, so the gadget
-# failed to start on every image built after that change.
-#
-# Note the wording above: this comment is itself inside that unquoted heredoc,
-# so writing either character literally here is a build failure, not a style
-# point. It was, once.
-
-cat <<EOF > /etc/systemd/system/usb-gadget-setup.service
-[Unit]
-Description=USB ConfigFS Gadget Manager
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/usb-gadget-init.sh start
-ExecStop=/usr/local/bin/usb-gadget-init.sh stop
-RemainAfterExit=yes
-
-[Install]
-EOF
+# No file is written from inside this chroot any more - see the comment above
+# the rootfs_files/rootfs copy below for why. Note the constraint that used to
+# apply here, in case anything is ever added back: this here-doc is unquoted, so
+# a nested one had to backslash-escape every dollar sign and backtick to survive
+# the outer expansion, and getting that wrong produced an empty case pattern and
+# an unrolled for-loop list in the gadget script rather than an error.
 
 # Installing openssh-server generated SSH host keys as a side effect - baked
 # into this one build, they'd be identical across every image and every
@@ -340,20 +197,9 @@ rm -rf /lib/udev/hwdb.d/*
 rm -rf /var/log/apt /var/log/dpkg.log /var/log/bootstrap.log \
        /var/log/alternatives.log /var/log/faillog /var/log/lastlog
 
-# journald's default is Storage=auto, which writes persistently if
-# /var/log/journal exists and volatile (/run) otherwise. This root fs is
-# a RAM-backed initramfs capped at half of RAM, while /run is a separate
-# and much roomier tmpfs - so the journal belongs there. It already ends
-# up in /run today only because that directory happens to be empty; make
-# it explicit so a future package cannot silently flip the journal onto
-# the space-constrained rootfs.
+# The directory apt just created is what would make journald pick persistent
+# storage; the drop-in that pins it volatile is in rootfs_files/rootfs.
 rm -rf /var/log/journal
-mkdir -p /etc/systemd/journald.conf.d
-cat <<EOF > /etc/systemd/journald.conf.d/volatile.conf
-[Journal]
-Storage=volatile
-RuntimeMaxUse=16M
-EOF
 
 # Report what actually landed, so a mis-typed path-exclude shows up in
 # the build log instead of silently shipping the full tree.
@@ -438,206 +284,6 @@ esac
 
 ENDOFDEB
 
-# iwd owns wlan0's addressing, and networkd owns eth0's. Previously both ran a
-# DHCP client on wlan0, which gave it two default routes - and iwd's, at
-# RoutePriorityOffset 300 + ifindex = 304, outranked the 1024 networkd gives
-# eth0. So a board with a cable plugged in pushed a 1.2GB image over WiFi
-# instead: measured at 1.37 MB/s on wlan0 against 543 B/s on eth0 (#112).
-#
-# iwd rather than networkd owns wlan0 because the hotspot depends on it: the AP
-# profile below carries the [IPv4] block that gives 192.168.50.1, and iwd only
-# applies that - and only runs its AP DHCP server - with network configuration
-# enabled. Turning it off to let networkd own the interface would take out the
-# fallback AP, which is how a user reaches a board that has no credentials yet.
-cat <<EOF > "${ROOTFSDIR}"/initrd/etc/iwd/main.conf
-[General]
-EnableNetworkConfiguration=true
-
-[Network]
-# Above networkd's default of 1024 so wired always wins. iwd adds the interface
-# index to this, so the route lands at 2000-something.
-RoutePriorityOffset=2000
-EOF
-
-cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/20-wired.network
-[Match]
-Name=eth0
-
-[Network]
-DHCP=yes
-MulticastDNS=yes
-
-[DHCPv4]
-# Says "prefer wired" outright rather than relying on the default metric
-# happening to be lower than whatever iwd picks.
-RouteMetric=100
-EOF
-
-# Deliberately no .network file for wlan0. There used to be one carrying
-# DHCP=no + MulticastDNS=yes, on the theory that matching the interface without
-# a DHCP client was inert and only bought mDNS. It is not inert: any match makes
-# networkd *manage* the link, and a managed link refuses iwd's addressing. iwd
-# associated fine and then never got an IPv4 address, so wifi-connect timed out
-# after 30s and fell back to the hotspot - every time, on any network.
-#
-# What it looked like on the board: `networkctl status wlan0` reporting
-# "routable (configured)" with only an IPv6 address (DHCP=no still leaves
-# IPv6AcceptRA on, so networkd quietly took the v6 side), no IPv4, and iwd
-# logging "Failed to modify the DNS entries ... Link wlan0 is managed".
-#
-# mDNS is not lost with the file gone: the resolved drop-in below sets
-# MulticastDNS=yes globally, and `resolvectl mdns` shows it on for wlan0.
-
-# The other half of "two interfaces on one subnet" (#112): ARP flux. By default
-# Linux answers an ARP request for any local address on any interface, so the
-# board replied to "who has <wlan0 ip>" with eth0's MAC and vice versa. Peers
-# cached the addresses against the wrong interface, and the wired address then
-# accepted ping but not TCP - so a UI listing both IPs offered one that did not
-# work. arp_ignore=1 only answers for addresses on the receiving interface, and
-# arp_announce=2 picks a source address from that same interface.
-#
-# Not a sysctl.d nicety: eth0 has no MAC in the device tree or efuse, so it
-# takes a locally-administered one that changes per boot, which makes this
-# impossible to debug from a stale ARP table.
-mkdir -p "${ROOTFSDIR}"/initrd/etc/sysctl.d
-cat <<EOF > "${ROOTFSDIR}"/initrd/etc/sysctl.d/10-arp-flux.conf
-net.ipv4.conf.all.arp_ignore = 1
-net.ipv4.conf.all.arp_announce = 2
-EOF
-
-# The WiFi driver allocates a receive skb from softirq context, which is
-# GFP_ATOMIC: it cannot sleep and cannot reclaim, so it either finds a free
-# page above the watermark or drops the packet. Receiving a 1.2GB image on a
-# 1GB board pushed free memory to 1732kB against a min watermark of 3724kB and
-# it started failing in bursts:
-#
-#   rtw_usb_rx_handler [rtw88_usb] <- __alloc_skb <- warn_alloc
-#   SLUB: Unable to allocate memory ... gfp=0x820(GFP_ATOMIC)
-#
-# There was no shortage of reclaimable memory - 240MB of page cache was sitting
-# right there, and dirty was only 3MB, so writeback was keeping up. The problem
-# is purely that none of it is reachable from atomic context. That is what this
-# knob is for: kswapd keeps a bigger cushion so bursts have somewhere to land.
-#
-# 3725 was simply the kernel's default for this RAM size. 16MB of 937MB is a
-# cheap trade against dropped frames on the one link the whole product depends
-# on, and this rootfs is a tmpfs holding ~300MB, so the pressure is structural
-# rather than a one-off.
-cat <<EOF > "${ROOTFSDIR}"/initrd/etc/sysctl.d/20-atomic-alloc-headroom.conf
-vm.min_free_kbytes = 16384
-EOF
-
-# Ask the watchdog for a timeout it can actually do (Rebuild #82).
-#
-# systemd's default RebootWatchdogSec is 10min, and sunxi-wdt maxes out at 16s
-# (/sys/class/watchdog/watchdog0/max_timeout). The driver returns EINVAL,
-# systemd logs one line and continues with the watchdog NEVER ARMED:
-#
-#   systemd-shutdown[1]: Failed to set watchdog hardware timeout to 10min:
-#   Invalid argument
-#
-# Measured on this image: 10min requested against a 16s ceiling, confirmed with
-# systemctl show -p RebootWatchdogUSec. 15s leaves headroom over a shutdown
-# measured at 6-8s and stays under the ceiling - go past 16 and it silently
-# reverts to being unarmed, which is the failure mode this replaces.
-#
-# RuntimeWatchdogSec is deliberately left off: it is petted continuously so the
-# ceiling would not bite, but arming it means a board that stalls for 16s
-# resets itself, and Reflash stalls for exactly that kind of reason while
-# waiting on a slow USB drive.
-mkdir -p "${ROOTFSDIR}"/initrd/etc/systemd/system.conf.d
-cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/system.conf.d/10-watchdog.conf
-[Manager]
-RebootWatchdogSec=15s
-EOF
-
-mkdir -p "${ROOTFSDIR}"/initrd/var/lib/iwd/ap/
-cat <<EOF > "${ROOTFSDIR}"/initrd/var/lib/iwd/ap/Recore.ap
-[Security]
-Passphrase=12345678
-
-[IPv4]
-Address=192.168.50.1
-Gateway=192.168.50.1
-Netmask=255.255.255.0
-EOF
-
-cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/network/10-wlan-generic.link
-[Match]
-Type=wlan
-
-[Link]
-Name=wlan0
-NamePolicy=keep kernel
-EOF
-
-systemctl enable iwd --root="${ROOTFSDIR}"/initrd
-
-mkdir -p "${ROOTFSDIR}"/initrd/etc/systemd/resolved.conf.d/
-cat <<EOF > "${ROOTFSDIR}"/initrd/etc/systemd/resolved.conf.d/mdns.conf
-[Resolve]
-MulticastDNS=yes
-EOF
-
-# This board's root fs runs from initrd and doesn't persist writes across
-# reboots, so keys generated straight into /etc/ssh would be regenerated
-# (and thus change) every boot. ssh-keygen-boot restores/saves them against
-# /mnt/usb instead - the one thing that actually persists - so a given board
-# keeps a stable identity while still not sharing a key with every other
-# image/board (#80). Ordered before both ssh.service and reflash.service so
-# it has /mnt/usb to itself - mount-unmount-usb has no locking of its own.
-cat <<EOF >"${ROOTFSDIR}"/initrd/etc/systemd/system/ssh-keygen-boot.service
-[Unit]
-Description=Restore or generate persistent SSH host keys from USB storage (see #80)
-# Only Before=ssh.service. Reflash no longer needs to be ordered after this:
-# it starts immediately, draws, and serves, and waits for the drive in a
-# goroutine instead. What it waits for is this unit finishing - see usb-ready -
-# because Reflash mounts /mnt/usb and then holds it for the life of the
-# process, while this unit needs it read-write. Two parties cannot share a
-# mount when one holds it indefinitely, so Reflash takes it last and keeps it.
-Before=ssh.service
-ConditionPathExists=!/etc/ssh/ssh_host_rsa_key
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/ssh-keygen-boot
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl enable ssh-keygen-boot --root="${ROOTFSDIR}"/initrd
-
-cat <<EOF >"${ROOTFSDIR}"/initrd/etc/systemd/system/reflash.service
-[Unit]
-Description=Refactor flashing server
-# No After=network.target: ListenAndServe binds with no interfaces up, and
-# waiting for it only delayed the first frame.
-Conflicts=getty@tty1.service
-Before=getty.target
-StartLimitIntervalSec=0
-
-[Service]
-ExecStart=/usr/local/bin/reflash
-# Defence in depth: the server should never exit on its own, but if it does,
-# a flashing appliance that stays dead until someone power-cycles it is the
-# worst outcome - the user just sees the browser fail to connect. An
-# in-progress flash is lost either way, but the web UI and the log stream
-# come back by themselves.
-#
-# StartLimitIntervalSec=0 disables the rate limiter that would otherwise give
-# up after 5 restarts in 10s and leave the unit failed - for this appliance,
-# retrying forever is better than staying down.
-Restart=always
-RestartSec=1
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl enable reflash --root="${ROOTFSDIR}"/initrd
-
 # Install app
 #
 # The helper directory and the web root are built from scratch rather than
@@ -657,11 +303,105 @@ sudo mkdir -p "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo cp -r client/dist "${ROOTFSDIR}"/initrd/var/www/html/reflash
 sudo cp bin/* "${ROOTFSDIR}"/initrd/usr/local/bin
 
+# Everything systemd, udev, sysctl and iwd read at boot: units, network files,
+# udev rules, the AP profile, the gadget script. Each one is a plain file in
+# rootfs_files/rootfs under its target path, and the comment explaining why it
+# says what it says lives in the file itself.
+#
+# They used to be eighteen here-docs written straight into the rootfs, which
+# cost an outage: usb-gadget-init.sh was written by the chroot and then deleted
+# again by the "rm -rf usr/local/bin" above, and three images shipped with
+# usb-gadget-setup.service failing on "Unable to locate executable" - no
+# /dev/ttyGS*, so no USB login and no control protocol on the host, while every
+# test suite stayed green (#120).
+#
+# Two ordering constraints, both load-bearing:
+#   - after the rm -rf above, or usr/local/bin/usb-gadget-init.sh is deleted
+#     again exactly as it was;
+#   - before the systemctl enable calls below, which need the unit files to
+#     exist to link them into multi-user.target.wants.
+# The verification pass at the end of this script asserts every file in the
+# tree made it into the rootfs, so a third way to lose them fails the build
+# rather than the boot.
+sudo cp -a rootfs_files/rootfs/. "${ROOTFSDIR}"/initrd/
+
+# Deliberately no .network file for wlan0. There used to be one carrying
+# DHCP=no + MulticastDNS=yes, on the theory that matching the interface without
+# a DHCP client was inert and only bought mDNS. It is not inert: any match makes
+# networkd *manage* the link, and a managed link refuses iwd's addressing. iwd
+# associated fine and then never got an IPv4 address, so wifi-connect timed out
+# after 30s and fell back to the hotspot - every time, on any network.
+#
+# What it looked like on the board: `networkctl status wlan0` reporting
+# "routable (configured)" with only an IPv6 address (DHCP=no still leaves
+# IPv6AcceptRA on, so networkd quietly took the v6 side), no IPv4, and iwd
+# logging "Failed to modify the DNS entries ... Link wlan0 is managed".
+#
+# mDNS is not lost with the file gone: etc/systemd/resolved.conf.d/mdns.conf
+# sets MulticastDNS=yes globally, and `resolvectl mdns` shows it on for wlan0.
+
+# Enabling is separate from installing the unit file: these three want to start
+# at boot without anything pulling them in.
+systemctl enable iwd --root="${ROOTFSDIR}"/initrd
+systemctl enable ssh-keygen-boot --root="${ROOTFSDIR}"/initrd
+systemctl enable reflash --root="${ROOTFSDIR}"/initrd
+
 # The helper set is what most of the image's behaviour hangs off, and a missing
 # or surplus script is invisible until something calls it at runtime. Record it
 # in the build log so an image can be audited from its own build output.
 echo "Installed $(ls "${ROOTFSDIR}"/initrd/usr/local/bin | wc -l) helpers:"
 ls "${ROOTFSDIR}"/initrd/usr/local/bin | sort | tr '\n' ' '; echo
+
+# ...and then check, rather than print and hope. Printing the helper list is
+# what this was before, and it had been printing the evidence of the missing
+# gadget script in every build for three releases without anyone reading it as
+# an absence (#120). An assertion cannot be misread.
+#
+# The expected set is the rootfs_files tree itself, so adding a file there is
+# all it takes to have it checked - there is no second list to keep in sync.
+# Everything else that has to be in the image and does not come from that tree
+# is named explicitly below.
+echo "=== ROOTFS CHECK ==="
+MISSING=""
+while IFS= read -r f; do
+	[ -e "${ROOTFSDIR}/initrd/${f}" ] || MISSING="$MISSING /$f"
+done < <(cd rootfs_files/rootfs && find . -type f -printf '%P\n')
+
+for f in usr/local/bin/reflash \
+	usr/local/bin/ssh-keygen-boot \
+	usr/local/share/fonts/Roboto-Light.ttf \
+	var/www/html/reflash/dist/index.html; do
+	[ -e "${ROOTFSDIR}/initrd/${f}" ] || MISSING="$MISSING /$f"
+done
+
+# Present is not the same as enabled: a unit file that nothing pulls into
+# multi-user.target is as inert as one that is not there.
+#
+# Looked up as a .wants symlink under any target rather than by asking
+# "systemctl is-enabled". The systemctl in this container is the Python
+# reimplementation (Debian's systemctl package, since there is no PID 1 here),
+# and its is-enabled answers "disabled" for a unit it has just enabled whenever
+# --root was given a relative path - which this one is. The symlink it writes is
+# correct; only its own read-back is not.
+for u in iwd reflash ssh-keygen-boot; do
+	[ -n "$(find "${ROOTFSDIR}"/initrd/etc/systemd/system -path '*.wants/*' -name "$u.service" -print -quit)" ] \
+		|| MISSING="$MISSING $u.service(installed but not enabled)"
+done
+
+# The gadget script is the one file that is both installed from the tree and
+# executed by a unit, so an exec bit lost in transit would fail exactly as a
+# missing file did - "Permission denied" instead of "Unable to locate".
+[ -x "${ROOTFSDIR}/initrd/usr/local/bin/usb-gadget-init.sh" ] \
+	|| MISSING="$MISSING /usr/local/bin/usb-gadget-init.sh(not-executable)"
+
+if [ -n "$MISSING" ]; then
+	echo "FATAL: files missing from the built rootfs:$MISSING" >&2
+	echo "FATAL: something wrote over or deleted them after they were installed" >&2
+	exit 1
+fi
+echo "  all $(cd rootfs_files/rootfs && find . -type f | wc -l) rootfs_files entries present, units enabled"
+echo "=== END ROOTFS CHECK ==="
+
 sudo mkdir -p "${ROOTFSDIR}"/initrd/mnt/usb
 sudo mkdir -p "${ROOTFSDIR}"/initrd/mnt/emmc
 

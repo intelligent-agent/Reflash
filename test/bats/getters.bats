@@ -113,29 +113,5 @@ with_partition() {
   [ "$output" = "false" ]
 }
 
-# --- the gadget script must actually ship ----------------------------------
-#
-# It was written into the image by the chroot and then deleted by the rm -rf
-# that rebuilds /usr/local/bin, so usb-gadget-setup.service failed with
-# "Unable to locate executable" on every image built after that change - no
-# /dev/ttyGS*, no ttyACM0/1 on the host, no login and no control protocol.
-
-@test "usb-gadget-init.sh is a helper, not written inside mkimage's chroot" {
-  [ -x "$PROD_BIN/usb-gadget-init.sh" ]
-  run bash -n "$PROD_BIN/usb-gadget-init.sh"
-  [ "$status" -eq 0 ]
-}
-
-@test "usb-gadget-init.sh sets up both ACM functions" {
-  # acm.usb0 carries the login getty, acm.usb1 the control protocol. If these
-  # ever collapse to one, flasher-pi and the getty fight over a single tty.
-  grep -q "mkdir -p functions/acm.usb0" "$PROD_BIN/usb-gadget-init.sh"
-  grep -q "mkdir -p functions/acm.usb1" "$PROD_BIN/usb-gadget-init.sh"
-}
-
-# The escaping it needed as a nested heredoc is wrong in a standalone file:
-# \$UDC_NAME would be a literal backslash rather than the variable.
-@test "usb-gadget-init.sh carries no leftover heredoc escaping" {
-  run grep -c '\\\$' "$PROD_BIN/usb-gadget-init.sh"
-  [ "$output" -eq 0 ]
-}
+# The gadget script's own tests moved to image-files.bats when it moved out of
+# bin/prod: it is run by systemd, not by the Go server.

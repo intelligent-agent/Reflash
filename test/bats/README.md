@@ -3,6 +3,11 @@
 Unit tests for the helper scripts in `bin/prod/` — the scripts the Go server
 shells out to. They run hermetically: no root, no real WiFi adapter, no eMMC.
 
+`image-files.bats` is the odd one out: it tests the image build's inputs
+(`rootfs_files/` and the ordering inside `mkimage.sh`) rather than a helper's
+behaviour, because the failure it guards against — a file silently missing from
+the image — is invisible to every other test here (#120).
+
 ## Running
 
 ```sh

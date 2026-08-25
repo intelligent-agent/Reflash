@@ -5,8 +5,12 @@
 # throwaway sandbox by (a) prepending a directory of fake commands ("shims") to
 # PATH and (b) pointing the scripts' env seams at the sandbox.
 
-# Absolute path to bin/prod, derived from this file's location.
-PROD_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../bin/prod" && pwd)"
+# Absolute paths into the repo, derived from this file's location.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# What the Go server shells out to.
+PROD_BIN="$REPO_ROOT/bin/prod"
+# What systemd and udev read, copied into the image verbatim (see #120).
+ROOTFS_TREE="$REPO_ROOT/rootfs_files/rootfs"
 
 # Create a clean sandbox + an empty shim dir on the front of PATH.
 # Sets: SANDBOX, SHIMDIR, CALLS (a log of every shimmed command's argv).

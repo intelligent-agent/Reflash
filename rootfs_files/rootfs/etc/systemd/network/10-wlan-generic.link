@@ -1,0 +1,6 @@
+[Match]
+Type=wlan
+
+[Link]
+Name=wlan0
+NamePolicy=keep kernel

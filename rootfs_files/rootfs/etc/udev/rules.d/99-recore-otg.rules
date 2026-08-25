@@ -1,0 +1,13 @@
+# Reflash boots a universal dr_mode=peripheral DTB (model "Recore-all") with no
+# Type-C role-switch, so a usb_role role==device event never fires. Bring the
+# gadget up when the USB device controller (UDC) appears instead — this works on
+# every Recore revision regardless of DTB.
+SUBSYSTEM=="udc", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-gadget-setup.service"
+
+# A login getty on ttyGS0 (host: /dev/ttyACM0). Without one there is no console
+# a user can reach without opening the case: Reflash owns the framebuffer so
+# tty1 has no getty, and SSH needs a network that a board with failed WiFi setup
+# does not have. That left only the UART header - exactly when a console is most
+# needed. The Reflash control protocol has its own ACM function on ttyGS1
+# (host: /dev/ttyACM1); a getty and the protocol cannot share one tty.
+KERNEL=="ttyGS0", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}="serial-getty@ttyGS0.service"

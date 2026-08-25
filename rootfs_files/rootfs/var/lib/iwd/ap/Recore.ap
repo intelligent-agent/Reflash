@@ -1,0 +1,7 @@
+[Security]
+Passphrase=12345678
+
+[IPv4]
+Address=192.168.50.1
+Gateway=192.168.50.1
+Netmask=255.255.255.0

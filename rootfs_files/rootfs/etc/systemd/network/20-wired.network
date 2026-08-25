@@ -1,0 +1,11 @@
+[Match]
+Name=eth0
+
+[Network]
+DHCP=yes
+MulticastDNS=yes
+
+[DHCPv4]
+# Says "prefer wired" outright rather than relying on the default metric
+# happening to be lower than whatever iwd picks.
+RouteMetric=100
