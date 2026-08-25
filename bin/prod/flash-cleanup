@@ -50,9 +50,40 @@ if [ ! -b "${OUTFILE}p1" ] || [ ! -b "${OUTFILE}p2" ]; then
     exit 1
 fi
 
+# e2fsck's exit status is a bitmask, not a boolean. 0 means "nothing was wrong";
+# 1 means "errors were found AND CORRECTED", which is a success. Under this
+# script's set -e a bare call therefore aborts the moment it repairs anything -
+# and everything after this point is skipped silently: the resize, the UUID
+# randomisation that stops the eMMC colliding with the USB image it was flashed
+# from, /etc/rebuild-settings, the pre-generated host keys, and the per-revision
+# device tree symlink (#127).
+#
+# That last one is why this is not cosmetic. Without the symlink an A5 boots the
+# generic Recore-all tree and runs its DDR3 at 1.36V, under the 1.425V datasheet
+# minimum for the part it is fitted with - on the installed system, not just
+# under Reflash. The board boots and looks fine, and the only trace is
+# /var/log/reflash.log stopping mid-way with no error.
+#
+#   1 = errors corrected
+#   2 = errors corrected, reboot advised (nothing is mounted here, so moot)
+#   4 = errors LEFT UNCORRECTED - a real failure
+#   8+ = operational/usage error
+#
+# Needing a repair at all is itself worth knowing: it means the image or the
+# write was interrupted, so say so rather than passing over it in silence.
+check_fs() {
+    local dev=$1 rc=0
+    e2fsck -y -f "$dev" || rc=$?
+    case $rc in
+        0) info "  $dev: clean" ;;
+        1|2) info "  $dev: errors found and repaired (e2fsck $rc) - the write or the image was interrupted" ;;
+        *) info "  $dev: FAILED, errors left uncorrected (e2fsck $rc)"; return 1 ;;
+    esac
+}
+
 info "Checking filesystems"
-e2fsck -y -f ${OUTFILE}p1
-e2fsck -y -f ${OUTFILE}p2
+check_fs "${OUTFILE}p1"
+check_fs "${OUTFILE}p2"
 
 info "Performing offline resize of filesystem"
 resize2fs "${OUTFILE}"p2
