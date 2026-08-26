@@ -23,6 +23,13 @@
             >hotspot</span
           ><span v-if="line.active" class="badge" title="Carries traffic (default route)">active</span>
         </template>
+        <!-- Lives here rather than in the icon row: the metrics are a detail
+             about this board, like the revision and serial number above, not a
+             fourth top-level action beside Log, Info and Options. -->
+        <br />
+        <w-button class="metrics-link" @click="$emit('open-metrics')" text sm>
+          Board metrics&hellip;
+        </w-button>
       </p>
   </w-transition-expand>
 </template>
@@ -32,6 +39,7 @@ import { networkLines } from "../network";
 
 export default {
   name: "TheInfo",
+  emits: ["open-metrics"],
   props: {
     open: Boolean,
     version: String,
@@ -70,6 +78,12 @@ export default {
 }
 .signal i.on {
   opacity: 1;
+}
+/* Left-aligned with the lines above it, so it reads as part of the list rather
+   than as a floating control. */
+.metrics-link {
+  margin: 6px 0 0 -8px;
+  text-transform: none;
 }
 .badge {
   margin-left: 6px;

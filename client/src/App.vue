@@ -38,12 +38,6 @@
                 :src="computeSVG('Info')"
               />
             </w-button>
-            <w-button @click="openMetrics = true" text title="Board metrics">
-              <img
-                style="width: 25px; height: 25px"
-                :src="computeSVG('Metrics')"
-              />
-            </w-button>
             <w-button @click="openOptions = !openOptions" text>
               <img
                 style="width: 25px; height: 25px"
@@ -59,6 +53,7 @@
             :revision="recore_revision"
             :serialNumber="serial_number"
             :network="network"
+            @open-metrics="openMetrics = true"
           />
         </div>
         <div class="xs1 pa1 align-self-center">
