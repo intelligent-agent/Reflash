@@ -125,8 +125,12 @@ export default {
           note: "idle between flashes",
         }),
         this.panel({ key: "cpu_temp", label: "SoC temperature", unit: "°C", digits: 0,
-          // Measured at 71C during a 1.25GB flash, with throttling engaged.
-          warnAbove: 65, criticalAbove: 75 }),
+          // The A64's own trip points, read off cpu0-thermal on an A8 rather
+          // than guessed: passive (cpufreq capping starts) at 70, hot at 80,
+          // critical at 90. Warning where throttling actually begins means the
+          // panel agrees with the Thermal throttle panel beside it instead of
+          // colouring first and explaining later.
+          warnAbove: 70, criticalAbove: 80 }),
         this.panel({ key: "throttle", label: "Thermal throttle", unit: "/ 7", digits: 0,
           warnAbove: 0, floor: 0, ceiling: 7,
           note: "capping cpufreq for heat" }),
