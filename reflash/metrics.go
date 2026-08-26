@@ -214,9 +214,14 @@ func sampleNow() Sample {
 
 	// Throughput is only meaningful while something is transferring; a flat
 	// zero between flashes would read as a stall rather than as idleness.
+	//
+	// Gated on the state alone, deliberately not on the value: a transfer that
+	// really is sitting at 0 MB/s is a stall, which is the single most useful
+	// thing this panel can show. Skipping those samples would draw it as a gap,
+	// making a stalled flash look exactly like an idle board.
 	if state != nil {
 		state.Lock()
-		if state.State != IDLE && state.Bandwidth > 0 {
+		if state.State != IDLE {
 			bw := float64(state.Bandwidth)
 			s.Bandwidth = &bw
 		}

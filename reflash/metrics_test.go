@@ -134,6 +134,29 @@ func TestRegulatorsAreFoundByName(t *testing.T) {
 	}
 }
 
+// A transfer sitting at 0 MB/s is a stall, and a stall is the most useful thing
+// this panel can show. It must be recorded AS zero: omitting it draws a gap,
+// which is how the client renders an idle board, so a stalled flash would look
+// identical to no flash at all.
+func TestStalledTransferRecordsZeroRatherThanNothing(t *testing.T) {
+	setupMetrics(t)
+	saved := state
+	t.Cleanup(func() { state = saved })
+
+	state = &State{State: UPLOADING_MAGIC, BytesTotal: 1 << 30, Bandwidth: 0}
+	if bw := sampleNow().Bandwidth; bw == nil {
+		t.Error("a stalled transfer must report 0, not be omitted")
+	} else if *bw != 0 {
+		t.Errorf("got %v want 0", *bw)
+	}
+
+	// Idle is the one case that genuinely has no throughput to report.
+	state = &State{State: IDLE}
+	if bw := sampleNow().Bandwidth; bw != nil {
+		t.Errorf("an idle board should report no throughput, got %v", *bw)
+	}
+}
+
 func TestGetMetricsSinceReturnsOnlyNewSamples(t *testing.T) {
 	metricsMu.Lock()
 	metricsRing = []Sample{{T: 100}, {T: 200}, {T: 300}}
