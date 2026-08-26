@@ -48,11 +48,23 @@ describe('TheMetrics', () => {
     const w = mountWith(flashSamples())
     await flushPromises()
     // Deliberately not one chart with six series: MB/s, C, MHz and volts share
-    // no axis and would be meaningless overlaid.
-    expect(w.findAll('svg.spark').length).toBe(6)
+    // no axis and would be meaningless overlaid. Five are plotted; the DRAM
+    // rail is a set point and is shown as a number, so it has no sparkline.
+    expect(w.findAll('.panel').length).toBe(6)
+    expect(w.findAll('svg.spark').length).toBe(5)
     expect(w.text()).toContain('SoC temperature')
     expect(w.text()).toContain('Throughput')
     expect(w.text()).toContain('DRAM rail')
+  })
+
+  it('shows the DRAM rail as a reading, not a trace', async () => {
+    // A rail sits at one voltage. A sparkline of a flat line says nothing that
+    // the number does not, and it cost half a panel to say it.
+    const w = mountWith(flashSamples(), 'A8')
+    await flushPromises()
+    const panel = w.findAll('.panel').find((p) => p.text().includes('DRAM rail'))
+    expect(panel.find('svg.spark').exists()).toBe(false)
+    expect(panel.find('.reading').text()).toContain('1.36')
   })
 
   it('shows the latest reading, not the first', async () => {
@@ -83,7 +95,7 @@ describe('TheMetrics', () => {
     const w = mountWith(flashSamples(), 'A5')
     await flushPromises()
     const panel = w.findAll('.panel').find((p) => p.text().includes('DRAM rail'))
-    expect(panel.find('.value').classes()).toContain('critical')
+    expect(panel.find('.reading').classes()).toContain('critical')
     expect(panel.text()).toContain('expected 1.5V')
   })
 
@@ -91,7 +103,7 @@ describe('TheMetrics', () => {
     const w = mountWith(flashSamples(), 'A8')
     await flushPromises()
     const panel = w.findAll('.panel').find((p) => p.text().includes('DRAM rail'))
-    expect(panel.find('.value').classes()).not.toContain('critical')
+    expect(panel.find('.reading').classes()).not.toContain('critical')
     expect(panel.text()).toContain('expected 1.36V')
   })
 
@@ -116,28 +128,18 @@ describe('TheMetrics', () => {
   // running 0.36 to 2.36. An axis that absurd makes the panel worthless, so it
   // is worth asserting on.
   it('scales a flat series proportionally, not by a fixed amount', async () => {
-    const flat = Array.from({ length: 5 }, (_, i) => ({ t: i, vcc_dram: 1.36 }))
-    const w = mountWith(flat, 'A8')
+    // Originally caught on the DRAM rail, which was drawn on an axis running
+    // 0.36 to 2.36 while the suite passed. That panel is a number now, but the
+    // guarantee still has to hold for every plotted measure - a flat 50C must
+    // not be given a 100-degree axis.
+    const flat = Array.from({ length: 5 }, (_, i) => ({ t: i, cpu_temp: 50 }))
+    const w = mountWith(flat)
     await flushPromises()
-    const foot = w.findAll('.panel').find((p) => p.text().includes('DRAM rail')).find('.foot')
+    const foot = w.findAll('.panel').find((p) => p.text().includes('SoC temperature')).find('.foot')
     const [lo, hi] = axisOf(foot)
-    // A rail plotted on a volt-wide axis says nothing about a rail.
-    expect(hi - lo).toBeLessThan(0.5)
-    expect(lo).toBeLessThan(1.36)
-    expect(hi).toBeGreaterThan(1.36)
-  })
-
-  it('puts the expected rail voltage inside the range, so a shortfall is visible', async () => {
-    // An A5 at 1.36V wanted 1.5V. If the scale covered only the samples, the
-    // line would sit mid-panel and the gap this panel exists to show would not
-    // be drawn at all.
-    const w = mountWith(flashSamples(), 'A5')
-    await flushPromises()
-    const panel = w.findAll('.panel').find((p) => p.text().includes('DRAM rail'))
-    const [lo, hi] = axisOf(panel.find('.foot'))
-    expect(lo).toBeLessThan(1.36)
-    expect(hi).toBeGreaterThan(1.5)
-    expect(panel.find('line.reference').exists()).toBe(true)
+    expect(hi - lo).toBeLessThan(50 * 0.25)
+    expect(lo).toBeLessThan(50)
+    expect(hi).toBeGreaterThan(50)
   })
 
   it('renders a flat series as a line rather than dividing by zero', async () => {

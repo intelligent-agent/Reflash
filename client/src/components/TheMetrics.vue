@@ -1,9 +1,9 @@
 <template>
   <div class="metrics" v-if="samples.length">
-    <div class="panel" v-for="p in panels" :key="p.key">
+    <div class="panel" :class="{ stat: p.stat }" v-for="p in panels" :key="p.key">
       <div class="head">
         <span class="label">{{ p.label }}</span>
-        <span class="value" :class="p.statusClass">
+        <span class="value" :class="p.statusClass" v-if="!p.stat">
           <template v-if="p.hoverValue !== null">{{ p.hoverValue }}</template>
           <template v-else-if="p.current !== null">{{ p.current }}</template>
           <template v-else>&mdash;</template>
@@ -11,10 +11,25 @@
         </span>
       </div>
 
+      <!-- A rail sits at one voltage. A sparkline of a flat line says nothing a
+           number does not, so this panel is the reading itself, large, with the
+           expectation under it. -->
+      <template v-if="p.stat">
+        <div class="reading" :class="p.statusClass">
+          <template v-if="p.current !== null">{{ p.current }}</template>
+          <template v-else>&mdash;</template>
+          <span class="unit" v-if="p.current !== null">{{ p.unit }}</span>
+        </div>
+        <div class="foot stat-foot">
+          <span class="note" v-if="p.note">{{ p.note }}</span>
+        </div>
+      </template>
+
       <!-- preserveAspectRatio=none stretches x to the panel width; the stroke is
            kept at its literal width by vector-effect, so a wide panel does not
            produce a fat line. -->
       <svg
+        v-if="!p.stat"
         class="spark"
         viewBox="0 0 100 30"
         preserveAspectRatio="none"
@@ -40,7 +55,7 @@
                 vector-effect="non-scaling-stroke" />
       </svg>
 
-      <div class="foot">
+      <div class="foot" v-if="!p.stat">
         <span>{{ p.min }}</span>
         <span class="note" v-if="p.note">{{ p.note }}</span>
         <span>{{ p.max }}</span>
@@ -119,13 +134,11 @@ export default {
         this.panel({
           key: "vcc_dram", label: "DRAM rail", unit: "V", digits: 2,
           note: dram ? `expected ${dram.label}` : null,
-          // A rail below what the fitted part needs is the diagnostic, so it is
-          // called out rather than merely plotted. The expectation also joins
-          // the y-range and is drawn as a reference line, so a board at 1.36V
-          // that wanted 1.5V shows the shortfall as a visible gap - which is
-          // the whole point of the panel.
+          // Shown as a number, not a trace: a rail is a set point, and a
+          // sparkline of a flat line is noise. What matters is the value and
+          // whether it matches the fitted part, so the comparison is the panel.
+          stat: true,
           criticalBelow: dram ? dram.volts - 0.01 : null,
-          reference: dram ? dram.volts : null,
         }),
         this.panel({ key: "dirty", label: "Writeback backlog", unit: "kB", digits: 0 }),
       ];
@@ -198,6 +211,13 @@ export default {
       };
       if (!present.length) return out;
 
+      // A stat panel draws no path, so it needs the status of the current
+      // reading and nothing else - no scale, no geometry.
+      if (spec.stat) {
+        out.statusClass = this.statusOf(spec, present[present.length - 1]);
+        return out;
+      }
+
       let lo = spec.floor !== undefined ? spec.floor : Math.min(...present);
       let hi = spec.ceiling !== undefined ? spec.ceiling : Math.max(...present);
 
@@ -256,36 +276,44 @@ export default {
         out.hoverY = y(vals[this.hoverIndex]);
       }
 
-      // Status is on the CURRENT reading, and always alongside the number and
-      // its label - never colour alone.
-      const now = vals[last];
-      if (spec.criticalAbove != null && now > spec.criticalAbove) out.statusClass = "critical";
-      else if (spec.criticalBelow != null && now < spec.criticalBelow) out.statusClass = "critical";
-      else if (spec.warnAbove != null && now > spec.warnAbove) out.statusClass = "warn";
+      out.statusClass = this.statusOf(spec, vals[last]);
       return out;
+    },
+    // Status is on the CURRENT reading, and always alongside the number and its
+    // label - never colour alone.
+    statusOf(spec, now) {
+      if (spec.criticalAbove != null && now > spec.criticalAbove) return "critical";
+      if (spec.criticalBelow != null && now < spec.criticalBelow) return "critical";
+      if (spec.warnAbove != null && now > spec.warnAbove) return "warn";
+      return "";
     },
   },
 };
 </script>
 
 <style scoped>
-/* Roles rather than raw hex, so the two themes swap in one place. Values are
-   the validated defaults: series slot 1 for the trace, and the reserved status
-   steps for warning and critical. */
+/* Ink and surface are taken from the app's own theme variables rather than
+   restated here. App.vue flips --w-base-color-rgb from 0,0,0 to 255,255,255 on
+   :root[data-theme], so text follows the theme wherever this component is
+   mounted - including inside a teleported dialog, and without depending on this
+   file's own selector matching. Hardcoding the light values here is what left
+   near-black text on a dark surface.
+
+   The trace and status colours stay literal: they are the validated palette's
+   series slot 1 and its reserved status steps, and must not drift with the
+   theme's greys. */
 .metrics {
-  --surface: #fcfcfb;
-  --ink: #0b0b0b;
-  --ink-dim: #52514e;
-  --grid: rgba(0, 0, 0, 0.1);
+  --surface: var(--w-base-bg-color-rgb, #fcfcfb);
+  --ink: rgb(var(--w-base-color-rgb, 11, 11, 11));
+  --ink-dim: rgba(var(--w-base-color-rgb, 11, 11, 11), 0.68);
+  --grid: rgba(var(--w-base-color-rgb, 11, 11, 11), 0.14);
   --trace: #2a78d6;
   --warn: #fab219;
   --critical: #d03b3b;
 }
+/* Only the trace needs a step change: the light blue is chosen against a light
+   surface and loses contrast on a dark one. */
 :global(:root[data-theme="dark"]) .metrics {
-  --surface: #1a1a19;
-  --ink: #ffffff;
-  --ink-dim: #c3c2b7;
-  --grid: rgba(255, 255, 255, 0.14);
   --trace: #3987e5;
 }
 
@@ -327,6 +355,36 @@ export default {
 }
 .value.warn { color: var(--warn); }
 .value.critical { color: var(--critical); }
+/* The stat panel's reading carries the panel on its own, so it is sized to be
+   read at a glance rather than tucked in the header beside the label. */
+.reading {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.8em;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--ink);
+  margin: 6px 0 2px;
+}
+.reading.warn::before,
+.reading.critical::before {
+  content: "\26A0";
+  margin-right: 4px;
+  font-size: 0.6em;
+  font-weight: 400;
+  vertical-align: 0.25em;
+}
+.reading.warn { color: var(--warn); }
+.reading.critical { color: var(--critical); }
+.reading .unit {
+  font-size: 0.45em;
+}
+/* No axis to sit between, so the note starts at the left like a caption. */
+.stat-foot {
+  justify-content: flex-start;
+}
+.stat-foot .note {
+  text-align: left;
+}
 .unit {
   font-size: 0.75em;
   font-weight: 400;
