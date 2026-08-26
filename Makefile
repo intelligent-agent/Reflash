@@ -44,7 +44,12 @@ upload-vue:
 	scp -r client/dist debian@recore.local:/var/www/html/reflash
 
 build-go:
-	cd reflash; GOOS=linux GOARCH=arm64 go build -o reflash main.go server.go screen.go
+# The file list is load-bearing and every new .go file has to be added to it.
+# main.go carries "//go:build ignore", so `go build .` excludes it and fails
+# with "function main is undeclared"; naming files explicitly is what overrides
+# that tag. The cost is that a file left off this line is silently not in the
+# binary - the build succeeds and the feature is simply absent.
+	cd reflash; GOOS=linux GOARCH=arm64 go build -o reflash main.go server.go screen.go metrics.go
 
 upload-go:
 	scp reflash/reflash debian@${REMOTE}:/usr/local/bin

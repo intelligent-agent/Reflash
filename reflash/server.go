@@ -349,10 +349,16 @@ func ServerInit() {
 
 	go watchIPs()
 
+	// Sampling starts here rather than on first request, so the buffer already
+	// holds the run-up when someone opens the page mid-flash - which is exactly
+	// when they want it.
+	startMetrics()
+
 	fs := http.FileServer(http.Dir(static_dir))
 	fmt.Println("Starting Reflash go server " + reflashVersion)
 	http.Handle("/", fs)
 	http.HandleFunc("/api/get_info", getInfo)
+	http.HandleFunc("/api/get_metrics", getMetrics)
 	http.HandleFunc("/api/get_status", getStatus)
 	http.HandleFunc("/api/stream_log", streamLog)
 	http.HandleFunc("/api/get_options", getOptions)
