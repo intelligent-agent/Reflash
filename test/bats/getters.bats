@@ -115,3 +115,77 @@ with_partition() {
 
 # The gadget script's own tests moved to image-files.bats when it moved out of
 # bin/prod: it is run by systemd, not by the Go server.
+
+# --- the config partition is read once per boot -----------------------------
+#
+# It is mounted through a transient systemd unit, and two readers of it collide:
+# "Unit mnt-config.mount was already loaded or has a fragment file". Every
+# caller used to mount it afresh, so a flash and a UI poll overlapped and
+# flash-cleanup was refused its revision (#138). What matters is therefore how
+# many times the partition is mounted, not just what comes back.
+
+@test "get-recore-revision: mounts the config partition only once" {
+  export REFLASH_CONFIG_DIR="$SANDBOX/config"
+  mkdir -p "$REFLASH_CONFIG_DIR"
+  printf '{ "Revision": "A7" }\n' > "$REFLASH_CONFIG_DIR/recore.json"
+  stub_silent mount-config
+  stub_silent unmount-config
+
+  for _ in 1 2 3 4 5; do
+    run "$PROD_BIN/get-recore-revision"
+    [ "$status" -eq 0 ]
+    [ "$output" = "a7" ]
+  done
+
+  [ "$(grep -c '^mount-config' "$CALLS")" -eq 1 ]
+}
+
+@test "get-recore-serial-number: mounts the config partition only once" {
+  export REFLASH_CONFIG_DIR="$SANDBOX/config"
+  mkdir -p "$REFLASH_CONFIG_DIR"
+  echo "0390" > "$REFLASH_CONFIG_DIR/serial_number"
+  stub_silent mount-config
+  stub_silent unmount-config
+
+  for _ in 1 2 3; do
+    run "$PROD_BIN/get-recore-serial-number"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0390" ]
+  done
+
+  [ "$(grep -c '^mount-config' "$CALLS")" -eq 1 ]
+}
+
+# A failure must not be cached, or one transient mount error becomes permanent
+# for the rest of the boot - which is the fault #138 describes, with a longer
+# lifetime.
+@test "get-recore-revision: a failed read is retried, not remembered" {
+  export REFLASH_CONFIG_DIR="$SANDBOX/config"
+  mkdir -p "$REFLASH_CONFIG_DIR"        # no json at all
+  stub_silent mount-config
+  stub_silent unmount-config
+
+  run "$PROD_BIN/get-recore-revision"; [ "$status" -ne 0 ]
+  run "$PROD_BIN/get-recore-revision"; [ "$status" -ne 0 ]
+
+  [ "$(grep -c '^mount-config' "$CALLS")" -eq 2 ]
+}
+
+# Concurrent callers are the actual failure mode: get_info is per-request and
+# the UI polls it while a flash is running.
+@test "get-recore-revision: concurrent callers still mount only once" {
+  export REFLASH_CONFIG_DIR="$SANDBOX/config"
+  mkdir -p "$REFLASH_CONFIG_DIR"
+  printf '{ "Revision": "A7" }\n' > "$REFLASH_CONFIG_DIR/recore.json"
+  stub_silent mount-config
+  stub_silent unmount-config
+
+  for _ in $(seq 1 8); do "$PROD_BIN/get-recore-revision" >/dev/null & done
+  wait
+
+  [ "$(grep -c '^mount-config' "$CALLS")" -eq 1 ]
+}
+
+# Not covered here: create-recore-config removes both cache files, but the rest
+# of that script needs root, loop devices and a real boot partition, so a test
+# would only exercise the rm - which asserts nothing about the code.

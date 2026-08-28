@@ -6,8 +6,14 @@ SERIAL_NR=$1
 LOOP=""
 DISK_IMG=""
 
+# Seams, so the tail of this script can be exercised off a board. Defaults are
+# exactly what they were.
+LOG_FILE="${LOG_FILE:-/var/log/reflash.log}"
+SYS_BLOCK="${REFLASH_SYS_BLOCK:-/sys/block}"
+CONFIG_MNT="${REFLASH_CONFIG_MNT:-/mnt/config}"
+
 info() {
-    echo "[info] $1" >> /var/log/reflash.log
+    echo "[info] $1" >> "$LOG_FILE"
     echo "$1"
 }
 
@@ -82,7 +88,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo 0 > "/sys/block/${DEV}boot0/force_ro"
+echo 0 > "${SYS_BLOCK}/${DEV}boot0/force_ro"
 
 # Whether the kernel auto-creates a child partition node for eMMC boot
 # partitions (${DEV_BOOT}p1) turns out to be kernel-version dependent -
@@ -114,20 +120,26 @@ printf "g\nn\n\n\n\nw\n" | fdisk "$LOOP"
 # does at this size - reads then fail with "Bad message". Disable it.
 mkfs.ext4 -F -q -O ^metadata_csum,^64bit -E nodiscard "${LOOP}p1"
 
-mkdir -p /mnt/config
-mount "${LOOP}p1" /mnt/config
-echo "$SNR" > /mnt/config/serial_number
+mkdir -p "$CONFIG_MNT"
+mount "${LOOP}p1" "$CONFIG_MNT"
+echo "$SNR" > "$CONFIG_MNT/serial_number"
 
 info "Downloading calibration file ${FILE}"
-wget -O "/mnt/config/${FILE}" "$URL"
+wget -O "${CONFIG_MNT}/${FILE}" "$URL"
 
 sync
-umount /mnt/config
+umount "$CONFIG_MNT"
 losetup -d "$LOOP"
 LOOP=""
 
 info "Writing config image to ${DEV_BOOT}"
 dd if="$DISK_IMG" of="$DEV_BOOT" status=none
 sync
-echo 1 > "/sys/block/${DEV}boot0/force_ro"
+echo 1 > "${SYS_BLOCK}/${DEV}boot0/force_ro"
+
+# Drop the cached identity: this is the one thing that changes it, and the
+# getters keep their answer for the life of the boot.
+rm -f "${REFLASH_CACHE_DIR:-/run/reflash}/recore-revision" \
+      "${REFLASH_CACHE_DIR:-/run/reflash}/recore-serial-number"
+
 info "Done"

@@ -1,8 +1,22 @@
 #!/bin/bash
 
+# Read once per boot, behind the same lock as get-recore-revision - see the
+# comment there. Both mount the one config partition, so they have to serialise
+# against each other, not just against themselves.
 set -euo pipefail
 
 CONFIG_DIR="${REFLASH_CONFIG_DIR:-/mnt/config}"
+CACHE_DIR="${REFLASH_CACHE_DIR:-/run/reflash}"
+CACHE="$CACHE_DIR/recore-serial-number"
+
+mkdir -p "$CACHE_DIR"
+exec 9>"$CACHE_DIR/config-read.lock"
+flock 9
+
+if [ -s "$CACHE" ]; then
+    cat "$CACHE"
+    exit 0
+fi
 
 mount-config
 # A board with no serial number provisioned yet - the exact case this
@@ -11,4 +25,7 @@ mount-config
 # mount (and its transient systemd unit) dangling. Make the unmount
 # unconditional instead.
 trap unmount-config EXIT
-cat "$CONFIG_DIR/serial_number"
+
+SERIAL=$(cat "$CONFIG_DIR/serial_number")
+printf '%s\n' "$SERIAL" > "$CACHE"
+printf '%s\n' "$SERIAL"

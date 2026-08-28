@@ -1,31 +1,57 @@
 #!/bin/bash
 
-# Fail rather than print nothing.
+# Read once per boot, and never by two callers at the same time.
 #
-# This had only `set -o pipefail`, so a failed mount-config did not stop it: the
-# ls then failed, CONFIG was empty, `grep Revision ""` printed nothing, and the
-# script exited 0 having produced an empty string. Callers cannot tell that from
-# a successful read, and flash-cleanup went on to skip every per-revision step -
-# the Klipper config and the device tree symlink that decides whether an A5/A6
-# gets its 1.5V rail. The board booted, looked fine, and ran its DDR3 65mV under
-# spec (#138).
+# The config partition is mounted through a TRANSIENT SYSTEMD UNIT, and two
+# readers of it collide outright:
+#
+#   Failed to start transient mount unit: Unit mnt-config.mount was already
+#   loaded or has a fragment file
+#
+# Every caller used to mount it afresh - get_info on every request, the config
+# dialog, the test rig, and a flash at the end - so a flash and a poll overlapped
+# and flash-cleanup was refused its revision (#138).
+#
+# The cache lives on tmpfs, so "once per boot" is what the filesystem gives us
+# for free. The lock is the half that actually fixes the race: two callers
+# arriving together are serialised, and the second finds the cache warm.
+# create-recore-config removes these files, because provisioning is the one
+# thing that changes the answer.
+#
+# Fail rather than print nothing: this had only `set -o pipefail`, so a failed
+# mount-config did not stop it and it exited 0 having produced an empty string,
+# which callers cannot tell from a real answer.
 set -euo pipefail
 
 CONFIG_DIR="${REFLASH_CONFIG_DIR:-/mnt/config}"
+CACHE_DIR="${REFLASH_CACHE_DIR:-/run/reflash}"
+CACHE="$CACHE_DIR/recore-revision"
+
+mkdir -p "$CACHE_DIR"
+# One lock for BOTH getters: they mount the same partition, so serialising each
+# against itself would not be enough.
+exec 9>"$CACHE_DIR/config-read.lock"
+flock 9
+
+if [ -s "$CACHE" ]; then
+    cat "$CACHE"
+    exit 0
+fi
 
 mount-config
-# Unconditional, like get-recore-serial-number: under set -e any failure below
-# would otherwise leave the mount and its transient systemd unit dangling.
+# Unconditional: under set -e any failure below would otherwise leave the mount
+# and its transient systemd unit dangling.
 trap unmount-config EXIT
 
 CONFIG=$(ls "$CONFIG_DIR"/*.json)
 REVISION=$(grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]')
 
-# grep succeeding is not enough: a config with a Revision line but no value
-# gets through the pipeline and yields an empty string just the same.
+# grep succeeding is not enough: a Revision line with no value gets through the
+# pipeline and yields an empty string just the same.
 if [ -z "$REVISION" ]; then
     echo "no Revision value in $CONFIG" >&2
     exit 1
 fi
 
+printf '%s\n' "$REVISION" > "$CACHE"
 echo "$REVISION"
