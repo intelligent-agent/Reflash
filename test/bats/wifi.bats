@@ -246,3 +246,89 @@ EOF2
   [ "$status" -eq 1 ]
   [[ "$output" == *"Could not switch"* ]]
 }
+
+# --- source routing: reply on the interface the request arrived on -----------
+#
+# With Ethernet up on the same subnet, replies to connections that arrived on
+# wlan0 leave eth0 carrying the WiFi source address. That teaches the AP's
+# bridge the address lives on the wire, and it stops forwarding frames for it
+# over the air - so the client's ACK never lands, the socket sits in SYN-RECV
+# retransmitting SYN-ACK, and the connection hangs rather than failing (#126).
+# Measured on an A6: HTTP to the WiFi address went from a 20s timeout to 0.017s.
+
+@test "wifi-connect: installs a source route for the address it just got" {
+  with_adapter
+  cat > "$SHIMDIR/iwctl" <<'EOF'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+case "$*" in
+  "addr show wlan0")            echo "    inet 192.168.1.50/24 brd 192.168.1.255 scope global wlan0" ;;
+  *"route show dev wlan0 scope link") echo "192.168.1.0/24 proto kernel scope link src 192.168.1.50" ;;
+  *"route show default dev wlan0")    echo "default via 192.168.1.1 dev wlan0" ;;
+  *"route get"*)                echo "1.1.1.1 from 192.168.1.50 dev wlan0 table 100" ;;
+esac
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+
+  run "$PROD_BIN/wifi-connect" HomeNet hunter2
+  [ "$status" -eq 0 ]
+
+  # The rule is what actually redirects the traffic; without it the routes in
+  # table 100 are never consulted.
+  grep -q "ip rule add from 192.168.1.50 lookup 100" "$CALLS"
+  grep -q "ip route add default via 192.168.1.1 dev wlan0 table 100" "$CALLS"
+  [[ "$output" == *"Source routing: traffic from 192.168.1.50 now leaves wlan0"* ]]
+}
+
+# A silent failure here is the worst outcome: the board looks connected and its
+# WiFi address is quietly unusable, which is exactly how #126 presented.
+@test "wifi-connect: says so when the source route did not take" {
+  with_adapter
+  cat > "$SHIMDIR/iwctl" <<'EOF'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+case "$*" in
+  "addr show wlan0") echo "    inet 192.168.1.50/24 brd 192.168.1.255 scope global wlan0" ;;
+  *"route get"*)     echo "1.1.1.1 from 192.168.1.50 dev eth0" ;;   # still leaving the wrong way
+esac
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+
+  run "$PROD_BIN/wifi-connect" HomeNet hunter2
+  [[ "$output" == *"WARNING: could not install source routing"* ]]
+}
+
+@test "wifi-hotspot: removes the source route when leaving station mode" {
+  with_adapter
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+if [ "$1 $2" = "rule list" ]; then echo "32765:	from 192.168.1.50 lookup 100"; fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+  stub_silent iwctl
+
+  run "$PROD_BIN/wifi-hotspot"
+
+  # The address is gone once the interface becomes an AP; a rule naming it is a
+  # trap for whoever debugs routing here next.
+  grep -q "ip rule del from 192.168.1.50 lookup 100" "$CALLS"
+  grep -q "ip route flush table 100" "$CALLS"
+}
