@@ -82,3 +82,64 @@ describe('the storage poll', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+// #131: "the text on the screen gets stuck there". A static banner cannot be
+// told apart from a hang, so the wait is counted and a drive that runs out the
+// clock is named as broken rather than merely absent.
+describe('the preparing counter', () => {
+  const withStorage = (storage, wait, max) => ({
+    data: {
+      local_images: [], bytes_available: 1, network: {},
+      storage, storage_wait: wait, storage_wait_max: max,
+    },
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('takes the elapsed seconds and the budget from the server', async () => {
+    axios.get.mockResolvedValue(withStorage('PREPARING', 12, 180));
+    const c = ctx('');
+    c.storageWait = 0;
+    c.storageWaitMax = 0;
+
+    await getStatus.call(c);
+
+    expect(c.storageWait).toBe(12);
+    expect(c.storageWaitMax).toBe(180);
+  });
+
+  // An older server does not send these. undefined would render as empty
+  // parentheses beside the message.
+  it('defaults to zero when the server does not report them', async () => {
+    axios.get.mockResolvedValue({
+      data: { local_images: [], bytes_available: 1, network: {}, storage: 'PREPARING' },
+    });
+    const c = ctx('');
+    c.storageWait = 99;
+    c.storageWaitMax = 99;
+
+    await getStatus.call(c);
+
+    expect(c.storageWait).toBe(0);
+    expect(c.storageWaitMax).toBe(0);
+  });
+
+  // storageTimedOut is derived, so verify the derivation rather than a field.
+  const timedOut = App.computed.storageTimedOut;
+
+  it('calls a drive broken only when it ran out the full budget', () => {
+    expect(timedOut.call({ storage: 'FAILED', storageWait: 180, storageWaitMax: 180 })).toBe(true);
+  });
+
+  it('does not call an absent drive broken', () => {
+    expect(timedOut.call({ storage: 'FAILED', storageWait: 0, storageWaitMax: 180 })).toBe(false);
+  });
+
+  it('does not call a drive broken while it is still preparing', () => {
+    expect(timedOut.call({ storage: 'PREPARING', storageWait: 180, storageWaitMax: 180 })).toBe(false);
+  });
+});

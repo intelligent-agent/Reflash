@@ -52,6 +52,12 @@ type GetStatus struct {
 	// to say "still working" rather than showing an empty image list as if the
 	// drive were simply empty.
 	Storage string `json:"storage"`
+	// How long the drive has been prepared for, and the budget. #131: a static
+	// "Preparing the USB drive" is indistinguishable from a hang, so the UI can
+	// show 12/180 and the user can see it is still counting. Zero when not
+	// preparing.
+	StorageWait    int `json:"storage_wait"`
+	StorageWaitMax int `json:"storage_wait_max"`
 }
 
 const (
@@ -61,7 +67,32 @@ const (
 )
 
 var storageState = STORAGE_PREPARING
+
+// Seconds spent waiting for the drive, and whether that wait ran out. Read by
+// both surfaces that report storage: the web UI banner and the board's own
+// screen via storageFrame.
+var storageWait int
+var storageTimedOut bool
 var storageLock sync.Mutex
+
+func setStorageWait(sec int) {
+	storageLock.Lock()
+	storageWait = sec
+	storageLock.Unlock()
+	updateDisplay()
+}
+
+func setStorageTimedOut() {
+	storageLock.Lock()
+	storageTimedOut = true
+	storageLock.Unlock()
+}
+
+func getStorageWait() (int, bool) {
+	storageLock.Lock()
+	defer storageLock.Unlock()
+	return storageWait, storageTimedOut
+}
 
 func setStorage(s string) {
 	storageLock.Lock()
@@ -292,6 +323,11 @@ func slowInit() {
 			if runCommandReturnBool("usb-ready") {
 				return
 			}
+			// Publish the count every second, so both the web banner and the
+			// board's own screen can show it ticking (#131). The periodic log
+			// line below stays: it is what someone reading logs after the fact
+			// needs, and it is far too sparse to watch live.
+			setStorageWait(i * int(mountRetryDelay/time.Second))
 			// Say so periodically. A silent wait is indistinguishable from a
 			// hang, and on a first boot this legitimately takes the best part
 			// of a minute (#131).
@@ -303,6 +339,11 @@ func slowInit() {
 		}
 		logError(fmt.Sprintf("Timed out waiting for the USB drive to become available after %ds",
 			mountRetries*int(mountRetryDelay/time.Second)))
+		// Distinguishes "waited the full budget and it never came ready" from
+		// "mounting failed for some other reason". Only the former justifies
+		// telling the user the drive is broken.
+		setStorageTimedOut()
+		setStorageWait(mountRetries * int(mountRetryDelay/time.Second))
 	})
 
 	var mountErr error
@@ -443,6 +484,8 @@ func getStatus(w http.ResponseWriter, r *http.Request) {
 		Network:        getNetworkStatus(),
 		Storage:        getStorage(),
 	}
+	get_status.StorageWait, _ = getStorageWait()
+	get_status.StorageWaitMax = mountRetries * int(mountRetryDelay/time.Second)
 	json.NewEncoder(w).Encode(get_status)
 }
 
@@ -2153,10 +2196,18 @@ func lockSaveOptions() {
 // mkfs on a worn stick took 198s (#116) and reports nothing along the way, and
 // a bar pinned at zero reads as stuck where the message alone reads as working.
 func storageFrame() (string, float64, bool) {
+	waited, timedOut := getStorageWait()
 	switch getStorage() {
 	case STORAGE_PREPARING:
-		return "Preparing USB drive", -1, true
+		// Counting, so a slow-but-working drive is visibly different from a
+		// wedged one. This is the screen someone watches when the web UI is not
+		// reachable yet, which on a first boot is most of this window.
+		return fmt.Sprintf("Preparing USB drive (%ds/%ds)",
+			waited, mountRetries*int(mountRetryDelay/time.Second)), -1, true
 	case STORAGE_FAILED:
+		if timedOut {
+			return "Drive not ready - it may be broken", -1, true
+		}
 		return "No USB drive", -1, true
 	}
 	return "", 0, false

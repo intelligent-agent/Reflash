@@ -298,10 +298,24 @@ export default {
     serial_number: "Unknown",
     network: {},
     storage: "",
+    // Seconds waited and the budget, straight from the server (#131).
+    storageWait: 0,
+    storageWaitMax: 0,
     bytesAvailable: -1,
     sizeWarning: ""
   }),
   computed: {
+    // Whether the drive failed by running out the clock, as opposed to simply
+    // not being there. Derived rather than sent: the server sets the wait to the
+    // full budget exactly when it times out, so the two are equivalent and one
+    // less field can drift out of sync with the other.
+    storageTimedOut() {
+      return (
+        this.storage === "FAILED" &&
+        this.storageWaitMax > 0 &&
+        this.storageWait >= this.storageWaitMax
+      );
+    },
     ...mapGetters(["options", "progress", "flash"]),
     // Rebuild downloads from GitHub via the board itself (flash-from-url) -
     // without internet that can't work, so hide it and leave only the
@@ -941,6 +955,10 @@ export default {
         this.bytesAvailable = response.data.bytes_available;
         this.network = response.data.network;
         this.storage = response.data.storage;
+        // Defaulted, not assumed: an older server does not send these, and
+        // `undefined` would render as blank parentheses next to the message.
+        this.storageWait = response.data.storage_wait ?? 0;
+        this.storageWaitMax = response.data.storage_wait_max ?? 0;
       } catch (err) {
         // Swallowed on purpose, so the retry below still happens. There was no
         // catch here, so ONE failed request ended the polling for good: the
