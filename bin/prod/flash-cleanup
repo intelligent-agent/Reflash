@@ -10,11 +10,51 @@ info "-----------------------"
 info "Starting cleanup script"
 info "-----------------------"
 
-REVISION=$1
+REVISION=${1:-}
 OUTFILE="/dev/mmcblk2"
+
+# Refuse to run without a revision, rather than doing four-fifths of a flash.
+#
+# An empty $1 passes `set -u` - it is set, just empty - and then every
+# per-revision step below silently does nothing: the Klipper config is not
+# installed, and the device tree symlink is not made, so the board boots the
+# generic Recore-all tree. On an A5/A6 that means DDR3 at 1.36V, under the
+# 1.425V datasheet minimum, on the installed system. The flash reports success
+# (#138). Better to fail here, before anything has been changed.
+if [ -z "$REVISION" ]; then
+    info "FATAL: no hardware revision given - refusing to flash"
+    info "  get-recore-revision returned nothing; the eMMC config partition is"
+    info "  unreadable or was not mounted. Nothing has been changed."
+    exit 1
+fi
 
 info "Using Recore hardware revision $REVISION"
 info "Overwriting block device $OUTFILE"
+
+# Keep the log. It lives in the initramfs and dies with the reboot that ends
+# every flash - which is exactly when its contents become interesting. Working
+# out why a board booted the wrong device tree meant reconstructing the whole
+# sequence from the flashed rootfs, because the log was already gone (#138).
+#
+# On EXIT rather than at the end, so a flash that dies half-way leaves its log
+# behind too; that is the case worth having. Best effort throughout: this must
+# never turn a successful flash into a failed one, and it must not disturb the
+# exit status.
+persist_log() {
+    local rc=$?
+    mountpoint -q /mnt/emmc && umount /mnt/emmc 2>/dev/null || true
+    if [ -b "${OUTFILE}p2" ]; then
+        mkdir -p /mnt/logsave 2>/dev/null || true
+        if mount "${OUTFILE}p2" /mnt/logsave 2>/dev/null; then
+            mkdir -p /mnt/logsave/var/log.hdd 2>/dev/null || true
+            cp /var/log/reflash.log /mnt/logsave/var/log.hdd/reflash.log 2>/dev/null || true
+            sync
+            umount /mnt/logsave 2>/dev/null || true
+        fi
+    fi
+    return $rc
+}
+trap persist_log EXIT
 
 sync
 
@@ -156,9 +196,20 @@ sed -i '/^$/d' /mnt/emmc/armbianEnv.txt
 echo "rootdev=UUID=${UUID2}" >> /mnt/emmc/armbianEnv.txt
 
 cd /mnt/emmc/dtb/allwinner/ || exit
+# An else, because this silently doing nothing is the whole of #138. It is also
+# load-bearing beyond the installed system: boot.cmd reads the model out of this
+# symlink to decide whether to raise the DRAM rail, so a missing symlink costs
+# an A5/A6 its 1.5V under Reflash on the NEXT flash as well.
 if test -f sun50i-a64-recore-"$REVISION".dtb; then
-  info "Symlinking device tree"
+  info "Symlinking device tree for $REVISION"
   ln -sf sun50i-a64-recore-"$REVISION".dtb sun50i-a64-recore.dtb
+else
+  info "FATAL: no device tree for revision '$REVISION' in $(pwd)"
+  info "  available: $(ls sun50i-a64-recore-*.dtb 2>/dev/null | tr '\n' ' ')"
+  info "  the board would boot the generic tree - failing instead"
+  cd /
+  umount ${OUTFILE}p1
+  exit 1
 fi
 cd /
 umount ${OUTFILE}p1
