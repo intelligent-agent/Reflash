@@ -20,10 +20,17 @@ setup_sandbox() {
   mkdir -p "$SHIMDIR"
   CALLS="$SANDBOX/calls.log"
   : > "$CALLS"
-  PATH="$SHIMDIR:$PATH"
+  # Shims first, then the real scripts: on a board every bin/prod script is
+  # installed into one directory on PATH, so they can call each other - and
+  # since #138 they do, rather than each re-implementing the config read. Stubs
+  # still win, being earlier in PATH.
+  PATH="$SHIMDIR:$PROD_BIN:$PATH"
   export PATH CALLS
   # Common env seam: keep every script's log inside the sandbox.
   export LOG_FILE="$SANDBOX/reflash.log"
+  # And its identity cache, so tests neither write to /run nor inherit a value
+  # cached by an earlier test.
+  export REFLASH_CACHE_DIR="$SANDBOX/cache"
 }
 
 teardown_sandbox() {

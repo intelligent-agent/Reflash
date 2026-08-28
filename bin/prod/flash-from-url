@@ -19,10 +19,12 @@ info "---------------------"
 
 URL=$1
 
-mount-config
-CONFIG=$(ls "$CONFIG_DIR"/*.json)
-REVISION=$(grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]')
-unmount-config
+# One reader for the config partition, not three. This block was a third copy
+# of get-recore-revision, so it mounted the partition itself - and every extra
+# mount is a chance to collide with another reader on the transient systemd
+# unit, which is what stopped a flash finishing (#138). Calling the script also
+# means this gets the cache and the lock.
+REVISION=$(get-recore-revision)
 
 info "Found Recore hardware revision $REVISION"
 info "URL $URL"
