@@ -33,6 +33,11 @@ func setupTest(t *testing.T) string {
 	options = &Options{}
 	reflashVersion = ""
 	storageState = STORAGE_PREPARING
+	// Reset with the rest of the globals. Without this the counter and the
+	// timed-out flag leak between subtests, and "no drive at all" would inherit
+	// a timeout from whichever test ran before it and report a broken drive.
+	storageWait = 0
+	storageTimedOut = false
 	// Package-level upload state outlives a single test, and a stale
 	// lastChunkAt would make the liveness check fire in an unrelated one.
 	lastChunkAt = time.Time{}
@@ -260,6 +265,50 @@ n=$((n+1)); echo $n > `+counter+`
 	})
 }
 
+// The screen counts while it waits, and says so plainly when the wait runs out
+// (#131). A static "Preparing USB drive" is indistinguishable from a hang - the
+// original report was literally "the text on the screen gets stuck there" - and
+// this frame is what someone sees on the board itself, which on a first boot is
+// the only surface available until the web UI is reachable.
+func TestStorageFrameCounts(t *testing.T) {
+	t.Run("preparing shows how long it has waited", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE, BytesTotal: 1}
+		setStorage(STORAGE_PREPARING)
+		setStorageWait(12)
+
+		msg, _, ok := storageFrame()
+		if !ok || msg != "Preparing USB drive (12s/180s)" {
+			t.Errorf("got %q ok=%v, want the elapsed seconds in the message", msg, ok)
+		}
+	})
+
+	t.Run("a drive that never came ready is called out as broken", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE, BytesTotal: 1}
+		setStorage(STORAGE_FAILED)
+		setStorageTimedOut()
+
+		msg, _, ok := storageFrame()
+		if !ok || msg != "Drive not ready - it may be broken" {
+			t.Errorf("got %q ok=%v, want the broken-drive message", msg, ok)
+		}
+	})
+
+	// Absent hardware is not a broken drive, and saying so would send someone
+	// hunting a fault in a stick that was never plugged in.
+	t.Run("no drive at all keeps the plain message", func(t *testing.T) {
+		setupTest(t)
+		state = &State{State: IDLE, BytesTotal: 1}
+		setStorage(STORAGE_FAILED)
+
+		msg, _, ok := storageFrame()
+		if !ok || msg != "No USB drive" {
+			t.Errorf("got %q ok=%v, want the plain no-drive message", msg, ok)
+		}
+	})
+}
+
 // The first frame and every later redraw take their message and progress from
 // here. They used to decide separately and disagreed: the first passed 0, which
 // drew a progress bar for the moment before the first redraw replaced it.
@@ -269,7 +318,7 @@ func TestStorageFrame(t *testing.T) {
 		msg     string
 		bar     bool // is there a progress bar
 	}{
-		{STORAGE_PREPARING, "Preparing USB drive", false},
+		{STORAGE_PREPARING, "Preparing USB drive (0s/180s)", false},
 		{STORAGE_FAILED, "No USB drive", false},
 		{STORAGE_READY, "", false},
 	}
