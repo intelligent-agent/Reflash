@@ -108,6 +108,45 @@ else
 	echo "DRAM rail left at 1.36V (eMMC model: ${emmcmodel})"
 fi
 
+# The same two revisions also cannot survive a DRAM frequency CHANGE, which is
+# a separate fault from the rail being low. Every devfreq transition retrains
+# the controller - tREFI, tRFC and ODT are all reprogrammed around a hardware
+# MDFS cycle - and where signal-integrity margin is thin that corrupts memory
+# rather than failing cleanly.
+#
+# Measured on A6 s/n 0288: with scaling active the first kernel fault arrived
+# 24, 25, 25, 25 and 99 seconds after boot on five consecutive boots, each time
+# in a different and unrelated subsystem - apparmor, memcpy inside an ext4
+# write, the CFS scheduler, then RCU stalls. That scatter is corruption, not a
+# logic bug. With the controller disabled the same board ran 38 minutes with no
+# fault at all.
+#
+# Reflash needs this at least as much as a flashed image does: it is the thing
+# writing a 1.2GB image to eMMC, and corruption landing on already-decompressed
+# data in the write path has no checksum to catch it.
+#
+# Disabling the node stops the driver probing, so nothing can change the
+# frequency and DRAM stays where the SPL left it - the top OPP, which is what
+# CONFIG_DRAM_CLK configured. Nothing here depends on it: the only consumer of
+# this interconnect in the A64 dtsi is csi, which is itself disabled. A7/A8/B0
+# keep scaling and keep the power saving.
+#
+# Restores what 6ea72f2 did in 2023, lost when bb90933 removed the armbian
+# directory that carried it.
+if test -n "${dram_uv}"; then
+	setenv mbus_node "/soc/dram-controller@1c62000"
+	fdt set ${mbus_node} status "disabled"
+	# Read back, for the same reason as the rail above: the node path is
+	# hardcoded, and a silent miss boots an A6 with scaling still live while
+	# looking exactly like success.
+	fdt get value mbus_check ${mbus_node} status
+	if test "${mbus_check}" = "disabled"; then
+		echo "DRAM frequency scaling disabled for ${emmcmodel}"
+	else
+		echo "WARNING: could not disable DRAM scaling for ${emmcmodel} (got ${mbus_check})"
+	fi
+fi
+
 if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/allwinner/overlay/${overlay_prefix}-fixup.scr; then
 	echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
 	source ${load_addr}
