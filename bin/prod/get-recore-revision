@@ -1,8 +1,31 @@
 #!/bin/bash
 
-set -o pipefail
+# Fail rather than print nothing.
+#
+# This had only `set -o pipefail`, so a failed mount-config did not stop it: the
+# ls then failed, CONFIG was empty, `grep Revision ""` printed nothing, and the
+# script exited 0 having produced an empty string. Callers cannot tell that from
+# a successful read, and flash-cleanup went on to skip every per-revision step -
+# the Klipper config and the device tree symlink that decides whether an A5/A6
+# gets its 1.5V rail. The board booted, looked fine, and ran its DDR3 65mV under
+# spec (#138).
+set -euo pipefail
+
+CONFIG_DIR="${REFLASH_CONFIG_DIR:-/mnt/config}"
 
 mount-config
-CONFIG=$(ls /mnt/config/*.json)
-grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]'
-unmount-config
+# Unconditional, like get-recore-serial-number: under set -e any failure below
+# would otherwise leave the mount and its transient systemd unit dangling.
+trap unmount-config EXIT
+
+CONFIG=$(ls "$CONFIG_DIR"/*.json)
+REVISION=$(grep Revision "$CONFIG" | cut -d '"' -f 4 | tr '[:upper:]' '[:lower:]')
+
+# grep succeeding is not enough: a config with a Revision line but no value
+# gets through the pipeline and yields an empty string just the same.
+if [ -z "$REVISION" ]; then
+    echo "no Revision value in $CONFIG" >&2
+    exit 1
+fi
+
+echo "$REVISION"
