@@ -214,6 +214,50 @@ func TestStorageReadiness(t *testing.T) {
 			t.Error("options marked dirty with no drive to save them to")
 		}
 	})
+
+	// The bug behind the #131 report: usb-ready stays false while
+	// ssh-keygen-boot holds the drive. On a FIRST boot - expand-usb creating
+	// sda2 and formatting it, then host keys written onto the new filesystem -
+	// that took 44.19s on an A7, against a 30s budget. Reflash gave up at
+	// 34.61s, mounted anyway, got "Can't open blockdev" because the unit still
+	// had the drive, and marked storage failed on a drive with no faults: the
+	// kernel logged clean mounts throughout and 248MiB read at 22.9MB/s.
+	//
+	// So the wait has to outlast a slow first boot, not just a warm one.
+	t.Run("keeps waiting while the drive is still being prepared", func(t *testing.T) {
+		dir := setupTest(t)
+		fakeBin(t, dir, "get-hostnames", `echo "recore.local"`)
+		counter := filepath.Join(dir, "usb-ready-calls")
+		// False for the first 40 polls, as if ssh-keygen-boot were still
+		// holding the drive, then true. Comfortably past the old budget of 30.
+		fakeBin(t, dir, "usb-ready", `n=$(cat `+counter+` 2>/dev/null || echo 0)
+n=$((n+1)); echo $n > `+counter+`
+[ "$n" -ge 40 ] && echo true || echo false`)
+		fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+		origRetries, origDelay := mountRetries, mountRetryDelay
+		mountRetryDelay = time.Millisecond
+		defer func() { mountRetries, mountRetryDelay = origRetries, origDelay }()
+		origWifi := startWifiBringup
+		startWifiBringup = func() {}
+		defer func() { startWifiBringup = origWifi }()
+
+		state = &State{State: IDLE, BytesTotal: 1}
+		options = &Options{}
+		setStorage(STORAGE_PREPARING)
+
+		slowInit()
+
+		if getStorage() == STORAGE_FAILED {
+			t.Errorf("gave up on a drive that was merely slow to be released")
+		}
+		raw, err := os.ReadFile(counter)
+		if err != nil {
+			t.Fatalf("usb-ready was never called: %v", err)
+		}
+		if n := strings.TrimSpace(string(raw)); n != "40" {
+			t.Errorf("polled usb-ready %s times, want 40 - it should stop as soon as the drive is ready", n)
+		}
+	})
 }
 
 // The first frame and every later redraw take their message and progress from

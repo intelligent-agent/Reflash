@@ -252,8 +252,22 @@ func bootPhase(name string, f func()) {
 // stay synchronous.
 // How long to keep trying the mount before calling the drive unavailable.
 // Vars so tests do not have to sit through it.
+//
+// 30 was sized against usb-ready's own estimate of "~9s on a fresh stick" and
+// is not enough on a FIRST boot, where expand-usb creates sda2 and formats it
+// before ssh-keygen-boot writes host keys onto the new filesystem. Measured on
+// an A7: ssh-keygen-boot.service took 44.19s, Reflash gave up at 34.61s, and
+// then mounted anyway and got "Can't open blockdev" because the unit still had
+// the drive. Storage was marked failed on a drive with no faults at all - the
+// kernel logged clean mounts throughout and 248MiB read at 22.9MB/s.
+//
+// Three minutes because the failure this budget guards against is rare and
+// cheap to wait out - Reflash boots FROM this drive, so a genuinely absent
+// partition means something is already badly wrong - while giving up too early
+// costs a working board its storage. Formatting a large stick on slower
+// hardware has plenty of room to exceed 44s.
 var (
-	mountRetries    = 30
+	mountRetries    = 180
 	mountRetryDelay = time.Second
 )
 
@@ -278,9 +292,17 @@ func slowInit() {
 			if runCommandReturnBool("usb-ready") {
 				return
 			}
+			// Say so periodically. A silent wait is indistinguishable from a
+			// hang, and on a first boot this legitimately takes the best part
+			// of a minute (#131).
+			if i > 0 && i%15 == 0 {
+				logInfo(fmt.Sprintf("Still waiting for the USB drive (%ds of %ds)",
+					i*int(mountRetryDelay/time.Second), mountRetries*int(mountRetryDelay/time.Second)))
+			}
 			time.Sleep(mountRetryDelay)
 		}
-		logError("Timed out waiting for the USB drive to become available")
+		logError(fmt.Sprintf("Timed out waiting for the USB drive to become available after %ds",
+			mountRetries*int(mountRetryDelay/time.Second)))
 	})
 
 	var mountErr error
