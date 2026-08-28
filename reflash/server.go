@@ -1283,7 +1283,24 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload magic finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	// Check it rather than pass it on. runCommandReturnString drops the error
+	// (stdout, _, _), so an empty string here is indistinguishable from a
+	// successful read - and flash-cleanup used to accept it and skip every
+	// per-revision step in silence, leaving an A5/A6 on the generic device tree
+	// with its DDR3 65mV under spec (#138). flash-cleanup now refuses too; this
+	// is the layer that can say something useful about it.
 	revision := runCommandReturnString("get-recore-revision")
+	if revision == "" {
+		logError("Could not determine the Recore hardware revision - the eMMC " +
+			"config partition is unreadable. Refusing to run cleanup, because " +
+			"it would install a generic device tree and the board would look " +
+			"flashed but be wrong.")
+		state.State = ERROR
+		state.Error = "Could not read the board revision. Reboot and try again."
+		http.Error(w, state.Error, http.StatusInternalServerError)
+		return
+	}
+	logInfo("Recore hardware revision: " + revision)
 	stdout, _, err := runCommand2("flash-cleanup", revision)
 	if err != nil {
 		logError("Error encountered during cleanup: \n" + stdout)
