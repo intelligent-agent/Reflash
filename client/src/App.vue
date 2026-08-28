@@ -935,15 +935,32 @@ export default {
     // The parts that actually change. Cheap: no mounts, so this is what the
     // flash-state transitions call.
     async getStatus() {
-      const response = await axios.get(`/api/get_status`);
-      this.localImages = response.data.local_images;
-      this.bytesAvailable = response.data.bytes_available;
-      this.network = response.data.network;
-      this.storage = response.data.storage;
-      // The server now answers before the USB drive is mounted, so keep asking
-      // until it is. Bounded by construction: it stops as soon as storage
-      // leaves PREPARING, and only fires while the board is still starting up.
-      if (this.storage === "PREPARING") {
+      try {
+        const response = await axios.get(`/api/get_status`);
+        this.localImages = response.data.local_images;
+        this.bytesAvailable = response.data.bytes_available;
+        this.network = response.data.network;
+        this.storage = response.data.storage;
+      } catch (err) {
+        // Swallowed on purpose, so the retry below still happens. There was no
+        // catch here, so ONE failed request ended the polling for good: the
+        // await rejected, the function returned before re-arming, and nothing
+        // else calls getStatus while the board is still starting up. The board
+        // finished preparing and the page went on showing "Preparing" forever
+        // - which is the report in #131.
+        //
+        // Seen as NS_BINDING_ABORTED: a request the browser cancelled, not a
+        // server error, so nothing in the log hints at it.
+      }
+      // Keep asking while the drive is still being prepared - and while we have
+      // no answer at all, because storage starts as "" and a first poll that
+      // failed would otherwise never be retried.
+      //
+      // Still bounded: it stops as soon as storage is known and not PREPARING.
+      // That window is now long enough to matter - waiting for a stick that is
+      // being partitioned and formatted took 84.6s on an A7 - so a poll failing
+      // somewhere in it is likely rather than theoretical.
+      if (this.storage === "PREPARING" || this.storage === "") {
         setTimeout(this.getStatus, 1000);
       }
     },
