@@ -424,12 +424,13 @@ func ServerInit() {
 }
 
 func getInfo(w http.ResponseWriter, r *http.Request) {
+	infoRevision, infoSerial := boardIdentity()
 	var get_info *GetInfo = &GetInfo{
 		// Already read once at startup, and the file cannot change under a
 		// running server - no reason to shell out again per request.
 		ReflashVersion: reflashVersion,
-		RecoreRevision: runCommandReturnString("get-recore-revision"),
-		SerialNumber:   runCommandReturnString("get-recore-serial-number"),
+		RecoreRevision: infoRevision,
+		SerialNumber:   infoSerial,
 		EmmcVersion:    runCommandReturnString("get-emmc-version"),
 	}
 	json.NewEncoder(w).Encode(get_info)
@@ -462,8 +463,12 @@ func getNetworkStatus() NetworkStatus {
 }
 
 func getSerialNumber(w http.ResponseWriter, r *http.Request) {
+	// Through the cache: this endpoint is polled - by the config dialog and by
+	// the test rig, which used it to confirm which board it is talking to - and
+	// every uncached call mounted the config partition.
+	_, serial := boardIdentity()
 	var get_serial_number *GetSerialNumber = &GetSerialNumber{
-		SerialNumber: runCommandReturnString("get-recore-serial-number"),
+		SerialNumber: serial,
 	}
 	json.NewEncoder(w).Encode(get_serial_number)
 }
@@ -1289,7 +1294,7 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	// per-revision step in silence, leaving an A5/A6 on the generic device tree
 	// with its DDR3 65mV under spec (#138). flash-cleanup now refuses too; this
 	// is the layer that can say something useful about it.
-	revision := runCommandReturnString("get-recore-revision")
+	revision, _ := boardIdentity()
 	if revision == "" {
 		logError("Could not determine the Recore hardware revision - the eMMC " +
 			"config partition is unreadable. Refusing to run cleanup, because " +
@@ -1833,6 +1838,55 @@ func shutdownBoard(w http.ResponseWriter, r *http.Request) {
 	sendResponse(w, err)
 }
 
+// The board's identity, read once per boot.
+//
+// Both values live on the eMMC config partition, which is reached through a
+// TRANSIENT SYSTEMD MOUNT - and two readers of it collide:
+//
+//	Failed to start transient mount unit: Unit mnt-config.mount was already
+//	loaded or has a fragment file
+//
+// That is not theoretical. get_info reads both on every request, the UI polls
+// get_info, and a flash reads the revision again at the end; on the bench a
+// flash and a poll collided and flash-cleanup was refused its revision, so the
+// flash stopped rather than finish wrong (#138).
+//
+// Neither value can change while the board is running. They are provisioned by
+// create-recore-config, which is the one thing that invalidates this.
+//
+// The mutex is load-bearing beyond the caching: it serialises the reads, so two
+// requests arriving together cannot both be inside mount-config.
+var (
+	identityMu       sync.Mutex
+	cachedRevision   string
+	cachedSerial     string
+	identityIsCached bool
+)
+
+// boardIdentity returns the revision and serial number, reading them at most
+// once. A failed read is deliberately NOT cached: caching an empty revision
+// would make a transient mount failure permanent for the rest of the boot, and
+// an empty revision is exactly what #138 is about.
+func boardIdentity() (string, string) {
+	identityMu.Lock()
+	defer identityMu.Unlock()
+	if identityIsCached {
+		return cachedRevision, cachedSerial
+	}
+	revision := runCommandReturnString("get-recore-revision")
+	serial := runCommandReturnString("get-recore-serial-number")
+	if revision != "" {
+		cachedRevision, cachedSerial, identityIsCached = revision, serial, true
+	}
+	return revision, serial
+}
+
+func invalidateBoardIdentity() {
+	identityMu.Lock()
+	defer identityMu.Unlock()
+	identityIsCached = false
+}
+
 func isConfigPresent(w http.ResponseWriter, r *http.Request) {
 	_, _, err := runCommand2("get-recore-revision")
 	sendResponse(w, err)
@@ -1852,6 +1906,8 @@ func updateConfig(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
 	out, _, err := runCommand2("create-recore-config", strconv.Itoa(data.Snr))
+	// The one thing that changes the answer, so the one thing that drops it.
+	invalidateBoardIdentity()
 	// create-recore-config prints a specific, user-facing reason (missing
 	// calibration file vs. no internet connection) before exiting non-zero -
 	// surface that instead of the generic "exit status N" from err.
@@ -1994,7 +2050,8 @@ func getIPs() []string {
 }
 
 func getRecoreRevision() string {
-	return runCommandReturnString("get-recore-revision")
+	revision, _ := boardIdentity()
+	return revision
 }
 
 func saveOptions() error {
