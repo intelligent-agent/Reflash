@@ -26,6 +26,14 @@ if [ ! -d "$SYS_NET/$INTERFACE" ]; then
     exit 1
 fi
 
+# Drop any source-routing rule wifi-connect left behind. The address it was
+# written for is gone once we switch to AP mode, and a rule pointing at a
+# nonexistent source address is a trap for whoever debugs routing here next.
+for r in $(ip rule list 2>/dev/null | awk '/lookup 100/ {print $3}'); do
+    ip rule del from "$r" lookup 100 2>/dev/null || true
+done
+ip route flush table 100 2>/dev/null || true
+
 info "Switching $INTERFACE to access point mode ($AP_PROFILE)"
 
 # Drop any station association first. Without this the mode change can be

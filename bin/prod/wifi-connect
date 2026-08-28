@@ -82,6 +82,53 @@ for i in {1..3}; do
     fi
 done
 
+# Reply on the interface the request arrived on.
+#
+# With Ethernet also up on the same subnet, the main table sends everything for
+# that subnet out eth0 (metric 100) - including replies to connections that
+# arrived on wlan0. Those replies leave the wire carrying the WiFi interface's
+# source IP, which teaches the AP's bridge that this address lives on the wired
+# side, and it stops forwarding frames for it over the air.
+#
+# The result is a connection that half-works and is very hard to read: the SYN
+# gets in (it arrives before the mislearning), the board answers, and then the
+# client's ACK never reaches it. The socket sits in SYN-RECV retransmitting
+# SYN-ACK while the client believes it is connected and waits for a response
+# that cannot come. Captured on an A6 (Reflash #126):
+#
+#   client -> 90:de:80:97:db:67  [S]     SYN, to the wlan0 MAC
+#   board  -> client             [SA]    from 02:ba:33:9b:1e:76 - the eth0 MAC
+#   client -> 90:de:80:97:db:67  [A]     ACK - never arrives
+#   board  -> client             [SA]    retransmits, three more times
+#
+# Measured: HTTP to the WiFi address went from timing out at 20s to answering in
+# 0.017s. It also removes a large latency penalty that was there even when it
+# did work - 685ms for the same request.
+#
+# Not rp_filter (0 on every interface here) and not an MTU black hole (1472-byte
+# DF pings pass both ways). Nothing needed on the Ethernet side: its replies
+# already leave the interface they arrived on.
+install_source_route() {
+    local addr=$1 table=100
+    [ -n "$addr" ] || return 0
+    local net gw
+    net=$(ip -4 route show dev "$INTERFACE" scope link | awk '/\/[0-9]+/ {print $1; exit}')
+    gw=$(ip -4 route show default dev "$INTERFACE" | awk '/via/ {print $3; exit}')
+
+    ip rule del from "$addr" lookup "$table" 2>/dev/null || true
+    ip route flush table "$table" 2>/dev/null || true
+
+    [ -n "$net" ] && ip route add "$net" dev "$INTERFACE" src "$addr" table "$table" 2>/dev/null
+    [ -n "$gw" ]  && ip route add default via "$gw" dev "$INTERFACE" table "$table" 2>/dev/null
+    ip rule add from "$addr" lookup "$table" 2>/dev/null
+
+    if ip route get 1.1.1.1 from "$addr" 2>/dev/null | grep -q "dev $INTERFACE"; then
+        info "Source routing: traffic from $addr now leaves $INTERFACE"
+    else
+        info "WARNING: could not install source routing for $addr - the WiFi address may be unreachable while Ethernet is up"
+    fi
+}
+
 # 5. Wait and verify IP address
 info "Waiting for DHCP..."
 MAX_RETRIES=30
@@ -90,6 +137,7 @@ while [ $COUNT -lt $MAX_RETRIES ]; do
     IP=$(ip addr show "$INTERFACE" | grep "inet " | awk '{print $2}')
     if [ -n "$IP" ]; then
         info "Success! Connected with IP: $IP"
+        install_source_route "${IP%%/*}"
         exit 0
     fi
     sleep 1
