@@ -106,6 +106,7 @@ EOF
 #!/usr/bin/env bash
 echo "iwctl $*" >> "$CALLS"
 if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then echo "      HomeNet                 psk       ****"; fi
 exit 0
 EOF
   chmod +x "$SHIMDIR/iwctl"
@@ -132,6 +133,7 @@ EOF
 #!/usr/bin/env bash
 echo "iwctl $*" >> "$CALLS"
 if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then echo "      HomeNet                 psk       ****"; fi
 if [ "$1 $2 $3" = "station wlan0 connect" ]; then exit 1; fi
 exit 0
 EOF
@@ -149,6 +151,7 @@ EOF
 #!/usr/bin/env bash
 echo "iwctl $*" >> "$CALLS"
 if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then echo "      HomeNet                 psk       ****"; fi
 exit 0
 EOF
   chmod +x "$SHIMDIR/iwctl"
@@ -176,6 +179,7 @@ no_lease_in_state() {
 #!/usr/bin/env bash
 echo "iwctl \$*" >> "\$CALLS"
 if [ "\$1 \$2 \$3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "\$1 \$2 \$3" = "station wlan0 get-networks" ]; then echo "      HomeNet                 psk       ****"; fi
 if [ "\$1 \$2 \$3" = "station wlan0 show" ]; then echo "      State       $1"; fi
 exit 0
 EOF
@@ -262,6 +266,7 @@ EOF2
 #!/usr/bin/env bash
 echo "iwctl $*" >> "$CALLS"
 if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then echo "      HomeNet                 psk       ****"; fi
 exit 0
 EOF
   chmod +x "$SHIMDIR/iwctl"
@@ -296,6 +301,7 @@ EOF
 #!/usr/bin/env bash
 echo "iwctl $*" >> "$CALLS"
 if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then echo "      HomeNet                 psk       ****"; fi
 exit 0
 EOF
   chmod +x "$SHIMDIR/iwctl"
@@ -331,4 +337,90 @@ EOF
   # trap for whoever debugs routing here next.
   grep -q "ip rule del from 192.168.1.50 lookup 100" "$CALLS"
   grep -q "ip route flush table 100" "$CALLS"
+}
+
+# --- #140: the scan window must be a condition, not a fixed sleep ------------
+
+@test "wifi-connect: waits for a slow scan instead of giving up (#140)" {
+  with_adapter
+  # The network only shows up on the fourth get-networks, which is past the old
+  # fixed budget of sleep 3 plus three tries. A dual-band scan really is slower
+  # than a 2.4GHz one, and this is the case that used to fail.
+  cat > "$SHIMDIR/iwctl" <<'EOF'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then
+  # $CALLS is the only sandbox path exported to a shim, so it doubles as the
+  # counter: this call has already been logged above.
+  n=$(grep -c "station wlan0 get-networks" "$CALLS")
+  [ "$n" -ge 4 ] && echo "      SlowNet                 psk       ****"
+fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+echo "    inet 192.168.1.50/24 brd 192.168.1.255 scope global wlan0"
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+  run "$PROD_BIN/wifi-connect" SlowNet hunter2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Found SlowNet in scan results."* ]]
+  assert_called_with "station wlan0 connect SlowNet"
+}
+
+@test "wifi-connect: a network missing from the scan is still attempted (#140)" {
+  with_adapter
+  export WIFI_SCAN_TIMEOUT=3
+  cat > "$SHIMDIR/iwctl" <<'EOF'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then echo "      SomethingElse           psk       ****"; fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+echo "    inet 192.168.1.50/24 brd 192.168.1.255 scope global wlan0"
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+  run "$PROD_BIN/wifi-connect" Absent hunter2
+  # The point of the change: the parse is advisory. get-networks is a
+  # human-readable table, and if it is ever misread, a network that is really
+  # there must not become unreachable - the connect goes ahead and succeeds.
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"did not appear in a scan"* ]]
+  [[ "$output" == *"trying anyway"* ]]
+  assert_called_with "station wlan0 connect Absent"
+}
+
+@test "wifi-connect: a similar name is not mistaken for the one asked for (#140)" {
+  with_adapter
+  export WIFI_SCAN_TIMEOUT=3
+  cat > "$SHIMDIR/iwctl" <<'EOF'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then echo "      HomeNet_5GHz            psk       ****"; fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+echo "    inet 192.168.1.50/24 brd 192.168.1.255 scope global wlan0"
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+  run "$PROD_BIN/wifi-connect" HomeNet hunter2
+  # HomeNet_5GHz being in range must not read as HomeNet - the scan check has to
+  # say "did not appear" - but it still must not block the attempt.
+  [[ "$output" == *"did not appear in a scan"* ]]
+  assert_called_with "station wlan0 connect HomeNet"
 }
