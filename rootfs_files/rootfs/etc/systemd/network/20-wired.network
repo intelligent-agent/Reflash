@@ -9,3 +9,23 @@ MulticastDNS=yes
 # Says "prefer wired" outright rather than relying on the default metric
 # happening to be lower than whatever iwd picks.
 RouteMetric=100
+
+# Identify by MAC, not by the default DUID.
+#
+# The DUID systemd builds is derived from /etc/machine-id, and this root fs
+# ships one machine-id to every board - so every Recore running Reflash asks
+# the DHCP server the same question and is handed the same answer. Two boards
+# in Reflash at once take the same lease and both answer at that address.
+#
+# That is not theoretical: on 2026-09-05 two boards on the test bench were both
+# at 192.168.32.110, ARP replies raced, and a job aimed at one of them logged
+# into the other and rebooted it. Measured on the board afterwards - the client
+# ID was "IAID:0xf8ce1ba1/DUID" and the lease .110; with the line below it
+# became "02:ba:99:63:03:15" and the board moved to its own .133, freeing .110.
+#
+# Not fixed by clearing machine-id, which is the usual answer: this root fs
+# runs from an initrd, so systemd would mint a new one every boot and the board
+# would take a different address each time. The MAC is unique per board and
+# stable across reboots, which is what a DHCP identity should be. It also keeps
+# a board on one address whether it is running Reflash or Rebuild.
+ClientIdentifier=mac
