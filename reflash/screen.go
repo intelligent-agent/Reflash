@@ -160,6 +160,73 @@ func ScreenClose() {
 	syscall.Munmap(fbMem)
 }
 
+// The cube, in one place so drawLogo and the layout cannot disagree about how
+// much room it takes.
+const (
+	logoSide   = 40 // the front face
+	logoSkew   = 15 // how far the back face is offset, up and to the right
+	logoHeight = logoSide + logoSkew
+	logoWidth  = logoSide + logoSkew
+)
+
+// The panel's centre column: rows are gathered, measured, then placed.
+//
+// Every row used to be positioned by a fixed offset from fb_min/2, which
+// centres a block only if the block's height is fixed - and this one's is not.
+// The IDLE screen grows a line per address and another for the version, so a
+// board showing three addresses drew its content 55px below centre while a
+// board showing one looked fine. Rotated 90 degrees that reads as text pushed
+// sideways, which is how it was reported (Reflash #139).
+//
+// Extents are deliberately nominal rather than measured from the ink: a text
+// row is sized by the font's ascent and descent, so two rows of the same size
+// occupy the same height whatever letters they hold, and the layout does not
+// shift as the status text changes.
+type column struct {
+	img      *image.RGBA
+	top, bot int
+	any      bool
+	rows     []func(shift int)
+}
+
+func (c *column) span(top, bot int) {
+	if !c.any || top < c.top {
+		c.top = top
+	}
+	if !c.any || bot > c.bot {
+		c.bot = bot
+	}
+	c.any = true
+}
+
+func (c *column) logo(y int) {
+	c.span(y, y+logoHeight)
+	c.rows = append(c.rows, func(s int) { drawLogo(c.img, y+s) })
+}
+
+// baseline, not top: that is what drawText positions on.
+func (c *column) text(t string, size float64, baseline int) {
+	c.span(baseline-int(size*0.75), baseline+int(size*0.25))
+	c.rows = append(c.rows, func(s int) { drawText(c.img, t, size, baseline+s) })
+}
+
+func (c *column) bar(y int, progress float32) {
+	// drawProgressBar draws 18px either side of y, plus a 6px margin.
+	c.span(y-24, y+24)
+	c.rows = append(c.rows, func(s int) { drawProgressBar(c.img, y+s, progress) })
+}
+
+// Shift the gathered rows so the block's middle lands on the panel's middle.
+func (c *column) place() {
+	if !c.any {
+		return
+	}
+	shift := fb_min/2 - (c.top+c.bot)/2
+	for _, r := range c.rows {
+		r(shift)
+	}
+}
+
 // TODO: This is horrobly inefficient and should be optimized.
 func Draw(progress float32, state string, rot int, ips []string, version string) {
 	// No framebuffer mapped → ScreenInit either failed (headless) or was
@@ -171,13 +238,17 @@ func Draw(progress float32, state string, rot int, ips []string, version string)
 	img = image.NewRGBA(image.Rect(0, 0, fb_min, fb_min))
 	clear(img)
 
+	// Offsets below are still relative to fb_min/2, so the spacing between rows
+	// is unchanged; c.place() then moves the block as a whole onto the centre.
+	c := &column{img: img}
+
 	if isRebootArmed() {
 		// A flash finished; prompt the user to pull the USB drive (the board
 		// reboots into the new image on removal). Keyed off the arm flag, not
 		// the state, because getProgress flips FINISHED->IDLE on the first poll.
-		drawLogo(img, (fb_min/2)-95)
-		drawText(img, "REFLASH", 50, (fb_min/2)+55)
-		drawText(img, "Flash complete", 28, (fb_min/2)+110)
+		c.logo((fb_min / 2) - 95)
+		c.text("REFLASH", 50, (fb_min/2)+55)
+		c.text("Flash complete", 28, (fb_min/2)+110)
 		// Acknowledge the removal. This used to say "Remove USB drive"
 		// regardless, so after pulling the drive the panel went on instructing
 		// the user to do the thing they had just done, with no feedback until
@@ -186,45 +257,61 @@ func Draw(progress float32, state string, rot int, ips []string, version string)
 		// stick". Wording follows TheUsbChecker.vue so the panel and the web
 		// UI say the same thing.
 		if usbStillPresent() {
-			drawText(img, "Remove USB drive", 28, (fb_min/2)+145)
+			c.text("Remove USB drive", 28, (fb_min/2)+145)
 		} else if rebootWhenDone() {
-			drawText(img, "USB removed, rebooting", 28, (fb_min/2)+145)
+			c.text("USB removed, rebooting", 28, (fb_min/2)+145)
 		} else {
-			drawText(img, "USB removed, ready to reboot", 28, (fb_min/2)+145)
+			c.text("USB removed, ready to reboot", 28, (fb_min/2)+145)
 		}
 	} else if state == "IDLE" {
-		drawLogo(img, (fb_min/2)-95)
-		drawText(img, "REFLASH", 50, (fb_min/2)+55)
+		c.logo((fb_min / 2) - 95)
+		c.text("REFLASH", 50, (fb_min/2)+55)
 		for i, s := range ips {
-			drawText(img, s, 20, (fb_min/2)+125+(20*i))
+			c.text(s, 20, (fb_min/2)+125+(20*i))
 		}
 		// The screen is sometimes the only information available (e.g. no
 		// network reachable yet) - show the running version so it's visible
 		// without needing the web UI.
 		if version != "" {
-			drawText(img, version, 16, (fb_min/2)+125+(20*len(ips))+20)
+			c.text(version, 16, (fb_min/2)+125+(20*len(ips))+20)
 		}
 	} else {
 		// A negative progress means there is nothing to measure - the board is
 		// waiting on something whose duration it cannot know, like the drive
 		// being partitioned. A bar frozen at zero reads as "stuck"; the message
 		// on its own reads as "working".
+		//
+		// The status line does not keep the bar's slot when there is no bar.
+		// It used to: the baseline was the same whether or not drawProgressBar
+		// ran, so on a step with nothing to measure the message sat ~220px
+		// below REFLASH with a blank strip between them, which is what #139
+		// reports - and "Preparing USB drive" is precisely such a step, since
+		// partitioning has no duration to report. 55 is the gap the
+		// reboot-armed screen already uses between REFLASH and the line under
+		// it, so this is the spacing that screen has always shipped rather
+		// than a new invention.
 		if fb_min > 700 {
-			drawLogo(img, (fb_min/2)-250)
-			drawText(img, "REFLASH", 50, (fb_min/2)-100)
+			c.logo((fb_min / 2) - 250)
+			c.text("REFLASH", 50, (fb_min/2)-100)
 			if progress >= 0 {
-				drawProgressBar(img, (fb_min / 2), progress)
+				c.bar((fb_min / 2), progress)
+				c.text(state, 30, (fb_min/2)+120)
+			} else {
+				c.text(state, 30, (fb_min/2)-100+55)
 			}
-			drawText(img, state, 30, (fb_min/2)+120)
 		} else {
-			drawLogo(img, (fb_min/2)-210)
-			drawText(img, "REFLASH", 50, (fb_min/2)-(110-50))
+			c.logo((fb_min / 2) - 210)
+			c.text("REFLASH", 50, (fb_min/2)-(110-50))
 			if progress >= 0 {
-				drawProgressBar(img, (fb_min / 2), progress)
+				c.bar((fb_min / 2), progress)
+				c.text(state, 30, (fb_min/2)+60+36)
+			} else {
+				c.text(state, 30, (fb_min/2)-(110-50)+55)
 			}
-			drawText(img, state, 30, (fb_min/2)+60+36)
 		}
 	}
+
+	c.place()
 
 	if rot == 90 {
 		img = rotate90Degrees(img)
@@ -331,9 +418,14 @@ func drawRect(img *image.RGBA, x int, y int, w int, h int) {
 }
 
 func drawLogo(img *image.RGBA, y int) {
-	s := 40
-	o := 15
-	x := (fb_min / 2) - 20
+	s := logoSide
+	o := logoSkew
+	// Centre the whole cube, not just its front face. This was
+	// (fb_min/2)-logoSide/2, which centres the 40px face and then lets the
+	// skew carry the back face 15px right with nothing to balance it - so the
+	// cube sat 7.5px right of the text under it, on every screen (Reflash
+	// #139).
+	x := (fb_min - logoWidth) / 2
 	drawRect(img, x, y, s, s)
 
 	drawLine(img, x, y, x+o, y+o, white)
