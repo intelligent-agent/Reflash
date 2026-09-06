@@ -152,6 +152,58 @@ if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/allwinner/overlay/${overl
 	source ${load_addr}
 fi
 
+# Bring up HDMI ourselves when the eMMC's U-Boot is too old to do it.
+#
+# The panel is driven by simpledrm, which programs no hardware: it inherits the
+# framebuffer U-Boot set up and published as /chosen/framebuffer-hdmi. A U-Boot
+# from before the Recore display patches does neither half. It has no hdmi-vbus
+# regulator, so PG9 is never asserted, the sink never powers, EDID reads fail
+# and sunxi_dw_hdmi does not probe; and it is built without
+# CONFIG_VIDEO_DT_SIMPLEFB, so ft_board_setup() never calls
+# sunxi_simplefb_setup() and the node reaches Linux still empty and disabled.
+# The result is a black panel and no /dev/fb0, and Linux cannot recover from it
+# because this kernel has no sun4i-drm to fall back to.
+#
+# The stick cannot replace that U-Boot, but from here it can do its job.
+#
+# Detection is a feature test, not a version string: the hdmi-vbus regulator
+# exists only in the patched U-Boot. It has to be read from U-Boot's OWN
+# control DT - the kernel DTB has a node of the same name, so testing the wrong
+# blob would always answer "new" and silently skip this.
+setenv ub_hdmi
+fdt addr ${fdtcontroladdr}
+fdt get value ub_hdmi /hdmi-vbus regulator-name
+fdt addr ${fdt_addr_r}
+
+if test "${ub_hdmi}" = "hdmi-vbus"; then
+	echo "U-Boot brings up HDMI itself"
+else
+	echo "Old U-Boot: bringing up HDMI and publishing the framebuffer"
+	# PG9 is the HDMI VBUS rail.
+	gpio set PG9
+	# U-Boot probes lazily, so DE2 and HDMI are both still unprobed here.
+	# Any output through the video console forces both to probe, which is
+	# what actually lights the panel and allocates the framebuffer.
+	setenv stdout serial,vidconsole
+	echo reflash
+	setenv stdout serial
+	# Exactly what sunxi_simplefb_setup() would have written. 0x7e000000 and
+	# 1080x1920 are where this U-Boot's video_reserve() lands with 1GB of
+	# DRAM; "bdinfo" prints them as FB base / FB size if a board disagrees.
+	fdt set /chosen/framebuffer-hdmi reg <0x0 0x7e000000 0x0 0x7e9000>
+	fdt set /chosen/framebuffer-hdmi width <1080>
+	fdt set /chosen/framebuffer-hdmi height <1920>
+	fdt set /chosen/framebuffer-hdmi stride <4320>
+	fdt set /chosen/framebuffer-hdmi format x8r8g8b8
+	fdt set /chosen/framebuffer-hdmi status okay
+	# Keep Linux out of the framebuffer. U-Boot does this by shrinking
+	# /memory, which is not available to a boot script: arch_fixup_fdt()
+	# rewrites /memory from U-Boot's own DRAM banks during booti, after this
+	# script has run, so an "fdt memory" here is silently undone. The
+	# reserve map survives that, and Linux honours it.
+	fdt rsvmem add 0x7e000000 0x7e9000
+fi
+
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
 load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image
 
