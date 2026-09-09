@@ -204,8 +204,30 @@ else
 	fdt rsvmem add 0x7e000000 0x7e9000
 fi
 
-load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
-load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image
+# Aborting rather than falling through to booti: on a failed load booti jumps to
+# whatever is left at those addresses - leftover text from an earlier boot, in
+# the case that produced this - and the board takes a synchronous abort and
+# resets, printing a register dump instead of the reason. Exiting hands control
+# back to distro_bootcmd, which tries the next boot target: a real chance of
+# booting rather than a certain crash. It also stops at the FIRST failure, which
+# matters on a link that is failing - the second read would be another minute of
+# EHCI timeouts for data we are about to discard.
+#
+# This mirrors what Armbian does in config/bootscripts/boot-generic.cmd.template
+# ("run func_critical_error || exit"); the per-family scripts this one derives
+# from never got that fix. Reflash#132.
+if load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd; then
+	echo "Loaded ${prefix}uInitrd"
+else
+	echo "BOOT FAILED: cannot load ${prefix}uInitrd from ${devtype} ${devnum}"
+	exit
+fi
+if load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image; then
+	echo "Loaded ${prefix}Image"
+else
+	echo "BOOT FAILED: cannot load ${prefix}Image from ${devtype} ${devnum}"
+	exit
+fi
 
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
