@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -993,6 +994,18 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
+	// Refuse rather than reproduce the hang. Once cleanup has timed out the
+	// eMMC answers nothing until the board is power cycled, so another write
+	// would block in the same place and replace an actionable error with an
+	// eternal 100% (#137).
+	if emmcUnresponsive.Load() {
+		msg := "The eMMC stopped responding. Power cycle the board and try again."
+		logError("Refusing to write the eMMC: " + msg)
+		state.State = ERROR
+		state.Error = msg
+		http.Error(w, msg, http.StatusConflict)
+		return
+	}
 	var data *Download = &Download{}
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
@@ -1349,11 +1362,23 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logInfo("Recore hardware revision: " + revision)
-	stdout, _, err := runCommand2("flash-cleanup", revision)
+	// 15 minutes: long enough for e2fsck plus resize2fs on a multi-gigabyte
+	// rootfs on slow eMMC, short enough that a wedged card is reported rather
+	// than leaving the UI at 100% forever (#137).
+	stdout, _, err := runCommand2Timeout(15*time.Minute, "flash-cleanup", revision)
 	if err != nil {
 		logError("Error encountered during cleanup: \n" + stdout)
 		state.State = ERROR
-		state.Error = "An error was encountered during magic. Check log for details"
+		if strings.Contains(err.Error(), "timed out") {
+			// Say what to do, not what broke. The card is unresponsive and no
+			// further flash can succeed until the board is power cycled, so
+			// offering a retry here would only reproduce the hang.
+			emmcUnresponsive.Store(true)
+			state.Error = "The eMMC stopped responding during cleanup. " +
+				"Power cycle the board and try again."
+		} else {
+			state.Error = "An error was encountered during magic. Check log for details"
+		}
 	} else {
 		// Same tail as goInstall and goMagic. Without armReboot() this path
 		// finished silently (#123): drawScreen() keys "Flash complete / Remove
@@ -1437,6 +1462,18 @@ func startMagic(w http.ResponseWriter, r *http.Request) {
 	url := data.Url
 	state.BytesTotal = data.Size
 	state.Filename = data.Filename
+	// Refuse rather than reproduce the hang. Once cleanup has timed out the
+	// eMMC answers nothing until the board is power cycled, so another write
+	// would block in the same place and replace an actionable error with an
+	// eternal 100% (#137).
+	if emmcUnresponsive.Load() {
+		msg := "The eMMC stopped responding. Power cycle the board and try again."
+		logError("Refusing to write the eMMC: " + msg)
+		state.State = ERROR
+		state.Error = msg
+		http.Error(w, msg, http.StatusConflict)
+		return
+	}
 	state.State = MAGIC
 	last_size_check = time.Now()
 	bytes_last = 0
@@ -1700,6 +1737,18 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 	state.Filename = data.Filename
 	state.StartTime = data.StartTime
 	state.BytesTotal = getUncompressedSize(images_folder + "/" + data.Filename)
+	// Refuse rather than reproduce the hang. Once cleanup has timed out the
+	// eMMC answers nothing until the board is power cycled, so another write
+	// would block in the same place and replace an actionable error with an
+	// eternal 100% (#137).
+	if emmcUnresponsive.Load() {
+		msg := "The eMMC stopped responding. Power cycle the board and try again."
+		logError("Refusing to write the eMMC: " + msg)
+		state.State = ERROR
+		state.Error = msg
+		http.Error(w, msg, http.StatusConflict)
+		return
+	}
 	state.State = INSTALLING
 
 	go goInstall(state.Filename)
@@ -2058,6 +2107,85 @@ func redactArgs(cmds []string) []string {
 		}
 	}
 	return out
+}
+
+// Set when cleanup times out on an unresponsive eMMC. Once that has happened no
+// further flash into the same device can succeed - the card answers nothing
+// until the board is power cycled - so starting one would only reproduce the
+// hang and overwrite a clearer error with a vaguer one (#137).
+var emmcUnresponsive atomic.Bool
+
+// A buffer exec can write to while we read it. exec spawns its own goroutine to
+// copy a child's output into a non-*os.File writer, and on the timeout path
+// below we read the buffer while that goroutine is still running - a plain
+// bytes.Buffer would be a data race.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// runCommand2 with a deadline, for the calls that can block on hardware.
+//
+// cmd.Run() waits forever, and on a wedged eMMC that is exactly what happens:
+// e2fsck ends up in uninterruptible sleep inside flash-cleanup, and a magic
+// upload sits at 100% with error:"" until someone power cycles the board
+// (#137). Nothing distinguishes that from a flash still in progress.
+//
+// Two things this gets right, both of which rule out the obvious approaches:
+//
+//   - A timeout cannot kill a D-state child, so exec.CommandContext is no use
+//     here: it would cancel, fail to reap, and we would still block. This
+//     RETURNS on expiry and deliberately leaves the child where it is. The
+//     process and one goroutine leak, which is the lesser evil against hanging
+//     forever - and the board needs a power cycle regardless, which clears both.
+//
+//   - The deadline has to be generous. e2fsck -y -f and resize2fs on a
+//     multi-gigabyte eMMC rootfs legitimately take minutes; cutting off a slow
+//     but healthy board would be a worse bug than the one being fixed.
+func runCommand2Timeout(timeout time.Duration, cmds ...string) (string, string, error) {
+	cmd := exec.Command(resolveCmd(cmds[0]), cmds[1:]...)
+	var out, stderr syncBuffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		logError(fmt.Sprintf("%s", redactArgs(cmds)) + ": " + fmt.Sprint(err))
+		return out.String(), stderr.String(), err
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			logError(fmt.Sprintf("%s", redactArgs(cmds)) + ": " + fmt.Sprint(err) + ": " + strings.TrimSpace(stderr.String()))
+		}
+		return out.String(), stderr.String(), err
+	case <-time.After(timeout):
+		// Best effort only, and expected to do nothing when the child is
+		// blocked in the kernel. We do not wait on it.
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		err := fmt.Errorf("timed out after %s", timeout)
+		logError(fmt.Sprintf("%s", redactArgs(cmds)) + ": " + fmt.Sprint(err) +
+			" - the child is still running and will not be reaped; the board " +
+			"needs a power cycle")
+		return out.String(), stderr.String(), err
+	}
 }
 
 func runCommand2(cmds ...string) (string, string, error) {

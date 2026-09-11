@@ -1735,3 +1735,47 @@ func TestSecondMagicUploadOpensAFreshPipe(t *testing.T) {
 		t.Errorf("second upload wrote %q, want %q", got, "second")
 	}
 }
+
+// #137: a command that never returns must not hang the caller. flash-cleanup
+// blocked in e2fsck on a wedged eMMC and the magic upload sat at 100% with no
+// error for 20 minutes, because runCommand2 uses cmd.Run() with no deadline.
+//
+// Stubs rather than /bin/sleep: resolveCmd joins binDir, which setupTest points
+// at a temp dir, so a bare command name resolves differently depending on which
+// tests ran first.
+//
+// The stub here is killable, unlike the real D-state case, so this asserts only
+// the property the caller depends on: it comes back, promptly, with an error
+// that names the timeout.
+func TestRunCommand2TimeoutReturnsWhileChildRuns(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "slow-cmd", "sleep 30")
+
+	start := time.Now()
+	_, _, err := runCommand2Timeout(300*time.Millisecond, "slow-cmd")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error should name the timeout, got %q", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("took %s - it waited for the child instead of returning", elapsed)
+	}
+}
+
+// The happy path still behaves like runCommand2: output through, no error.
+func TestRunCommand2TimeoutPassesOutputThrough(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "quick-cmd", `echo hello`)
+
+	out, _, err := runCommand2Timeout(10*time.Second, "quick-cmd")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.TrimSpace(out) != "hello" {
+		t.Errorf("stdout = %q, want \"hello\"", strings.TrimSpace(out))
+	}
+}
