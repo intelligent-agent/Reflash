@@ -49,6 +49,27 @@ case "$1" in
         echo "$UDC_NAME" > UDC
         ;;
     stop)
+        # Do not unbind on the way down. The point of the teardown is to release
+        # the UDC so the service can be restarted at runtime; a reboot resets the
+        # controller anyway, so on shutdown it buys nothing - and it is the one
+        # step that can hang the board.
+        #
+        # `echo "" > UDC` unbinds through gserial_disconnect() while the ttyGS0
+        # getty and Reflash itself may still be closing their ports. Lose that
+        # race and the writing task parks in uninterruptible sleep: no panic,
+        # TimeoutStopSec cannot kill it, "reboot: Restarting system" never
+        # prints, and the board stays powered and hung with the console already
+        # gone. Measured at roughly one reboot in ten on a 0484 loop; the nine
+        # that worked cleared this same step in ~0.55s.
+        #
+        # The ordering drop-in on serial-getty@ttyGS0 closes the race for the
+        # runtime path. This closes it for shutdown, where the unbind is pure
+        # risk with no benefit.
+        if [ "$(systemctl is-system-running 2>/dev/null)" = "stopping" ]; then
+            echo "system is shutting down - leaving the gadget bound" >&2
+            exit 0
+        fi
+
         if [ -d "$GADGET_DIR" ]; then
             cd $GADGET_DIR
             echo "" > UDC
