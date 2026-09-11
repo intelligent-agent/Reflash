@@ -68,10 +68,23 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
        github.event.inputs.job == 'package')
     steps:
-    - name: Use tag as version
-      run: echo "VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
-
+    # fetch-depth: 0 for the tags. `make docker` stamps the image name and
+    # /etc/reflash-version from `git describe --always --tags`, and checkout
+    # defaults to a shallow clone with no tags fetched - so --tags matched
+    # nothing here and the --always fallback emitted a bare hash. The commit
+    # this repo calls v1.1.0-RC7-8-g214e110 shipped as "reflash-214e110", and
+    # the board reported "Reflash 214e110" with no way to tell which release
+    # that was. Tag builds looked fine only because the tag ref itself is
+    # fetched, which is why this went unnoticed on releases.
+    #
+    # This replaces a "Use tag as version" step that exported
+    # VERSION=${GITHUB_REF#refs/*/}: nothing ever read $VERSION, so it looked
+    # like it controlled the name while `make docker` recomputed it from git.
+    # Pass REFLASH_VERSION to the make invocation below if an explicit name is
+    # ever wanted.
     - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
     - name: Use Node.js '18'
       uses: actions/setup-node@v3
       with:

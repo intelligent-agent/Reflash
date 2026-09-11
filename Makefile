@@ -62,9 +62,23 @@ upload-go:
 # That is exactly what happened with the #123 fix - an image labelled
 # v1.1.0-RC6-43-g34f295d carried a binary built two days earlier, and the
 # hardware test "passed" by showing pre-fix behaviour.
+# The version stamped into the image, and therefore its filename: mkimage.sh
+# builds NAME="reflash-$(cat reflash-version)" and also copies the file to
+# /etc/reflash-version, so this string is what the board and the CI report.
+#
+# Overridable because `git describe` answers differently depending on how the
+# tree was cloned, not on what is being built. actions/checkout defaults to a
+# shallow clone with no tags, so on the self-hosted runner --tags has nothing
+# to match and the --always fallback emits a bare hash: the same commit that is
+# v1.1.0-RC7-8-g214e110 here built as "reflash-214e110" there, and the board
+# then reports "Reflash 214e110" with no way to tell which release it is.
+# The workflow now fetches tags, so the default resolves; this stays so a
+# caller can pin the name explicitly rather than depend on clone depth.
+REFLASH_VERSION ?= $(shell git describe --always --tags)
+
 docker: build-go build-vue
 	mkdir -p output
-	git describe --always --tags > docker-reflash/reflash-version
+	echo "$(REFLASH_VERSION)" > docker-reflash/reflash-version
 	cp mkimage.sh docker-reflash
 # Same trap as rootfs_files below: "cp" merges into an existing directory rather
 # than replacing it, so a script deleted from bin/prod stayed in the build
