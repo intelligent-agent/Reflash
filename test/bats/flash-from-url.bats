@@ -49,3 +49,18 @@ ERR
   [ "$status" -ne 0 ]
   [[ "$output" == *"unable to resolve host"* ]]
 }
+
+@test "flash-from-url: delegates post-flash work to hardened cleanup (#145)" {
+  # The image stream can be empty for this control-flow test; what matters is
+  # that a successful write invokes the one shared post-flash path, rather
+  # than the stale in-script partition/fsck implementation.
+  stub_silent wget
+  stub_silent xz
+  stub_silent sync
+  stub_silent flash-cleanup
+
+  run "$PROD_BIN/flash-from-url" http://example/image.img.xz
+  [ "$status" -eq 0 ]
+  assert_called_with "flash-cleanup a5"
+  [[ "$output" == *"Running post-flash cleanup"* ]]
+}
