@@ -68,65 +68,12 @@ rm -f "$WGET_ERR" "$XZ_ERR"
 info "Flashing done"
 sync
 
-# Re-read partition table
-partprobe ${OUTFILE}
+# Keep Magic-mode post-flash work in one place.  This used to be an older copy
+# of flash-cleanup, so it raced partprobe against udev and ran e2fsck before
+# /dev/mmcblk2p1 had reappeared (#145).  flash-cleanup waits for both nodes,
+# handles e2fsck's non-fatal repair statuses, and performs the common UUID,
+# filesystem-resize, host-key and device-tree setup.
+info "Running post-flash cleanup"
+flash-cleanup "$REVISION"
 
-info "Checking filesystems"
-e2fsck -y -f ${OUTFILE}p1
-e2fsck -y -f ${OUTFILE}p2
-
-# Create new uuids so they are different than the USB drive
-info "Creating new UUIDs"
-tune2fs -U random ${OUTFILE}p1
-tune2fs -U random ${OUTFILE}p2
-
-UUID1=$(blkid -s UUID -o value ${OUTFILE}p1)
-UUID2=$(blkid -s UUID -o value ${OUTFILE}p2)
-
-mkdir -p $EMMC_MNT
-# mount and exchange UUID
-mount ${OUTFILE}p2 $EMMC_MNT
-info "Updating fstab with new UUIDs"
-sed -i "s:UUID=.* \/ :UUID=${UUID2} / :" $EMMC_MNT/etc/fstab
-sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" $EMMC_MNT/etc/fstab
-
-# Copy config file, if one is not already present
-if test -d $EMMC_MNT/home/printer; then
-  cd $EMMC_MNT/home/printer || exit
-  if test -f klipper/config/generic-recore-"$REVISION".cfg; then
-    info "Installing Klipper config file"
-    cp klipper/config/generic-recore-"$REVISION".cfg printer_data/config/printer.cfg
-  fi
-  # Enable mainsail on mainsail distros
-  if test -f printer_data/config/mainsail.cfg; then
-    info "Including Mainsail in config file, above the first section"
-    # Older distros has the include fiel as a comment
-    sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
-    sed -i 's:\(\[recore.*\]\):\[include mainsail.cfg\]\n\n\1:' printer_data/config/printer.cfg
-  fi
-  # Enable fluidd on fluidd distros
-  if test -f printer_data/config/fluidd.cfg; then
-    info "Including Fluidd in config file, above the first section"
-    # Older distros has the include fiel as a comment
-    sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
-    sed -i 's:\(\[recore.*\]\):\[include fluidd.cfg\]\n\n\1:' printer_data/config/printer.cfg
-  fi
-fi
-cd /
-umount ${OUTFILE}p2
-
-mount ${OUTFILE}p1 $EMMC_MNT
-sed -i "/^rootdev=.*/d" $EMMC_MNT/armbianEnv.txt
-sed -i '/^$/d' $EMMC_MNT/armbianEnv.txt
-echo "rootdev=UUID=${UUID2}" >> $EMMC_MNT/armbianEnv.txt
-
-cd $EMMC_MNT/dtb/allwinner/ || exit
-if test -f sun50i-a64-recore-"$REVISION".dtb; then
-  info "Symlinking device tree"
-  ln -sf sun50i-a64-recore-"$REVISION".dtb sun50i-a64-recore.dtb
-fi
-cd /
-umount ${OUTFILE}p1
-
-sync
 info "Magic script done!"
