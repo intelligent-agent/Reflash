@@ -20,9 +20,6 @@
       @open-serial-number="openSerialNumber=true"
       @open-wifi="openWifi=true"
     />
-    <w-dialog v-model="openMetrics" title="Board metrics" :width="820" persistent-no-animation>
-      <TheMetrics :active="openMetrics" :revision="recore_revision" />
-    </w-dialog>
     <w-card class="mxa pa3 card secondary">
       <w-flex wrap class="text-center">
         <div class="xs5 pa1">
@@ -53,7 +50,6 @@
             :revision="recore_revision"
             :serialNumber="serial_number"
             :network="network"
-            @open-metrics="openMetrics = true"
           />
         </div>
         <div class="xs1 pa1 align-self-center">
@@ -105,6 +101,7 @@
           <ProgressBar
             ref="transferprogressbar"
             v-show="state == 'DOWNLOADING' || state == 'UPLOADING'"
+            :revision="recore_revision"
           />
           <span class="red">{{ this.computeSizeCheckText() }}</span>
         </div>
@@ -112,6 +109,7 @@
           <ProgressBar
             ref="magicprogressbar"
             v-show="state === 'MAGIC' || state === 'UPLOADING_MAGIC'"
+            :revision="recore_revision"
           />
           {{ this.options.magicmode ? "" : "Choose image to install" }}
         </div>
@@ -119,6 +117,7 @@
           <ProgressBar
             ref="installprogressbar"
             v-show="state == 'INSTALLING' || state == 'BACKUPING'"
+            :revision="recore_revision"
           />
         </div>
         <div class="xs1 pa1">
@@ -221,7 +220,6 @@
 import TheOptions from "./components/TheOptions";
 import TheLogger from "./components/TheLogger";
 import TheInfo from "./components/TheInfo";
-import TheMetrics from "./components/TheMetrics";
 import ProgressBar from "./components/ProgressBar";
 import FlashSelector from "./components/FlashSelector";
 import IntegrityChecker from "./components/IntegrityChecker";
@@ -238,7 +236,6 @@ export default {
     TheOptions,
     TheLogger,
     TheInfo,
-    TheMetrics,
     ProgressBar,
     FlashSelector,
     IntegrityChecker,
@@ -275,7 +272,6 @@ export default {
     localImages: [],
     uploadError: false,
     openInfo: false,
-    openMetrics: false,
     openLog: false,
     openOptions: false,
     showOverlay: false,

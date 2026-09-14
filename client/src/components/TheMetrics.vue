@@ -135,6 +135,7 @@ export default {
           warnAbove: 0, floor: 0, ceiling: 7,
           note: "capping cpufreq for heat" }),
         this.panel({ key: "cpu_freq", label: "CPU frequency", unit: "MHz", digits: 0 }),
+        this.panel({ key: "dram_freq", label: "DRAM frequency", unit: "MHz", digits: 0 }),
         this.panel({
           key: "vcc_dram", label: "DRAM rail", unit: "V", digits: 2,
           note: dram ? `expected ${dram.label}` : null,

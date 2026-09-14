@@ -14,6 +14,7 @@ function flashSamples(n = 12) {
     t: 1000 + i,
     cpu_temp: 42 + i * 2.7,
     cpu_freq: i > 7 ? 816 : 1104,
+    dram_freq: i > 7 ? 672 : 336,
     throttle: i > 7 ? 3 : 0,
     vcc_dram: 1.36,
     dirty: 3072,
@@ -48,13 +49,22 @@ describe('TheMetrics', () => {
     const w = mountWith(flashSamples())
     await flushPromises()
     // Deliberately not one chart with six series: MB/s, C, MHz and volts share
-    // no axis and would be meaningless overlaid. Five are plotted; the DRAM
+    // no axis and would be meaningless overlaid. Six are plotted; the DRAM
     // rail is a set point and is shown as a number, so it has no sparkline.
-    expect(w.findAll('.panel').length).toBe(6)
-    expect(w.findAll('svg.spark').length).toBe(5)
+    expect(w.findAll('.panel').length).toBe(7)
+    expect(w.findAll('svg.spark').length).toBe(6)
     expect(w.text()).toContain('SoC temperature')
     expect(w.text()).toContain('Throughput')
+    expect(w.text()).toContain('DRAM frequency')
     expect(w.text()).toContain('DRAM rail')
+  })
+
+  it('shows the latest DRAM frequency in MHz', async () => {
+    const w = mountWith(flashSamples())
+    await flushPromises()
+    const panel = w.findAll('.panel').find((p) => p.text().includes('DRAM frequency'))
+    expect(panel.find('.value').text()).toContain('672')
+    expect(panel.find('.value').text()).toContain('MHz')
   })
 
   it('shows the DRAM rail as a reading, not a trace', async () => {
