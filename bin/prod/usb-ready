@@ -36,8 +36,36 @@ fi
 
 state=$(systemctl show -p ActiveState --value "$UNIT" 2>/dev/null || echo "unknown")
 cond=$(systemctl show -p ConditionResult --value "$UNIT" 2>/dev/null || echo "unknown")
+# The job, if systemd still has one for this unit. This is the only property
+# that separates "queued, about to run" from "dispatched and skipped":
+#
+#   case                       ActiveState  ConditionResult  Job
+#   skipped by its condition   inactive     no               (empty)
+#   queued, not started yet    inactive     no               12561
+#   ExecStart running          activating   yes              12561
+#   finished                   active       yes              (empty)
+#
+# Measured on systemd 257 (Debian 13, the board's own) and 237 - the first two
+# rows are identical in every other property, including ConditionTimestamp and
+# ExecMainStartTimestamp, which are 0 for both.
+#
+# That mattered: reading only ActiveState and ConditionResult, this said "true"
+# in the queued window, Reflash mounted /dev/sda2 while expand-usb's mkfs was
+# still running inside ssh-keygen-boot, and the mount failed with "bad
+# superblock" - the filesystem did not exist yet. Storage was marked FAILED and
+# no host keys were written, so the board came up with no sshd (#147).
+job=$(systemctl show -p Job --value "$UNIT" 2>/dev/null | awk '{print $1}')
 
 case "$state" in
     active|failed) echo "true" ;;                       # ran to completion
-    *) [ "$cond" = "no" ] && echo "true" || echo "false" ;;  # skipped, or not yet
+    activating)    echo "false" ;;                      # running right now
+    *)
+        if [ -n "$job" ]; then
+            echo "false"                                # queued: it has not run yet
+        elif [ "$cond" = "no" ]; then
+            echo "true"                                 # dispatched and skipped
+        else
+            echo "false"
+        fi
+        ;;
 esac

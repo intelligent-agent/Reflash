@@ -45,7 +45,10 @@ teardown() { teardown_sandbox; }
 # Reflash holds /mnt/usb for the life of the process, so it waits for whatever
 # needs the drive read-write to finish rather than racing it.
 
-# systemctl show -p X --value is called twice: ActiveState then ConditionResult.
+# systemctl show -p X --value, for the three properties usb-ready reads:
+# ActiveState, ConditionResult and Job. Job is what tells a queued unit from a
+# skipped one - see the table in usb-ready - so a stub without it cannot
+# reproduce the window that #147 was about.
 stub_unit() {
   cat > "$SHIMDIR/systemctl" <<EOF
 #!/usr/bin/env bash
@@ -53,6 +56,7 @@ echo "systemctl \$*" >> "$CALLS"
 case "\$*" in
   *ConditionResult*) echo "${2:-yes}" ;;
   *ActiveState*)     echo "${1:-inactive}" ;;
+  *Job*)             echo "${3:-}" ;;
 esac
 EOF
   chmod +x "$SHIMDIR/systemctl"
@@ -74,10 +78,20 @@ with_partition() {
 }
 
 # The race this closes: a oneshot reads "inactive" before it starts as well as
-# after a Condition skips it. Mounting in that gap let the unit steal the mount.
+# after a Condition skips it, and ConditionResult is "no" in BOTH - this test
+# used to stub it as "yes", which is not what systemd reports in that window, so
+# it passed while the real case failed (#147). Only the queued job tells them
+# apart.
 @test "usb-ready: false while the owning unit has not started yet" {
   with_partition
-  stub_unit inactive yes
+  stub_unit inactive no 12561
+  run "$PROD_BIN/usb-ready"
+  [ "$output" = "false" ]
+}
+
+@test "usb-ready: false while the owning unit is queued behind something else" {
+  with_partition
+  stub_unit inactive yes 12561
   run "$PROD_BIN/usb-ready"
   [ "$output" = "false" ]
 }
@@ -98,9 +112,10 @@ with_partition() {
   [ "$output" = "true" ]
 }
 
+# Skipped means dispatched and decided: no job is left for it.
 @test "usb-ready: true when the owning unit was skipped by its condition" {
   with_partition
-  stub_unit inactive no
+  stub_unit inactive no ""
   run "$PROD_BIN/usb-ready"
   [ "$output" = "true" ]
 }
