@@ -46,9 +46,25 @@ teardown() { teardown_sandbox; }
 # needs the drive read-write to finish rather than racing it.
 
 # systemctl show -p X --value, for the three properties usb-ready reads:
-# ActiveState, ConditionResult and Job. Job is what tells a queued unit from a
-# skipped one - see the table in usb-ready - so a stub without it cannot
-# reproduce the window that #147 was about.
+# ActiveState, ConditionResult and Job.
+#
+# WHAT A BOARD ACTUALLY REPORTS. Stub these from the table, not from what seems
+# reasonable - the previous version of this helper guessed ConditionResult=yes
+# for a unit that had not started, systemd says "no", and the test passed for
+# years while the real case failed (#147):
+#
+#   case                       ActiveState  ConditionResult  Job
+#   skipped by its condition   inactive     no               (empty)
+#   queued, not started yet    inactive     no               12561
+#   ExecStart running          activating   yes              12561
+#   finished                   active       yes              (empty)
+#
+# Measured on systemd 257 (Debian 13, what the board runs) and 237, with a
+# probe unit of the same shape as ssh-keygen-boot: Type=oneshot,
+# RemainAfterExit=yes, a ConditionPathExists that passes or fails. The first two
+# rows differ in Job and in nothing else - ConditionTimestamp and
+# ExecMainStartTimestamp are 0 for both - which is why Job is the property
+# usb-ready has to read.
 stub_unit() {
   cat > "$SHIMDIR/systemctl" <<EOF
 #!/usr/bin/env bash
