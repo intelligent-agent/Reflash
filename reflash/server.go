@@ -194,7 +194,7 @@ type State struct {
 	BytesTotal int      `json:"bytes_total"`
 	Error      string   `json:"error"`
 	IPs        []string `json:"ips"`
-	File       *os.File
+	File       *os.File `json:"-"`
 	sync.Mutex
 }
 
@@ -898,9 +898,8 @@ func startDownload(w http.ResponseWriter, r *http.Request) {
 	state.StartTime = data.StartTime
 	url := data.Url
 	state.BytesTotal = data.Size
+	resetTransfer()
 	state.State = DOWNLOADING
-	last_size_check = time.Now()
-	bytes_last = 0
 	mountUsb(MODE_RW)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -913,46 +912,94 @@ func startDownload(w http.ResponseWriter, r *http.Request) {
 
 func goDownload(ctx context.Context, filename string, url string) {
 	disarmReboot()
-	out, err := os.Create(images_folder + "/" + filename)
-	if err != nil {
-		panic(err)
+	path := images_folder + "/" + filename
+
+	// Every way out removes what was written and puts the drive back to
+	// read-only. This used to panic on a failed create or request, taking the
+	// server down with it.
+	fail := func(what string, err error) {
+		logError(what + ": " + err.Error())
+		os.Remove(path)
+		mountUsb(MODE_RO)
+		state.State = ERROR
+		state.Error = "The download failed: " + err.Error()
+	}
+	cancelled := func() {
+		logInfo("Download cancelled.")
+		os.Remove(path)
+		mountUsb(MODE_RO)
+		state.State = CANCELLED
 	}
 
-	resp, err := http.Get(url)
+	out, err := os.Create(path)
 	if err != nil {
-		panic(err)
+		fail("Could not create "+filename, err)
+		return
+	}
+	// Bound to the cancel. The copy used to run in a goroutine of its own that
+	// nothing stopped: after Cancel it went on downloading into the removed
+	// file until the image was complete, which is why the drive could not be
+	// remounted ("target is busy") and why progress lines kept being logged.
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		out.Close()
+		fail("Could not start the download", err)
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		out.Close()
+		if ctx.Err() != nil {
+			cancelled()
+			return
+		}
+		fail("Download failed", err)
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		out.Close()
+		fail("Download failed", fmt.Errorf("the server answered %s", resp.Status))
+		return
 	}
 
 	timeStart = time.Now()
 	logInfo(fmt.Sprintf("Starting download at %s", timeStart.Format("15:04:05")))
 
-	done := make(chan bool)
-	go func() {
-		io.Copy(out, resp.Body)
-		resp.Body.Close()
-		out.Close()
-		done <- true
-	}()
-
-	select {
-	case <-ctx.Done():
-		logInfo("Download cancelled.")
-		os.Remove(images_folder + "/" + filename)
-		state.State = CANCELLED
-		mountUsb(MODE_RO)
+	_, err = io.Copy(out, resp.Body)
+	resp.Body.Close()
+	closeErr := out.Close()
+	if ctx.Err() != nil {
+		cancelled()
 		return
-	case <-done:
-		duration := time.Since(timeStart)
-		logInfo(fmt.Sprintf("Download finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	}
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		fail("Download failed", err)
+		return
 	}
 
+	duration := time.Since(timeStart)
+	logInfo(fmt.Sprintf("Download finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	mountUsb(MODE_RO)
 
+	// The last progress sample is whatever the previous poll saw, so a
+	// finished download reported 96% to get_progress and to STATUS (#155).
+	if fi, err := os.Stat(path); err == nil {
+		state.BytesNow = int(fi.Size())
+	}
+	state.Progress = 100
 	state.State = FINISHED
 }
 
 func cancelDownload(w http.ResponseWriter, r *http.Request) {
-	cancelFunc()
+	// nil until the first download: a cancel with nothing to cancel must not
+	// panic the server.
+	if cancelFunc != nil {
+		cancelFunc()
+	}
 	sendResponse(w, nil)
 }
 
@@ -1748,6 +1795,13 @@ var (
 // unlucky sample were indistinguishable, which defeats the point of logging it.
 func logBandwidth() {
 	if state.BytesTotal <= 0 {
+		return
+	}
+	// Only while something is moving. get_progress refreshes after a transfer
+	// too, and that logged "IDLE: 0.37 MB/s (235929600 of 314572800 bytes)".
+	switch state.State {
+	case DOWNLOADING, UPLOADING, UPLOADING_MAGIC, INSTALLING, BACKUPING, MAGIC:
+	default:
 		return
 	}
 	now := time.Now()
