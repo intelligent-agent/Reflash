@@ -447,6 +447,7 @@ func ServerInit() {
 	http.HandleFunc("/api/upload_magic_finish", uploadMagicFinish)
 	http.HandleFunc("/api/get_progress", getProgress)
 	http.HandleFunc("/api/check_file_integrity", checkFileIntegrity)
+	http.HandleFunc("/api/delete_image", deleteImage)
 	http.HandleFunc("/api/run_install_finished_commands", runInstallFinishedCommands)
 	http.HandleFunc("/api/clear_log", clearLog)
 	http.HandleFunc("/api/rotate_screen", rotateScreen)
@@ -1856,6 +1857,55 @@ func getLocalImages() []Image {
 	}
 
 	return images
+}
+
+// deleteImage removes one image from the drive. There was no way to do that from
+// the UI, so a truncated image - an abandoned upload, a backup from before
+// cancels cleaned up - stayed in the install list for good, only ever failing
+// its integrity check (#153).
+func deleteImage(w http.ResponseWriter, r *http.Request) {
+	var data Download
+	reqBody, _ := io.ReadAll(r.Body)
+	json.Unmarshal(reqBody, &data)
+	name := data.Filename
+	// A bare image name and nothing else: this deletes as root.
+	if name == "" || filepath.Base(name) != name || strings.HasPrefix(name, ".") ||
+		!strings.HasSuffix(name, ".img.xz") {
+		http.Error(w, "not an image name: "+name, http.StatusBadRequest)
+		return
+	}
+	path := images_folder + "/" + name
+	if _, err := os.Stat(path); err != nil {
+		http.Error(w, "no such image: "+name, http.StatusNotFound)
+		return
+	}
+
+	// Claim the drive the way lockSaveOptions does, so nothing can start
+	// writing to or reading from this image while it is removed.
+	state.Lock()
+	if state.State != IDLE && state.State != FINISHED && state.State != ERROR && state.State != CANCELLED {
+		busy := state.State
+		state.Unlock()
+		http.Error(w, "busy: "+busy, http.StatusConflict)
+		return
+	}
+	previous := state.State
+	state.State = SAVING
+	state.Unlock()
+
+	mountUsb(MODE_RW)
+	err := os.Remove(path)
+	mountUsb(MODE_RO)
+	if err != nil {
+		logError("Could not delete " + name + ": " + err.Error())
+	} else {
+		logInfo("Deleted image " + name)
+	}
+
+	state.Lock()
+	state.State = previous
+	state.Unlock()
+	sendResponse(w, err)
 }
 
 func checkFileIntegrity(w http.ResponseWriter, r *http.Request) {

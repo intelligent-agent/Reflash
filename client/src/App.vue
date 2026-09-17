@@ -177,6 +177,15 @@
             ref="integritychecker"
             v-if="!options.magicmode"
             @integrity="imageIntegrity = $event" />
+          <w-button
+            text
+            class="ml1"
+            v-if="isDeleteButtonVisible()"
+            :title="'Delete ' + selectedLocalImage + ' from the USB drive'"
+            @click="onDeleteImageClick()"
+          >
+            <span>{{ confirmDelete ? "Delete?" : "Delete" }}</span>
+          </w-button>
         </w-flex>
         <div class="xs1 align-self-center">
           <w-button
@@ -255,6 +264,9 @@ export default {
     ownsUpload: false,
     // null = unknown or still checking, true = passed, false = failed.
     imageIntegrity: null,
+    // Delete takes two clicks, the second within a few seconds.
+    confirmDelete: false,
+    confirmDeleteTimer: null,
     state: "IDLE",
     previousState: "IDLE",
     installFinished: false,
@@ -379,11 +391,16 @@ export default {
     // Disabled rather than hidden: a button that vanishes reads as a bug, where
     // a greyed-out one next to a red X explains itself.
     isInstallButtonDisabled() {
+      // During its own operation this button means Cancel, which must stay
+      // reachable regardless of what the image turned out to be.
+      if (this.state == "INSTALLING" || this.state == "BACKUPING") return false;
+      // During anything else it is neither. It read "Install" and stayed
+      // enabled through a download or an upload, and clicking it sent
+      // cancel_installation - or cancel_backup - at a transfer it had nothing
+      // to do with (#156).
+      if (this.state != "IDLE") return true;
       // Backups write no image, so there is nothing to verify.
       if (this.flash.selectedMethod == 1) return false;
-      // Once something is running this button means Cancel, which must stay
-      // reachable regardless of what the image turned out to be.
-      if (this.state != "IDLE") return false;
       // null covers both "still checking" and "the check did not answer".
       // Neither is a pass, and enabling on either is how a truncated image
       // gets flashed during the second the spinner is up.
@@ -863,16 +880,52 @@ export default {
       if (this.flash.selectedMethod == 0) {
         if (this.state == "IDLE") {
           this.installSelected();
-        } else {
+        } else if (this.state == "INSTALLING") {
           this.apiCall("cancel_installation");
         }
       } else {
         if (this.state == "IDLE") {
           this.backupSelected();
-        } else {
+        } else if (this.state == "BACKUPING") {
           this.apiCall("cancel_backup");
         }
       }
+    },
+    isDeleteButtonVisible() {
+      return (
+        !this.options.magicmode &&
+        this.flash.selectedMethod == 0 &&
+        !!this.selectedLocalImage &&
+        this.state == "IDLE"
+      );
+    },
+    // A truncated image - an abandoned upload, an old cancelled backup - could
+    // only ever fail its integrity check, and there was no way to remove it
+    // (#153). Two clicks rather than confirm(): a native dialog blocks the
+    // page, progress polling included.
+    async onDeleteImageClick() {
+      clearTimeout(this.confirmDeleteTimer);
+      if (!this.confirmDelete) {
+        this.confirmDelete = true;
+        this.confirmDeleteTimer = setTimeout(() => (this.confirmDelete = false), 4000);
+        return;
+      }
+      this.confirmDelete = false;
+      const name = this.selectedLocalImage;
+      try {
+        const res = await axios.put(`/api/delete_image`, { filename: name });
+        if (res.data.status == "ERROR") {
+          this.$waveui.notify(res.data.error, "error", 0);
+        }
+      } catch (err) {
+        this.$waveui.notify(
+          "Could not delete " + name + ": " + (err.response?.data || err),
+          "error",
+          0
+        );
+      }
+      this.selectedLocalImage = null;
+      await this.getStatus();
     },
     async installSelected() {
       let self = this;
@@ -1008,6 +1061,8 @@ export default {
     // A watcher runs when the selection actually changes, which is also what
     // keeps the Install button's state from flickering while polling redraws.
     selectedLocalImage() {
+      // A pending "Delete?" belongs to the image it was clicked for.
+      this.confirmDelete = false;
       this.onSelectedFileChanged();
     },
   },
