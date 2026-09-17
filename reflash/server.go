@@ -967,7 +967,8 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	state.BytesTotal = data.Size
 	state.State = UPLOADING
 	uploadFailed = false
-	markUploadStarted()
+	resetTransfer()
+	markUploadStarted(false)
 	mountUsb(MODE_RW)
 
 	timeStart = time.Now()
@@ -1015,7 +1016,8 @@ func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
 	state.BytesTotal = data.Size
 	state.State = UPLOADING_MAGIC
 	uploadFailed = false
-	markUploadStarted()
+	resetTransfer()
+	markUploadStarted(true)
 
 	go goUploadMagic()
 	time.Sleep(1 * time.Second)
@@ -1071,6 +1073,12 @@ var (
 	uploadMutex    sync.Mutex
 	lastChunkAt    time.Time
 	chunksInFlight int
+	// uploadStopping refuses new chunks while upload_cancel waits for the ones
+	// already in flight. uploadActive is whether there is an upload to stop at
+	// all: the client can send upload_cancel twice for one upload.
+	uploadStopping bool
+	uploadActive   bool
+	uploadIsMagic  bool
 )
 
 // This has to outlast the client's own patience, not the normal inter-chunk
@@ -1107,11 +1115,36 @@ var uploadTimeout = 5 * time.Minute
 func beginChunk() bool {
 	uploadMutex.Lock()
 	defer uploadMutex.Unlock()
-	if state.State == CANCELLED || state.State == ERROR {
+	if state.State == CANCELLED || state.State == ERROR || uploadStopping {
 		return false
 	}
 	chunksInFlight++
 	return true
+}
+
+// stopping reports whether upload_cancel is under way. A chunk that fails
+// because of it is part of the cancel, not a failure of its own.
+func stopping() bool {
+	uploadMutex.Lock()
+	defer uploadMutex.Unlock()
+	return uploadStopping
+}
+
+// waitForChunks waits for the chunks already admitted to finish. Bounded,
+// because a magic chunk can block on a FIFO whose reader is gone, and a cancel
+// that never returns is worse than closing underneath it.
+func waitForChunks(limit time.Duration) {
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		uploadMutex.Lock()
+		n := chunksInFlight
+		uploadMutex.Unlock()
+		if n == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	logError("upload_cancel: a chunk was still in flight after " + limit.String() + "; closing anyway")
 }
 
 func endChunk() {
@@ -1124,11 +1157,14 @@ func endChunk() {
 // markUploadStarted starts the clock at the start handler rather than at the
 // first chunk, so an upload abandoned before it ever sends data still times
 // out - which is the common case when a page is refreshed just after starting.
-func markUploadStarted() {
+func markUploadStarted(magic bool) {
 	uploadMutex.Lock()
 	defer uploadMutex.Unlock()
 	lastChunkAt = time.Now()
 	chunksInFlight = 0
+	uploadStopping = false
+	uploadActive = true
+	uploadIsMagic = magic
 }
 
 // markUploadDone stops the clock, so the watchdog has nothing to act on once an
@@ -1286,7 +1322,17 @@ func writeChunk(w http.ResponseWriter, r *http.Request, sink chunkSink) {
 	// >1GB upload over this board's WiFi that is a lot of avoidable transfer.
 	decoded, err := io.ReadAll(r.Body)
 	if err != nil {
+		if stopping() {
+			json.NewEncoder(w).Encode(map[string]bool{"success": false})
+			return
+		}
 		failChunk(w, http.StatusBadRequest, sink.readLog, sink.readMsg, err)
+		return
+	}
+	// Cancelled while this chunk was on the wire. Do not write it: the file is
+	// about to be closed and removed.
+	if stopping() {
+		json.NewEncoder(w).Encode(map[string]bool{"success": false})
 		return
 	}
 
@@ -1319,6 +1365,9 @@ func writeChunk(w http.ResponseWriter, r *http.Request, sink chunkSink) {
 
 func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	markUploadDone()
+	uploadMutex.Lock()
+	uploadActive = false
+	uploadMutex.Unlock()
 	// Closing the FIFO is what signals end-of-stream to the decompressor, so
 	// a failure here means the flash is incomplete - but it is still an
 	// error to report, not a reason to kill the server.
@@ -1393,6 +1442,9 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 
 func uploadFinish(w http.ResponseWriter, r *http.Request) {
 	markUploadDone()
+	uploadMutex.Lock()
+	uploadActive = false
+	uploadMutex.Unlock()
 	if state.File != nil {
 		if err := state.File.Close(); err != nil {
 			// The last flush to the USB drive lands here, so this is
@@ -1420,11 +1472,26 @@ func uploadCancel(w http.ResponseWriter, r *http.Request) {
 	// with CANCELLED is what made the two indistinguishable in the first
 	// place, in the UI as well as the log. See issue #114.
 	markUploadDone()
+	uploadMutex.Lock()
+	if !uploadActive {
+		// Already stopped - a second cancel for the same upload, from the
+		// chunk that was in flight when the first one landed. Acting on it
+		// again would set CANCELLED after the poll had moved on to IDLE.
+		uploadMutex.Unlock()
+		return
+	}
 	failed := uploadFailed || state.State == ERROR
 	uploadFailed = false
-	if !failed {
-		state.State = CANCELLED
-	}
+	uploadStopping = true
+	magic := uploadIsMagic
+	uploadMutex.Unlock()
+
+	// A chunk admitted before the cancel may still be writing. Closing the
+	// file underneath it failed that write with "invalid argument", which set
+	// ERROR with the USB-drive message - two red toasts for pressing Cancel,
+	// and the drive left mounted rw because ERROR skipped the remount (#151).
+	waitForChunks(30 * time.Second)
+
 	if state.File != nil {
 		logInfo("Closing file")
 		if err := state.File.Close(); err != nil {
@@ -1436,6 +1503,20 @@ func uploadCancel(w http.ResponseWriter, r *http.Request) {
 		}
 		state.File = nil
 	}
+	if !magic {
+		// A cancelled or failed upload is a truncated image; left in the list
+		// it could only ever fail its integrity check (#153).
+		if state.Filename != "" {
+			os.Remove(images_folder + "/" + state.Filename)
+		}
+		mountUsb(MODE_RO)
+	}
+	uploadMutex.Lock()
+	uploadActive = false
+	if !failed {
+		state.State = CANCELLED
+	}
+	uploadMutex.Unlock()
 	// timeStart is only set once an upload has actually started, and this
 	// endpoint can be reached without one - printing the zero value gives a
 	// duration in the hundreds of millions of minutes, which reads like a
