@@ -292,17 +292,43 @@ export default {
         this.boardReachable = false;
       }
 
+      // The server's own verdict on the attempt. The radio state alone cannot
+      // give it: iwd names the network while it is still *connecting*, so a
+      // wrong passphrase looked exactly like success for the few seconds before
+      // it failed, and the watch had stopped by then (#149). null when it
+      // cannot be read, which is not a verdict either way.
+      let attempt = null;
+      if (wifi && wantMode === "station") {
+        try {
+          const res = await axios.get('/api/wifi_poll_connect', { timeout: REQUEST_TIMEOUT });
+          attempt = res.data || null;
+        } catch (err) {
+          attempt = null;
+        }
+      }
+
       if (wifi) {
         if (wifi.mode !== this.reconnectFromMode) {
           this.sawTransition = true;
         }
+        if (wantMode === "station" && attempt && !attempt.isConnecting && attempt.error) {
+          this.wifi = wifi;
+          this.stopReconnectWatch();
+          this.statusMessage =
+            `Could not join ${target}. The board is back on its own Recore hotspot.`;
+          this.$waveui.notify(this.statusMessage, "error", 0);
+          return;
+        }
         // Only "arrived" once the board reports the state we asked for. Right
         // after the request it is still on the old one, and treating that as
-        // success would report a connection that has not happened.
+        // success would report a connection that has not happened. For a
+        // network that also means an address and an attempt that has finished:
+        // named-but-still-associating is not joined.
         const arrived =
           wantMode === "ap"
             ? wifi.mode === "ap"
-            : wifi.mode === "station" && wifi.ssid === target;
+            : wifi.mode === "station" && wifi.ssid === target && !!wifi.ip &&
+              !(attempt && attempt.isConnecting);
         if (arrived) {
           this.wifi = wifi;
           this.isWifiPresent = !!wifi.present;
