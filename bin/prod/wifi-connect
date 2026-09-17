@@ -174,7 +174,28 @@ else
     info "$SSID did not appear in a scan within ${SCAN_TIMEOUT}s - trying anyway. If the connect also fails, check the name, the signal, and whether this adapter can use that band."
 fi
 
+# The network iwd says it is on right now, if any.
+connected_network() {
+    iwctl station "$INTERFACE" show 2>/dev/null \
+        | sed $'s/\x1b\[[0-9;]*m//g' \
+        | sed -n 's/^[[:space:]]*Connected network[[:space:]]\{2,\}//p' \
+        | sed 's/[[:space:]]*$//'
+}
+
 # 4. Trigger the connection
+#
+# Drop the current association first. Without this, asking to connect to the
+# network the board is already on did nothing at all: iwd stays associated with
+# the session it already has, the address never goes away, and the wait below
+# saw it immediately and reported success - for a passphrase that had never been
+# tested. A wrong one then looked like it worked and was saved as if it did.
+ALREADY=$(connected_network)
+if [ -n "$ALREADY" ]; then
+    info "Disconnecting from $ALREADY first, so the passphrase is actually tested."
+    iwctl station "$INTERFACE" disconnect 2>/dev/null
+    sleep 2
+fi
+
 info "Requesting iwd to connect..."
 # Still retried, but now only for a genuinely transient refusal - the slow-scan
 # case it used to paper over is handled above.
@@ -240,6 +261,10 @@ install_source_route() {
 }
 
 # 5. Wait and verify IP address
+#
+# Trustworthy because of the disconnect above: iwd drops the lease with the
+# association, so an address here belongs to the network just asked for rather
+# than to the session the board already had.
 info "Waiting for DHCP..."
 MAX_RETRIES=30
 COUNT=0

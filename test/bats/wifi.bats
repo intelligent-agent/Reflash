@@ -239,6 +239,67 @@ EOF
   ! grep -q "wrongpass1" "$IWD_DIR/HomeNet.psk"
 }
 
+# Asking for the network the board is already on did nothing: iwd kept the
+# association it had, so the address never went away and the wait below took it
+# as success - for a passphrase that was never tested. A wrong one then looked
+# like it worked, and was saved as if it had.
+#
+# reconnects_as MODE: the station is on HomeNet until "disconnect" is called;
+# after that it reports HomeNet again only when MODE is "works".
+reconnects_as() {
+  cat > "$SHIMDIR/iwctl" <<EOF
+#!/usr/bin/env bash
+echo "iwctl \$*" >> "\$CALLS"
+state="\$(dirname "\$CALLS")/station"
+[ -f "\$state" ] || echo connected > "\$state"
+if [ "\$1 \$2 \$3" = "station wlan0 disconnect" ]; then echo $1 > "\$state"; fi
+if [ "\$1 \$2 \$3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "\$1 \$2 \$3" = "station wlan0 get-networks" ]; then echo "      HomeNet                 psk       ****"; fi
+if [ "\$1 \$2 \$3" = "station wlan0 show" ]; then
+  if [ "\$(cat "\$state")" = "works" ] || [ "\$(cat "\$state")" = "connected" ]; then
+    echo "  State                 connected"
+    echo "  Connected network     HomeNet"
+  else
+    echo "  State                 disconnected"
+  fi
+fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  # iwd drops the lease with the association, so there is an address only while
+  # the station is connected.
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+state="$(dirname "$CALLS")/station"
+s=$(cat "$state" 2>/dev/null || echo connected)
+if [ "$s" = connected ] || [ "$s" = works ]; then
+  echo "    inet 192.168.1.50/24 brd 192.168.1.255 scope global wlan0"
+fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+}
+
+@test "wifi-connect: a wrong passphrase for the network already joined is not a success" {
+  with_adapter
+  reconnects_as fails
+  run "$PROD_BIN/wifi-connect" HomeNet wrongpass1
+  [ "$status" -eq 1 ]
+  assert_called_with "station wlan0 disconnect"
+  [[ "$output" != *"Success!"* ]]
+  [[ "$output" == *"Never associated"* ]]
+}
+
+@test "wifi-connect: reconnecting to the same network still works when it is right" {
+  with_adapter
+  reconnects_as works
+  run "$PROD_BIN/wifi-connect" HomeNet hunter2
+  [ "$status" -eq 0 ]
+  assert_called_with "station wlan0 disconnect"
+  [[ "$output" == *"Connected with IP: 192.168.1.50/24"* ]]
+}
+
 # iwd has crashed during the restore and come back in station mode, leaving the
 # board with no hotspot - the state the fallback exists to prevent (#90).
 @test "wifi-connect: retries the hotspot when it did not come up" {
