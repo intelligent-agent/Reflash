@@ -1473,9 +1473,9 @@ func startMagic(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusConflict)
 		return
 	}
+	resetTransfer()
+	startWorker()
 	state.State = MAGIC
-	last_size_check = time.Now()
-	bytes_last = 0
 	go goMagic(url)
 	time.Sleep(1 * time.Second)
 
@@ -1488,8 +1488,15 @@ func goMagic(url string) {
 	logInfo(fmt.Sprintf("Starting magic at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Url %s", url))
 
-	stdout, _, err := runCommand2("flash-from-url", url)
+	stdout, _, err := runWorker("flash-from-url", url)
 	if err != nil {
+		if cancelRequested.Load() {
+			duration := time.Since(timeStart)
+			logInfo(fmt.Sprintf("Magic cancelled after %d minutes and %d seconds - the eMMC is partially written", int(duration.Minutes()), int(duration.Seconds())%60))
+			state.State = CANCELLED
+			state.Error = ""
+			return
+		}
 		logError("Error encountered during magic: \n" + stdout)
 		state.State = ERROR
 		// flash-from-url prints the specific reason (e.g. the real download
@@ -1515,12 +1522,10 @@ func goMagic(url string) {
 }
 
 func cancelMagic(w http.ResponseWriter, r *http.Request) {
-	duration := time.Since(timeStart)
-
-	_, _, err := runCommand2("pkill", "-f", "xz", "-9")
-	logInfo(fmt.Sprintf("Magic cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
-	state.State = CANCELLED
-	sendResponse(w, err)
+	if cancelWorker() {
+		logInfo("Magic cancel requested")
+	}
+	sendResponse(w, nil)
 }
 
 func startBackup(w http.ResponseWriter, r *http.Request) {
@@ -1532,6 +1537,8 @@ func startBackup(w http.ResponseWriter, r *http.Request) {
 	state.StartTime = data.StartTime
 
 	state.BytesTotal = getBlockSize("/dev/mmcblk2")
+	resetTransfer()
+	startWorker()
 	state.State = BACKUPING
 	mountUsb(MODE_RW)
 
@@ -1548,24 +1555,27 @@ func goBackup() {
 	timeStart = time.Now()
 	logInfo(fmt.Sprintf("starting backup of %s at time %s", state.Filename, timeStart.Format("15:04:05")))
 
-	stdout, _, err := runCommand2("backup-emmc", path)
+	stdout, _, err := runWorker("backup-emmc", path)
+	if err != nil {
+		// backup-emmc writes <label>.img.xz, and a backup that did not finish
+		// leaves a truncated one in the install list. cancelBackup used to
+		// remove <label> - a file that never exists - so it stayed (#153).
+		// Removed here, after the pipeline has exited, not while xz may still
+		// be writing it.
+		os.Remove(path + ".img.xz")
+	}
 	mountUsb(MODE_RO)
 
-	// Plain reads/writes of state.State here aren't enough to see
-	// cancelBackup()'s write reliably - without a shared lock, Go's memory
-	// model doesn't guarantee this goroutine observes that write just
-	// because it happened first in wall-clock time. state.Lock() gives the
-	// same guarantee cancelBackup()'s matching lock below relies on.
 	state.Lock()
 	defer state.Unlock()
 	if err != nil {
-		// cancelBackup() kills the backup subprocess to stop it, which makes
-		// runCommand2 return an error here too (exit 137 - SIGKILL) - that's
-		// the expected result of a deliberate cancel, not a real failure.
-		// cancelBackup() sets state to CANCELLED before killing specifically
-		// so this check can tell the two apart instead of overwriting the
-		// cancellation with a generic error.
-		if state.State == CANCELLED {
+		// A cancel kills xz, so the script fails - that is the cancel
+		// working, not a backup error.
+		if cancelRequested.Load() {
+			duration := time.Since(timeStart)
+			logInfo(fmt.Sprintf("Backup cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+			state.State = CANCELLED
+			state.Error = ""
 			return
 		}
 		logError("Error encountered during backup: \n" + stdout)
@@ -1580,33 +1590,29 @@ func goBackup() {
 }
 
 func cancelBackup(w http.ResponseWriter, r *http.Request) {
-	duration := time.Since(timeStart)
-	logInfo(fmt.Sprintf("Backup cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
-
-	// Set before killing, not after - goBackup() is blocked waiting on the
-	// subprocess and wakes up as soon as the kill lands, so this needs to
-	// already be visible by then to avoid a race where it sees the kill's
-	// resulting error first and reports it as a generic failure instead.
-	// Locked so that guarantee actually holds under Go's memory model, not
-	// just in wall-clock time - see goBackup().
-	state.Lock()
-	state.State = CANCELLED
-	state.Error = ""
-	state.Unlock()
-
-	cmd := exec.Command("pkill", "-f", "xz", "-9")
-	err := cmd.Run()
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			logError(fmt.Sprintf("Command 'pkill -f xz -9' returned exit code %v\n", exitError.ExitCode()))
-		}
+	if cancelWorker() {
+		logInfo("Backup cancel requested")
 	}
-	os.Remove(images_folder + "/" + state.Filename)
-	sendResponse(w, err)
+	sendResponse(w, nil)
 }
 
 func getBlockSize(file string) int {
 	return runCommandReturnInt("lsblk", "-n", "-d", "-o", "SIZE", "--bytes", file)
+}
+
+// resetTransfer clears every progress counter for a new operation. Each start
+// handler used to reset some of them, and the rest carried over: the first log
+// line of a download after a cancelled one read "-4.66 MB/s", because the
+// bandwidth log's baseline was the byte count the previous operation had
+// reached (#155).
+func resetTransfer() {
+	state.BytesNow = 0
+	state.Progress = 0
+	state.Bandwidth = 0
+	bytes_last = 0
+	last_size_check = time.Now()
+	lastBandwidthLog = time.Time{}
+	bytesAtLastLog = 0
 }
 
 // refreshProgress reads the active progress source (the flash-progress file
@@ -1686,8 +1692,10 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 	if state.State == FINISHED {
 		state.State = IDLE
 	}
+	// No remount here. It ran while a cancelled backup or download still had
+	// its file open, so it failed with "target is busy"; every path that
+	// mounts the drive rw now puts it back itself, once its file is closed.
 	if state.State == CANCELLED {
-		mountUsb(MODE_RO)
 		state.State = IDLE
 	}
 	if state.State == ERROR {
@@ -1748,6 +1756,8 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusConflict)
 		return
 	}
+	resetTransfer()
+	startWorker()
 	state.State = INSTALLING
 
 	go goInstall(state.Filename)
@@ -1764,8 +1774,15 @@ func goInstall(filename string) {
 	logInfo(fmt.Sprintf("starting install at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Filename %s", filename))
 
-	stdout, _, err := runCommand2("flash-from-file", path)
+	stdout, _, err := runWorker("flash-from-file", path)
 	if err != nil {
+		if cancelRequested.Load() {
+			duration := time.Since(timeStart)
+			logInfo(fmt.Sprintf("Installation cancelled after %d minutes and %d seconds - the eMMC is partially written", int(duration.Minutes()), int(duration.Seconds())%60))
+			state.State = CANCELLED
+			state.Error = ""
+			return
+		}
 		logError("Error encountered during install: \n" + stdout)
 		state.State = ERROR
 		state.Error = "An error was encountered during install. Check log for details"
@@ -1828,14 +1845,10 @@ func lastLine(file string) string {
 }
 
 func cancelInstallation(w http.ResponseWriter, r *http.Request) {
-	cmd := exec.Command("pkill", "-f", "xz", "-9")
-	err := cmd.Run()
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			logError(fmt.Sprintf("Command 'pkill -f xz -9' returned exit code %v\n", exitError.ExitCode()))
-		}
+	if cancelWorker() {
+		logInfo("Installation cancel requested")
 	}
-	sendResponse(w, err)
+	sendResponse(w, nil)
 }
 
 func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
@@ -2198,6 +2211,80 @@ func runCommand2(cmds ...string) (string, string, error) {
 		logError(fmt.Sprintf("%s", redactArgs(cmds)) + ": " + fmt.Sprint(err) + ": " + strings.TrimSpace(stderr.String()))
 	}
 	return out.String(), stderr.String(), err
+}
+
+// The eMMC job running right now - backup, install or magic - and whether the
+// user has asked to stop it.
+//
+// A cancel used to set CANCELLED and then `pkill -f xz -9`. Two things were
+// wrong with that. The pattern matched any process whose command line held
+// "xz", not just the job's (#156). And the job's goroutine was still running:
+// the next get_progress poll turned CANCELLED into IDLE before the killed
+// pipeline had exited, so the goroutine no longer saw a cancel and recorded
+// ERROR - which is what a cancelled backup showed (#152), and the same code
+// shape made a cancelled install or magic do it too.
+//
+// So a cancel now only asks. It kills xz inside the job's own process group,
+// and the goroutine, once the job has really exited and been cleaned up after,
+// is what reports CANCELLED.
+var (
+	workerPgid      atomic.Int64
+	cancelRequested atomic.Bool
+)
+
+// runWorker is runCommand2 for the long eMMC jobs: in a process group of its
+// own, so cancelWorker can find exactly its processes.
+func runWorker(cmds ...string) (string, string, error) {
+	cmd := exec.Command(resolveCmd(cmds[0]), cmds[1:]...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var out, stderr syncBuffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		logError(fmt.Sprintf("%s", redactArgs(cmds)) + ": " + fmt.Sprint(err))
+		return out.String(), stderr.String(), err
+	}
+	workerPgid.Store(int64(cmd.Process.Pid))
+	// A cancel that landed between the start handler and here found no group
+	// to kill. Act on it now rather than losing it.
+	if cancelRequested.Load() {
+		killWorkerXz()
+	}
+	err := cmd.Wait()
+	workerPgid.Store(0)
+	if err != nil && !cancelRequested.Load() {
+		logError(fmt.Sprintf("%s", redactArgs(cmds)) + ": " + fmt.Sprint(err) + ": " + strings.TrimSpace(stderr.String()))
+	}
+	return out.String(), stderr.String(), err
+}
+
+// startWorker is called by every handler that starts an eMMC job, before its
+// goroutine: a cancel meant for the previous job must not stop this one.
+func startWorker() {
+	cancelRequested.Store(false)
+}
+
+// cancelWorker asks the running job to stop. Returns false when there is no
+// job to stop, which is not an error - the UI can send a cancel after the job
+// has already finished.
+func cancelWorker() bool {
+	cancelRequested.Store(true)
+	return killWorkerXz()
+}
+
+// killWorkerXz kills xz, and only xz, in the running job's process group. xz
+// rather than the whole group: the scripts' own error handling after a failed
+// pipeline (unmounting, logging) still runs, exactly as it did when xz was the
+// process being killed.
+func killWorkerXz() bool {
+	pgid := workerPgid.Load()
+	if pgid == 0 {
+		return false
+	}
+	// Exit status 1 is "no xz in the group" - the pipeline is already on its
+	// way out - so it is not worth an error in the log.
+	_ = exec.Command("pkill", "-9", "-g", strconv.FormatInt(pgid, 10), "-x", "xz").Run()
+	return true
 }
 
 func mountUsb(mode string) error {
@@ -2764,13 +2851,17 @@ func handleSerialCommand(line string) []string {
 		}
 		state.Filename = filename
 		state.BytesTotal = getUncompressedSize(images_folder + "/" + filename)
+		resetTransfer()
+		startWorker()
 		state.State = INSTALLING
 		state.Unlock()
 		startInstall(filename)
 		return []string{"OK flashing " + filename}
 
 	case "CANCEL":
-		runCommand2("pkill", "-f", "xz", "-9")
+		if cancelWorker() {
+			logInfo("Cancel requested over the control protocol")
+		}
 		return []string{"OK"}
 
 	default:
