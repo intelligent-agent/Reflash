@@ -19,6 +19,7 @@ info() {
 # would otherwise leave the board in station mode with no working
 # connection and no hotspot - unreachable until physical intervention (#90).
 restore_hotspot() {
+    restore_profile
     info "Connection failed - restoring hotspot ($AP_PROFILE) so the board stays reachable."
     iwctl ap "$INTERFACE" stop 2>/dev/null
     iwctl device "$INTERFACE" set-property Mode ap
@@ -50,9 +51,36 @@ if [ "$CURRENT_MODE" == "ap" ]; then
 fi
 
 # 2. Create the iwd profile
+#
+# Kept aside first, because a failed attempt has to leave iwd as it found it.
+# The profile carries AutoConnect=true, so a wrong passphrase left behind was
+# retried by iwd on its own and on every boot - and a mistyped retry would
+# overwrite a profile that worked (#150).
+PROFILE="$IWD_DIR/$SSID.psk"
+PREV_PROFILE=""
+if [ -f "$PROFILE" ]; then
+    PREV_PROFILE=$(mktemp)
+    cp -p "$PROFILE" "$PREV_PROFILE"
+fi
+
+# Put back what was there before this attempt, or nothing if there was nothing.
+# forget first: iwd holds known networks in memory as well as on disk, and
+# deleting the file alone would leave it retrying the passphrase that failed.
+restore_profile() {
+    iwctl known-networks "$SSID" forget 2>/dev/null
+    rm -f "$PROFILE"
+    if [ -n "$PREV_PROFILE" ]; then
+        cp -p "$PREV_PROFILE" "$PROFILE"
+        rm -f "$PREV_PROFILE"
+        info "Restored the previous profile for $SSID."
+    else
+        info "Removed the new profile for $SSID."
+    fi
+}
+
 info "Provisioning iwd profile for $SSID..."
 mkdir -p "$IWD_DIR"
-cat <<IWD_EOF > "$IWD_DIR/$SSID.psk"
+cat <<IWD_EOF > "$PROFILE"
 [Settings]
 AutoConnect=true
 
@@ -191,6 +219,7 @@ while [ $COUNT -lt $MAX_RETRIES ]; do
     if [ -n "$IP" ]; then
         info "Success! Connected with IP: $IP"
         install_source_route "${IP%%/*}"
+        [ -n "$PREV_PROFILE" ] && rm -f "$PREV_PROFILE"
         exit 0
     fi
     sleep 1

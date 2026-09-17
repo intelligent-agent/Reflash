@@ -218,6 +218,27 @@ EOF
   chmod +x "$SHIMDIR/ip"
 }
 
+@test "wifi-connect: a failed attempt does not leave its profile behind (#150)" {
+  with_adapter
+  no_lease_in_state disconnected
+  run "$PROD_BIN/wifi-connect" HomeNet wrongpass1
+  [ "$status" -eq 1 ]
+  [ ! -e "$IWD_DIR/HomeNet.psk" ]
+  # iwd keeps known networks in memory too; the file alone is not enough.
+  assert_called_with "known-networks HomeNet forget"
+}
+
+@test "wifi-connect: a failed attempt puts the previous profile back (#150)" {
+  with_adapter
+  no_lease_in_state disconnected
+  mkdir -p "$IWD_DIR"
+  printf '[Security]\nPassphrase=theoneThatWorks\n' > "$IWD_DIR/HomeNet.psk"
+  run "$PROD_BIN/wifi-connect" HomeNet wrongpass1
+  [ "$status" -eq 1 ]
+  grep -q "Passphrase=theoneThatWorks" "$IWD_DIR/HomeNet.psk"
+  ! grep -q "wrongpass1" "$IWD_DIR/HomeNet.psk"
+}
+
 @test "wifi-connect: associated but no lease is reported as a DHCP problem" {
   with_adapter
   no_lease_in_state connected
