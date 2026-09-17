@@ -46,6 +46,10 @@ func setupTest(t *testing.T) string {
 	// Never the real /tmp/mypipe: a test must not write into whatever a
 	// running server on the same machine has open.
 	magic_pipe = filepath.Join(dir, "mypipe")
+	// slowInit starts the real watchdog, which would outlive the test and act
+	// on the state of whichever test runs next.
+	startWatchdog = func() {}
+	isDirty = false
 	return dir
 }
 

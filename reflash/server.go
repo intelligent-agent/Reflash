@@ -2494,7 +2494,12 @@ func watchIPs() {
 	}
 }
 
-func startWatchdog() {
+// A package var like startWifiBringup, so tests can stub it. slowInit starts
+// the ticker and nothing stops it: a test that ran slowInit left it saving
+// options and flipping the shared state to SAVING and back underneath every
+// test after it, which is what made TestControlSocket and
+// TestHandleSerialCommand fail about one run in four.
+var startWatchdog = func() {
 	// 500ms, matching what the web UI used to poll at. The server is now the
 	// only thing that reboots on drive removal (the UI no longer races it), so
 	// this interval is what the user actually waits between pulling the drive
