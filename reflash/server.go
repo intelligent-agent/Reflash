@@ -143,10 +143,9 @@ type GetWifi struct {
 }
 
 type AccessPoint struct {
-	Frequency string `json:"frequency"`
-	Signal    string `json:"signal"`
-	Flags     string `json:"flags"`
-	SSID      string `json:"SSID"`
+	Signal string `json:"signal"`
+	Flags  string `json:"flags"`
+	SSID   string `json:"SSID"`
 }
 
 type Options struct {

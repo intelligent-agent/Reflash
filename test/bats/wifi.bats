@@ -98,6 +98,32 @@ EOF
   [[ "$output" == *"CoffeeShop|open|**"* ]]
 }
 
+@test "wifi-scan: grey stars are unlit bars, not signal (#154)" {
+  with_adapter
+  # Captured from a real iwctl: it always prints four stars and colours the
+  # unlit ones grey, so "***" + grey "*" is three bars, not four.
+  cat > "$SHIMDIR/iwctl" <<'EOF'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "  Mode  station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then
+  printf '                               Available networks\e[1;90m                              \e[0m\n'
+  printf '\e[1;90m      Network name                      Security            Signal\n\e[0m'
+  printf '\e[90m--------------------------------------------------------------------------------\n\e[0m'
+  printf '  \e[1;90m> \e[0m Near                              psk                 ****    \n'
+  printf '      Kraakeslottet                     psk                 ***\e[1;90m*\e[0m    \n'
+  printf '      Faint                             open                *\e[1;90m***\e[0m    \n'
+fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  run "$PROD_BIN/wifi-scan"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Near|psk|****"* ]]
+  [[ "$output" == *"Kraakeslottet|psk|***"$'\n'* ]]
+  [[ "$output" == *"Faint|open|*"$'\n'* ]]
+}
+
 # --- full connect happy path ------------------------------------------------
 
 @test "wifi-connect: provisions profile and reports success once DHCP leases" {
