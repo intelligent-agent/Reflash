@@ -26,7 +26,7 @@ function mountDialog(open = false) {
 
 // Default answers for everything the dialog fetches on open, so individual
 // tests only have to say what is different.
-function stubStatus(wifi = {}, aps = []) {
+function stubStatus(wifi = {}, aps = [], attempt = null) {
   axios.get.mockImplementation((url) => {
     if (url === '/api/get_status') {
       return Promise.resolve({
@@ -39,6 +39,9 @@ function stubStatus(wifi = {}, aps = []) {
     }
     if (url === '/api/wifi_poll_scan') {
       return Promise.resolve({ status: 200, data: aps })
+    }
+    if (url === '/api/wifi_poll_connect' && attempt) {
+      return Promise.resolve({ status: 200, data: attempt })
     }
     return Promise.reject(new Error('unexpected GET ' + url))
   })
@@ -290,7 +293,7 @@ describe('reconnect watch after a mode switch', () => {
     expect(wrapper.vm.reconnecting).toBe(true)
 
     // ...and once it really has switched, it still reports success.
-    stubStatus({ mode: 'station', ssid: 'HomeNet' })
+    stubStatus({ mode: 'station', ssid: 'HomeNet', ip: '10.0.0.5' })
     await vi.advanceTimersByTimeAsync(2500)
     expect(wrapper.vm.statusMessage).toBe('Connected to HomeNet.')
   })
@@ -308,6 +311,42 @@ describe('reconnect watch after a mode switch', () => {
     await wrapper.vm.startWifiConnect()
     await flushProbe()
     stubStatus({ mode: 'ap', ssid: 'Recore' })
+    await vi.advanceTimersByTimeAsync(2500)
+
+    expect(wrapper.vm.statusMessage).toContain('Could not join HomeNet')
+    expect(wrapper.vm.reconnecting).toBe(false)
+  })
+
+  it('does not call it connected while the board is still associating (#149)', async () => {
+    // iwd names the network in "Connected network" while it is still
+    // connecting, so station + the right SSID arrives before any verdict. With
+    // a wrong passphrase that was announced as a connection and the watch
+    // stopped, never seeing the fall back to the hotspot.
+    stubStatus({ mode: 'ap', ssid: 'Recore' })
+    const wrapper = mountDialog(true)
+    await settle(wrapper)
+    wrapper.vm.selected = { SSID: 'HomeNet' }
+
+    await wrapper.vm.startWifiConnect()
+    await flushProbe()
+    stubStatus({ mode: 'station', ssid: 'HomeNet' }, [], { isConnecting: true, error: null })
+    await vi.advanceTimersByTimeAsync(2500)
+
+    expect(wrapper.vm.statusMessage).not.toContain('Connected to')
+    expect(wrapper.vm.reconnecting).toBe(true)
+  })
+
+  it('reports a failed attempt from the server verdict (#149)', async () => {
+    // The live case: the board was caught mid-association looking joined, and
+    // by the next reading the attempt had failed. The server knows; ask it.
+    stubStatus({ mode: 'ap', ssid: 'Recore' })
+    const wrapper = mountDialog(true)
+    await settle(wrapper)
+    wrapper.vm.selected = { SSID: 'HomeNet' }
+
+    await wrapper.vm.startWifiConnect()
+    await flushProbe()
+    stubStatus({ mode: 'station', ssid: 'HomeNet' }, [], { isConnecting: false, error: 'exit status 1' })
     await vi.advanceTimersByTimeAsync(2500)
 
     expect(wrapper.vm.statusMessage).toContain('Could not join HomeNet')

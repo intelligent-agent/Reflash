@@ -19,7 +19,9 @@ update_settings(){
     umount -q /mnt/emmc/
     mount "${EMMC}p2" /mnt/emmc
 
-    echo -e "$CONTENT" > "$SETTINGS_FILE"
+    # printf, not echo -e: the content arrives with real newlines, and -e
+    # also turned any backslash in a passphrase into an escape (#157).
+    printf '%s\n' "$CONTENT" > "$SETTINGS_FILE"
     chmod 600 "$SETTINGS_FILE"
     umount /mnt/emmc
 }

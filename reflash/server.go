@@ -143,10 +143,9 @@ type GetWifi struct {
 }
 
 type AccessPoint struct {
-	Frequency string `json:"frequency"`
-	Signal    string `json:"signal"`
-	Flags     string `json:"flags"`
-	SSID      string `json:"SSID"`
+	Signal string `json:"signal"`
+	Flags  string `json:"flags"`
+	SSID   string `json:"SSID"`
 }
 
 type Options struct {
@@ -195,7 +194,7 @@ type State struct {
 	BytesTotal int      `json:"bytes_total"`
 	Error      string   `json:"error"`
 	IPs        []string `json:"ips"`
-	File       *os.File
+	File       *os.File `json:"-"`
 	sync.Mutex
 }
 
@@ -448,6 +447,7 @@ func ServerInit() {
 	http.HandleFunc("/api/upload_magic_finish", uploadMagicFinish)
 	http.HandleFunc("/api/get_progress", getProgress)
 	http.HandleFunc("/api/check_file_integrity", checkFileIntegrity)
+	http.HandleFunc("/api/delete_image", deleteImage)
 	http.HandleFunc("/api/run_install_finished_commands", runInstallFinishedCommands)
 	http.HandleFunc("/api/clear_log", clearLog)
 	http.HandleFunc("/api/rotate_screen", rotateScreen)
@@ -899,9 +899,8 @@ func startDownload(w http.ResponseWriter, r *http.Request) {
 	state.StartTime = data.StartTime
 	url := data.Url
 	state.BytesTotal = data.Size
+	resetTransfer()
 	state.State = DOWNLOADING
-	last_size_check = time.Now()
-	bytes_last = 0
 	mountUsb(MODE_RW)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -914,46 +913,94 @@ func startDownload(w http.ResponseWriter, r *http.Request) {
 
 func goDownload(ctx context.Context, filename string, url string) {
 	disarmReboot()
-	out, err := os.Create(images_folder + "/" + filename)
-	if err != nil {
-		panic(err)
+	path := images_folder + "/" + filename
+
+	// Every way out removes what was written and puts the drive back to
+	// read-only. This used to panic on a failed create or request, taking the
+	// server down with it.
+	fail := func(what string, err error) {
+		logError(what + ": " + err.Error())
+		os.Remove(path)
+		mountUsb(MODE_RO)
+		state.State = ERROR
+		state.Error = "The download failed: " + err.Error()
+	}
+	cancelled := func() {
+		logInfo("Download cancelled.")
+		os.Remove(path)
+		mountUsb(MODE_RO)
+		state.State = CANCELLED
 	}
 
-	resp, err := http.Get(url)
+	out, err := os.Create(path)
 	if err != nil {
-		panic(err)
+		fail("Could not create "+filename, err)
+		return
+	}
+	// Bound to the cancel. The copy used to run in a goroutine of its own that
+	// nothing stopped: after Cancel it went on downloading into the removed
+	// file until the image was complete, which is why the drive could not be
+	// remounted ("target is busy") and why progress lines kept being logged.
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		out.Close()
+		fail("Could not start the download", err)
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		out.Close()
+		if ctx.Err() != nil {
+			cancelled()
+			return
+		}
+		fail("Download failed", err)
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		out.Close()
+		fail("Download failed", fmt.Errorf("the server answered %s", resp.Status))
+		return
 	}
 
 	timeStart = time.Now()
 	logInfo(fmt.Sprintf("Starting download at %s", timeStart.Format("15:04:05")))
 
-	done := make(chan bool)
-	go func() {
-		io.Copy(out, resp.Body)
-		resp.Body.Close()
-		out.Close()
-		done <- true
-	}()
-
-	select {
-	case <-ctx.Done():
-		logInfo("Download cancelled.")
-		os.Remove(images_folder + "/" + filename)
-		state.State = CANCELLED
-		mountUsb(MODE_RO)
+	_, err = io.Copy(out, resp.Body)
+	resp.Body.Close()
+	closeErr := out.Close()
+	if ctx.Err() != nil {
+		cancelled()
 		return
-	case <-done:
-		duration := time.Since(timeStart)
-		logInfo(fmt.Sprintf("Download finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+	}
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		fail("Download failed", err)
+		return
 	}
 
+	duration := time.Since(timeStart)
+	logInfo(fmt.Sprintf("Download finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	mountUsb(MODE_RO)
 
+	// The last progress sample is whatever the previous poll saw, so a
+	// finished download reported 96% to get_progress and to STATUS (#155).
+	if fi, err := os.Stat(path); err == nil {
+		state.BytesNow = int(fi.Size())
+	}
+	state.Progress = 100
 	state.State = FINISHED
 }
 
 func cancelDownload(w http.ResponseWriter, r *http.Request) {
-	cancelFunc()
+	// nil until the first download: a cancel with nothing to cancel must not
+	// panic the server.
+	if cancelFunc != nil {
+		cancelFunc()
+	}
 	sendResponse(w, nil)
 }
 
@@ -968,7 +1015,8 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	state.BytesTotal = data.Size
 	state.State = UPLOADING
 	uploadFailed = false
-	markUploadStarted()
+	resetTransfer()
+	markUploadStarted(false)
 	mountUsb(MODE_RW)
 
 	timeStart = time.Now()
@@ -1016,7 +1064,8 @@ func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
 	state.BytesTotal = data.Size
 	state.State = UPLOADING_MAGIC
 	uploadFailed = false
-	markUploadStarted()
+	resetTransfer()
+	markUploadStarted(true)
 
 	go goUploadMagic()
 	time.Sleep(1 * time.Second)
@@ -1072,6 +1121,12 @@ var (
 	uploadMutex    sync.Mutex
 	lastChunkAt    time.Time
 	chunksInFlight int
+	// uploadStopping refuses new chunks while upload_cancel waits for the ones
+	// already in flight. uploadActive is whether there is an upload to stop at
+	// all: the client can send upload_cancel twice for one upload.
+	uploadStopping bool
+	uploadActive   bool
+	uploadIsMagic  bool
 )
 
 // This has to outlast the client's own patience, not the normal inter-chunk
@@ -1108,11 +1163,36 @@ var uploadTimeout = 5 * time.Minute
 func beginChunk() bool {
 	uploadMutex.Lock()
 	defer uploadMutex.Unlock()
-	if state.State == CANCELLED || state.State == ERROR {
+	if state.State == CANCELLED || state.State == ERROR || uploadStopping {
 		return false
 	}
 	chunksInFlight++
 	return true
+}
+
+// stopping reports whether upload_cancel is under way. A chunk that fails
+// because of it is part of the cancel, not a failure of its own.
+func stopping() bool {
+	uploadMutex.Lock()
+	defer uploadMutex.Unlock()
+	return uploadStopping
+}
+
+// waitForChunks waits for the chunks already admitted to finish. Bounded,
+// because a magic chunk can block on a FIFO whose reader is gone, and a cancel
+// that never returns is worse than closing underneath it.
+func waitForChunks(limit time.Duration) {
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		uploadMutex.Lock()
+		n := chunksInFlight
+		uploadMutex.Unlock()
+		if n == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	logError("upload_cancel: a chunk was still in flight after " + limit.String() + "; closing anyway")
 }
 
 func endChunk() {
@@ -1125,11 +1205,14 @@ func endChunk() {
 // markUploadStarted starts the clock at the start handler rather than at the
 // first chunk, so an upload abandoned before it ever sends data still times
 // out - which is the common case when a page is refreshed just after starting.
-func markUploadStarted() {
+func markUploadStarted(magic bool) {
 	uploadMutex.Lock()
 	defer uploadMutex.Unlock()
 	lastChunkAt = time.Now()
 	chunksInFlight = 0
+	uploadStopping = false
+	uploadActive = true
+	uploadIsMagic = magic
 }
 
 // markUploadDone stops the clock, so the watchdog has nothing to act on once an
@@ -1287,7 +1370,17 @@ func writeChunk(w http.ResponseWriter, r *http.Request, sink chunkSink) {
 	// >1GB upload over this board's WiFi that is a lot of avoidable transfer.
 	decoded, err := io.ReadAll(r.Body)
 	if err != nil {
+		if stopping() {
+			json.NewEncoder(w).Encode(map[string]bool{"success": false})
+			return
+		}
 		failChunk(w, http.StatusBadRequest, sink.readLog, sink.readMsg, err)
+		return
+	}
+	// Cancelled while this chunk was on the wire. Do not write it: the file is
+	// about to be closed and removed.
+	if stopping() {
+		json.NewEncoder(w).Encode(map[string]bool{"success": false})
 		return
 	}
 
@@ -1320,6 +1413,9 @@ func writeChunk(w http.ResponseWriter, r *http.Request, sink chunkSink) {
 
 func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	markUploadDone()
+	uploadMutex.Lock()
+	uploadActive = false
+	uploadMutex.Unlock()
 	// Closing the FIFO is what signals end-of-stream to the decompressor, so
 	// a failure here means the flash is incomplete - but it is still an
 	// error to report, not a reason to kill the server.
@@ -1394,6 +1490,9 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 
 func uploadFinish(w http.ResponseWriter, r *http.Request) {
 	markUploadDone()
+	uploadMutex.Lock()
+	uploadActive = false
+	uploadMutex.Unlock()
 	if state.File != nil {
 		if err := state.File.Close(); err != nil {
 			// The last flush to the USB drive lands here, so this is
@@ -1421,11 +1520,26 @@ func uploadCancel(w http.ResponseWriter, r *http.Request) {
 	// with CANCELLED is what made the two indistinguishable in the first
 	// place, in the UI as well as the log. See issue #114.
 	markUploadDone()
+	uploadMutex.Lock()
+	if !uploadActive {
+		// Already stopped - a second cancel for the same upload, from the
+		// chunk that was in flight when the first one landed. Acting on it
+		// again would set CANCELLED after the poll had moved on to IDLE.
+		uploadMutex.Unlock()
+		return
+	}
 	failed := uploadFailed || state.State == ERROR
 	uploadFailed = false
-	if !failed {
-		state.State = CANCELLED
-	}
+	uploadStopping = true
+	magic := uploadIsMagic
+	uploadMutex.Unlock()
+
+	// A chunk admitted before the cancel may still be writing. Closing the
+	// file underneath it failed that write with "invalid argument", which set
+	// ERROR with the USB-drive message - two red toasts for pressing Cancel,
+	// and the drive left mounted rw because ERROR skipped the remount (#151).
+	waitForChunks(30 * time.Second)
+
 	if state.File != nil {
 		logInfo("Closing file")
 		if err := state.File.Close(); err != nil {
@@ -1437,6 +1551,20 @@ func uploadCancel(w http.ResponseWriter, r *http.Request) {
 		}
 		state.File = nil
 	}
+	if !magic {
+		// A cancelled or failed upload is a truncated image; left in the list
+		// it could only ever fail its integrity check (#153).
+		if state.Filename != "" {
+			os.Remove(images_folder + "/" + state.Filename)
+		}
+		mountUsb(MODE_RO)
+	}
+	uploadMutex.Lock()
+	uploadActive = false
+	if !failed {
+		state.State = CANCELLED
+	}
+	uploadMutex.Unlock()
 	// timeStart is only set once an upload has actually started, and this
 	// endpoint can be reached without one - printing the zero value gives a
 	// duration in the hundreds of millions of minutes, which reads like a
@@ -1474,9 +1602,9 @@ func startMagic(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusConflict)
 		return
 	}
+	resetTransfer()
+	startWorker()
 	state.State = MAGIC
-	last_size_check = time.Now()
-	bytes_last = 0
 	go goMagic(url)
 	time.Sleep(1 * time.Second)
 
@@ -1489,8 +1617,15 @@ func goMagic(url string) {
 	logInfo(fmt.Sprintf("Starting magic at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Url %s", url))
 
-	stdout, _, err := runCommand2("flash-from-url", url)
+	stdout, _, err := runWorker("flash-from-url", url)
 	if err != nil {
+		if cancelRequested.Load() {
+			duration := time.Since(timeStart)
+			logInfo(fmt.Sprintf("Magic cancelled after %d minutes and %d seconds - the eMMC is partially written", int(duration.Minutes()), int(duration.Seconds())%60))
+			state.State = CANCELLED
+			state.Error = ""
+			return
+		}
 		logError("Error encountered during magic: \n" + stdout)
 		state.State = ERROR
 		// flash-from-url prints the specific reason (e.g. the real download
@@ -1516,12 +1651,10 @@ func goMagic(url string) {
 }
 
 func cancelMagic(w http.ResponseWriter, r *http.Request) {
-	duration := time.Since(timeStart)
-
-	_, _, err := runCommand2("pkill", "-f", "xz", "-9")
-	logInfo(fmt.Sprintf("Magic cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
-	state.State = CANCELLED
-	sendResponse(w, err)
+	if cancelWorker() {
+		logInfo("Magic cancel requested")
+	}
+	sendResponse(w, nil)
 }
 
 func startBackup(w http.ResponseWriter, r *http.Request) {
@@ -1533,6 +1666,8 @@ func startBackup(w http.ResponseWriter, r *http.Request) {
 	state.StartTime = data.StartTime
 
 	state.BytesTotal = getBlockSize("/dev/mmcblk2")
+	resetTransfer()
+	startWorker()
 	state.State = BACKUPING
 	mountUsb(MODE_RW)
 
@@ -1549,24 +1684,27 @@ func goBackup() {
 	timeStart = time.Now()
 	logInfo(fmt.Sprintf("starting backup of %s at time %s", state.Filename, timeStart.Format("15:04:05")))
 
-	stdout, _, err := runCommand2("backup-emmc", path)
+	stdout, _, err := runWorker("backup-emmc", path)
+	if err != nil {
+		// backup-emmc writes <label>.img.xz, and a backup that did not finish
+		// leaves a truncated one in the install list. cancelBackup used to
+		// remove <label> - a file that never exists - so it stayed (#153).
+		// Removed here, after the pipeline has exited, not while xz may still
+		// be writing it.
+		os.Remove(path + ".img.xz")
+	}
 	mountUsb(MODE_RO)
 
-	// Plain reads/writes of state.State here aren't enough to see
-	// cancelBackup()'s write reliably - without a shared lock, Go's memory
-	// model doesn't guarantee this goroutine observes that write just
-	// because it happened first in wall-clock time. state.Lock() gives the
-	// same guarantee cancelBackup()'s matching lock below relies on.
 	state.Lock()
 	defer state.Unlock()
 	if err != nil {
-		// cancelBackup() kills the backup subprocess to stop it, which makes
-		// runCommand2 return an error here too (exit 137 - SIGKILL) - that's
-		// the expected result of a deliberate cancel, not a real failure.
-		// cancelBackup() sets state to CANCELLED before killing specifically
-		// so this check can tell the two apart instead of overwriting the
-		// cancellation with a generic error.
-		if state.State == CANCELLED {
+		// A cancel kills xz, so the script fails - that is the cancel
+		// working, not a backup error.
+		if cancelRequested.Load() {
+			duration := time.Since(timeStart)
+			logInfo(fmt.Sprintf("Backup cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
+			state.State = CANCELLED
+			state.Error = ""
 			return
 		}
 		logError("Error encountered during backup: \n" + stdout)
@@ -1581,33 +1719,29 @@ func goBackup() {
 }
 
 func cancelBackup(w http.ResponseWriter, r *http.Request) {
-	duration := time.Since(timeStart)
-	logInfo(fmt.Sprintf("Backup cancelled after %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
-
-	// Set before killing, not after - goBackup() is blocked waiting on the
-	// subprocess and wakes up as soon as the kill lands, so this needs to
-	// already be visible by then to avoid a race where it sees the kill's
-	// resulting error first and reports it as a generic failure instead.
-	// Locked so that guarantee actually holds under Go's memory model, not
-	// just in wall-clock time - see goBackup().
-	state.Lock()
-	state.State = CANCELLED
-	state.Error = ""
-	state.Unlock()
-
-	cmd := exec.Command("pkill", "-f", "xz", "-9")
-	err := cmd.Run()
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			logError(fmt.Sprintf("Command 'pkill -f xz -9' returned exit code %v\n", exitError.ExitCode()))
-		}
+	if cancelWorker() {
+		logInfo("Backup cancel requested")
 	}
-	os.Remove(images_folder + "/" + state.Filename)
-	sendResponse(w, err)
+	sendResponse(w, nil)
 }
 
 func getBlockSize(file string) int {
 	return runCommandReturnInt("lsblk", "-n", "-d", "-o", "SIZE", "--bytes", file)
+}
+
+// resetTransfer clears every progress counter for a new operation. Each start
+// handler used to reset some of them, and the rest carried over: the first log
+// line of a download after a cancelled one read "-4.66 MB/s", because the
+// bandwidth log's baseline was the byte count the previous operation had
+// reached (#155).
+func resetTransfer() {
+	state.BytesNow = 0
+	state.Progress = 0
+	state.Bandwidth = 0
+	bytes_last = 0
+	last_size_check = time.Now()
+	lastBandwidthLog = time.Time{}
+	bytesAtLastLog = 0
 }
 
 // refreshProgress reads the active progress source (the flash-progress file
@@ -1664,6 +1798,13 @@ func logBandwidth() {
 	if state.BytesTotal <= 0 {
 		return
 	}
+	// Only while something is moving. get_progress refreshes after a transfer
+	// too, and that logged "IDLE: 0.37 MB/s (235929600 of 314572800 bytes)".
+	switch state.State {
+	case DOWNLOADING, UPLOADING, UPLOADING_MAGIC, INSTALLING, BACKUPING, MAGIC:
+	default:
+		return
+	}
 	now := time.Now()
 	if lastBandwidthLog.IsZero() {
 		lastBandwidthLog = now
@@ -1687,8 +1828,10 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 	if state.State == FINISHED {
 		state.State = IDLE
 	}
+	// No remount here. It ran while a cancelled backup or download still had
+	// its file open, so it failed with "target is busy"; every path that
+	// mounts the drive rw now puts it back itself, once its file is closed.
 	if state.State == CANCELLED {
-		mountUsb(MODE_RO)
 		state.State = IDLE
 	}
 	if state.State == ERROR {
@@ -1714,6 +1857,55 @@ func getLocalImages() []Image {
 	}
 
 	return images
+}
+
+// deleteImage removes one image from the drive. There was no way to do that from
+// the UI, so a truncated image - an abandoned upload, a backup from before
+// cancels cleaned up - stayed in the install list for good, only ever failing
+// its integrity check (#153).
+func deleteImage(w http.ResponseWriter, r *http.Request) {
+	var data Download
+	reqBody, _ := io.ReadAll(r.Body)
+	json.Unmarshal(reqBody, &data)
+	name := data.Filename
+	// A bare image name and nothing else: this deletes as root.
+	if name == "" || filepath.Base(name) != name || strings.HasPrefix(name, ".") ||
+		!strings.HasSuffix(name, ".img.xz") {
+		http.Error(w, "not an image name: "+name, http.StatusBadRequest)
+		return
+	}
+	path := images_folder + "/" + name
+	if _, err := os.Stat(path); err != nil {
+		http.Error(w, "no such image: "+name, http.StatusNotFound)
+		return
+	}
+
+	// Claim the drive the way lockSaveOptions does, so nothing can start
+	// writing to or reading from this image while it is removed.
+	state.Lock()
+	if state.State != IDLE && state.State != FINISHED && state.State != ERROR && state.State != CANCELLED {
+		busy := state.State
+		state.Unlock()
+		http.Error(w, "busy: "+busy, http.StatusConflict)
+		return
+	}
+	previous := state.State
+	state.State = SAVING
+	state.Unlock()
+
+	mountUsb(MODE_RW)
+	err := os.Remove(path)
+	mountUsb(MODE_RO)
+	if err != nil {
+		logError("Could not delete " + name + ": " + err.Error())
+	} else {
+		logInfo("Deleted image " + name)
+	}
+
+	state.Lock()
+	state.State = previous
+	state.Unlock()
+	sendResponse(w, err)
 }
 
 func checkFileIntegrity(w http.ResponseWriter, r *http.Request) {
@@ -1749,6 +1941,8 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusConflict)
 		return
 	}
+	resetTransfer()
+	startWorker()
 	state.State = INSTALLING
 
 	go goInstall(state.Filename)
@@ -1765,8 +1959,15 @@ func goInstall(filename string) {
 	logInfo(fmt.Sprintf("starting install at %s", timeStart.Format("15:04:05")))
 	logInfo(fmt.Sprintf("Filename %s", filename))
 
-	stdout, _, err := runCommand2("flash-from-file", path)
+	stdout, _, err := runWorker("flash-from-file", path)
 	if err != nil {
+		if cancelRequested.Load() {
+			duration := time.Since(timeStart)
+			logInfo(fmt.Sprintf("Installation cancelled after %d minutes and %d seconds - the eMMC is partially written", int(duration.Minutes()), int(duration.Seconds())%60))
+			state.State = CANCELLED
+			state.Error = ""
+			return
+		}
 		logError("Error encountered during install: \n" + stdout)
 		state.State = ERROR
 		state.Error = "An error was encountered during install. Check log for details"
@@ -1829,45 +2030,46 @@ func lastLine(file string) string {
 }
 
 func cancelInstallation(w http.ResponseWriter, r *http.Request) {
-	cmd := exec.Command("pkill", "-f", "xz", "-9")
-	err := cmd.Run()
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			logError(fmt.Sprintf("Command 'pkill -f xz -9' returned exit code %v\n", exitError.ExitCode()))
-		}
+	if cancelWorker() {
+		logInfo("Installation cancel requested")
 	}
-	sendResponse(w, err)
+	sendResponse(w, nil)
 }
 
 func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
-	var err error
-	err = cmdRotateScreen(options.ScreenRotation, "CMDLINE")
-	if err != nil {
-		sendResponse(w, err)
+	// One response, carrying the first error. Each failed rotate used to call
+	// sendResponse and carry on, so a single failure wrote two JSON bodies into
+	// one reply and the client could parse neither (#157).
+	var firstErr error
+	keep := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
-	err = cmdRotateScreen(options.ScreenRotation, "XORG")
-	if err != nil {
-		sendResponse(w, err)
-	}
-	err = cmdRotateScreen(options.ScreenRotation, "WESTON")
-	if err != nil {
-		sendResponse(w, err)
-	}
-	err = cmdRotateScreen(options.ScreenRotation, "PLYMOUTH")
-	if err != nil {
-		sendResponse(w, err)
+	for _, place := range []string{"CMDLINE", "XORG", "WESTON", "PLYMOUTH"} {
+		keep(cmdRotateScreen(options.ScreenRotation, place))
 	}
 
 	settings := "# Settings from Reflash\n" +
 		"SSH_ENABLED_ON_BOOT=" + strconv.FormatBool(options.EnableSsh) + "\n" +
 		"SSH_TIMEOUT=60\n" +
 		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10) + "\n" +
-		"WIFI_SSID='" + options.WifiSSID + "'\n" +
-		"WIFI_PSK='" + options.WifiPSK + "'"
+		"WIFI_SSID=" + shellQuote(options.WifiSSID) + "\n" +
+		"WIFI_PSK=" + shellQuote(options.WifiPSK)
 
-	runCommand2("save-settings", settings)
-	err = unmountUsb()
-	sendResponse(w, err)
+	_, _, err := runCommand2("save-settings", settings)
+	keep(err)
+	keep(unmountUsb())
+	sendResponse(w, firstErr)
+}
+
+// shellQuote makes v a single shell word. /etc/rebuild-settings is sourced by
+// bash as root on the flashed image (rebuild-first-run, autohotspot), and the
+// values were pasted between bare single quotes: a valid passphrase such as
+// it's-my-wifi broke the file, and a crafted SSID or passphrase could run
+// commands as root on the first boot (#157).
+func shellQuote(v string) string {
+	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
 
 func sendResponse(w http.ResponseWriter, err error) {
@@ -2201,6 +2403,80 @@ func runCommand2(cmds ...string) (string, string, error) {
 	return out.String(), stderr.String(), err
 }
 
+// The eMMC job running right now - backup, install or magic - and whether the
+// user has asked to stop it.
+//
+// A cancel used to set CANCELLED and then `pkill -f xz -9`. Two things were
+// wrong with that. The pattern matched any process whose command line held
+// "xz", not just the job's (#156). And the job's goroutine was still running:
+// the next get_progress poll turned CANCELLED into IDLE before the killed
+// pipeline had exited, so the goroutine no longer saw a cancel and recorded
+// ERROR - which is what a cancelled backup showed (#152), and the same code
+// shape made a cancelled install or magic do it too.
+//
+// So a cancel now only asks. It kills xz inside the job's own process group,
+// and the goroutine, once the job has really exited and been cleaned up after,
+// is what reports CANCELLED.
+var (
+	workerPgid      atomic.Int64
+	cancelRequested atomic.Bool
+)
+
+// runWorker is runCommand2 for the long eMMC jobs: in a process group of its
+// own, so cancelWorker can find exactly its processes.
+func runWorker(cmds ...string) (string, string, error) {
+	cmd := exec.Command(resolveCmd(cmds[0]), cmds[1:]...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var out, stderr syncBuffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		logError(fmt.Sprintf("%s", redactArgs(cmds)) + ": " + fmt.Sprint(err))
+		return out.String(), stderr.String(), err
+	}
+	workerPgid.Store(int64(cmd.Process.Pid))
+	// A cancel that landed between the start handler and here found no group
+	// to kill. Act on it now rather than losing it.
+	if cancelRequested.Load() {
+		killWorkerXz()
+	}
+	err := cmd.Wait()
+	workerPgid.Store(0)
+	if err != nil && !cancelRequested.Load() {
+		logError(fmt.Sprintf("%s", redactArgs(cmds)) + ": " + fmt.Sprint(err) + ": " + strings.TrimSpace(stderr.String()))
+	}
+	return out.String(), stderr.String(), err
+}
+
+// startWorker is called by every handler that starts an eMMC job, before its
+// goroutine: a cancel meant for the previous job must not stop this one.
+func startWorker() {
+	cancelRequested.Store(false)
+}
+
+// cancelWorker asks the running job to stop. Returns false when there is no
+// job to stop, which is not an error - the UI can send a cancel after the job
+// has already finished.
+func cancelWorker() bool {
+	cancelRequested.Store(true)
+	return killWorkerXz()
+}
+
+// killWorkerXz kills xz, and only xz, in the running job's process group. xz
+// rather than the whole group: the scripts' own error handling after a failed
+// pipeline (unmounting, logging) still runs, exactly as it did when xz was the
+// process being killed.
+func killWorkerXz() bool {
+	pgid := workerPgid.Load()
+	if pgid == 0 {
+		return false
+	}
+	// Exit status 1 is "no xz in the group" - the pipeline is already on its
+	// way out - so it is not worth an error in the log.
+	_ = exec.Command("pkill", "-9", "-g", strconv.FormatInt(pgid, 10), "-x", "xz").Run()
+	return true
+}
+
 func mountUsb(mode string) error {
 	_, _, err := runCommand2("mount-unmount-usb", "mounted", mode)
 	return err
@@ -2408,7 +2684,12 @@ func watchIPs() {
 	}
 }
 
-func startWatchdog() {
+// A package var like startWifiBringup, so tests can stub it. slowInit starts
+// the ticker and nothing stops it: a test that ran slowInit left it saving
+// options and flipping the shared state to SAVING and back underneath every
+// test after it, which is what made TestControlSocket and
+// TestHandleSerialCommand fail about one run in four.
+var startWatchdog = func() {
 	// 500ms, matching what the web UI used to poll at. The server is now the
 	// only thing that reboots on drive removal (the UI no longer races it), so
 	// this interval is what the user actually waits between pulling the drive
@@ -2765,13 +3046,17 @@ func handleSerialCommand(line string) []string {
 		}
 		state.Filename = filename
 		state.BytesTotal = getUncompressedSize(images_folder + "/" + filename)
+		resetTransfer()
+		startWorker()
 		state.State = INSTALLING
 		state.Unlock()
 		startInstall(filename)
 		return []string{"OK flashing " + filename}
 
 	case "CANCEL":
-		runCommand2("pkill", "-f", "xz", "-9")
+		if cancelWorker() {
+			logInfo("Cancel requested over the control protocol")
+		}
 		return []string{"OK"}
 
 	default:

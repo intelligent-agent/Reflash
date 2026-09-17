@@ -39,10 +39,14 @@ sleep 3
 # 4. Structured Output
 echo "---SCAN_RESULTS_START---"
 # This pipeline:
-# 1. sed: Nukes ANSI escape codes (the \x1B[...m stuff)
-# 2. sed: Removes the > marker
-# 3. awk: Parses the columns safely
+# 1. sed: Drops the grey stars. iwctl always prints four, and draws the unlit
+#    ones in grey (`***\e[1;90m*\e[0m` is three bars), so stripping the colour
+#    first turned every network into "****" whatever its signal (#154).
+# 2. sed: Nukes the remaining ANSI escape codes (the \x1B[...m stuff)
+# 3. sed: Removes the > marker
+# 4. awk: Parses the columns safely
 iwctl station "$INTERFACE" get-networks | \
+    sed $'s/\x1b\[1;90m\*\+//g' | \
     sed $'s/\x1b\[[0-9;]*m//g' | \
     sed 's/>//g' | \
     awk '

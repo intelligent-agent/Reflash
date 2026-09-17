@@ -98,6 +98,32 @@ EOF
   [[ "$output" == *"CoffeeShop|open|**"* ]]
 }
 
+@test "wifi-scan: grey stars are unlit bars, not signal (#154)" {
+  with_adapter
+  # Captured from a real iwctl: it always prints four stars and colours the
+  # unlit ones grey, so "***" + grey "*" is three bars, not four.
+  cat > "$SHIMDIR/iwctl" <<'EOF'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "  Mode  station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then
+  printf '                               Available networks\e[1;90m                              \e[0m\n'
+  printf '\e[1;90m      Network name                      Security            Signal\n\e[0m'
+  printf '\e[90m--------------------------------------------------------------------------------\n\e[0m'
+  printf '  \e[1;90m> \e[0m Near                              psk                 ****    \n'
+  printf '      Kraakeslottet                     psk                 ***\e[1;90m*\e[0m    \n'
+  printf '      Faint                             open                *\e[1;90m***\e[0m    \n'
+fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  run "$PROD_BIN/wifi-scan"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Near|psk|****"* ]]
+  [[ "$output" == *"Kraakeslottet|psk|***"$'\n'* ]]
+  [[ "$output" == *"Faint|open|*"$'\n'* ]]
+}
+
 # --- full connect happy path ------------------------------------------------
 
 @test "wifi-connect: provisions profile and reports success once DHCP leases" {
@@ -190,6 +216,130 @@ echo "ip $*" >> "$CALLS"
 exit 0
 EOF
   chmod +x "$SHIMDIR/ip"
+}
+
+@test "wifi-connect: a failed attempt does not leave its profile behind (#150)" {
+  with_adapter
+  no_lease_in_state disconnected
+  run "$PROD_BIN/wifi-connect" HomeNet wrongpass1
+  [ "$status" -eq 1 ]
+  [ ! -e "$IWD_DIR/HomeNet.psk" ]
+  # iwd keeps known networks in memory too; the file alone is not enough.
+  assert_called_with "known-networks HomeNet forget"
+}
+
+@test "wifi-connect: a failed attempt puts the previous profile back (#150)" {
+  with_adapter
+  no_lease_in_state disconnected
+  mkdir -p "$IWD_DIR"
+  printf '[Security]\nPassphrase=theoneThatWorks\n' > "$IWD_DIR/HomeNet.psk"
+  run "$PROD_BIN/wifi-connect" HomeNet wrongpass1
+  [ "$status" -eq 1 ]
+  grep -q "Passphrase=theoneThatWorks" "$IWD_DIR/HomeNet.psk"
+  ! grep -q "wrongpass1" "$IWD_DIR/HomeNet.psk"
+}
+
+# Asking for the network the board is already on did nothing: iwd kept the
+# association it had, so the address never went away and the wait below took it
+# as success - for a passphrase that was never tested. A wrong one then looked
+# like it worked, and was saved as if it had.
+#
+# reconnects_as MODE: the station is on HomeNet until "disconnect" is called;
+# after that it reports HomeNet again only when MODE is "works".
+reconnects_as() {
+  cat > "$SHIMDIR/iwctl" <<EOF
+#!/usr/bin/env bash
+echo "iwctl \$*" >> "\$CALLS"
+state="\$(dirname "\$CALLS")/station"
+[ -f "\$state" ] || echo connected > "\$state"
+if [ "\$1 \$2 \$3" = "station wlan0 disconnect" ]; then echo $1 > "\$state"; fi
+if [ "\$1 \$2 \$3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "\$1 \$2 \$3" = "station wlan0 get-networks" ]; then echo "      HomeNet                 psk       ****"; fi
+if [ "\$1 \$2 \$3" = "station wlan0 show" ]; then
+  if [ "\$(cat "\$state")" = "works" ] || [ "\$(cat "\$state")" = "connected" ]; then
+    echo "  State                 connected"
+    echo "  Connected network     HomeNet"
+  else
+    echo "  State                 disconnected"
+  fi
+fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  # iwd drops the lease with the association, so there is an address only while
+  # the station is connected.
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+state="$(dirname "$CALLS")/station"
+s=$(cat "$state" 2>/dev/null || echo connected)
+if [ "$s" = connected ] || [ "$s" = works ]; then
+  echo "    inet 192.168.1.50/24 brd 192.168.1.255 scope global wlan0"
+fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+}
+
+@test "wifi-connect: a wrong passphrase for the network already joined is not a success" {
+  with_adapter
+  reconnects_as fails
+  run "$PROD_BIN/wifi-connect" HomeNet wrongpass1
+  [ "$status" -eq 1 ]
+  assert_called_with "station wlan0 disconnect"
+  [[ "$output" != *"Success!"* ]]
+  [[ "$output" == *"Never associated"* ]]
+}
+
+@test "wifi-connect: reconnecting to the same network still works when it is right" {
+  with_adapter
+  reconnects_as works
+  run "$PROD_BIN/wifi-connect" HomeNet hunter2
+  [ "$status" -eq 0 ]
+  assert_called_with "station wlan0 disconnect"
+  [[ "$output" == *"Connected with IP: 192.168.1.50/24"* ]]
+}
+
+# iwd has crashed during the restore and come back in station mode, leaving the
+# board with no hotspot - the state the fallback exists to prevent (#90).
+@test "wifi-connect: retries the hotspot when it did not come up" {
+  with_adapter
+  cat > "$SHIMDIR/iwctl" <<'EOF'
+#!/usr/bin/env bash
+echo "iwctl $*" >> "$CALLS"
+if [ "$1 $2 $3" = "device wlan0 show" ]; then echo "Mode station"; fi
+if [ "$1 $2 $3" = "station wlan0 get-networks" ]; then echo "      HomeNet                 psk       ****"; fi
+# device list is the check after starting the AP: station the first time (the
+# daemon came back without it), ap after the retry.
+if [ "$1 $2" = "device list" ]; then
+  c="$(dirname "$CALLS")/listcalls"
+  n=$(cat "$c" 2>/dev/null || echo 0); echo $((n+1)) > "$c"
+  if [ "$n" -eq 0 ]; then echo "  wlan0   90:de:80:00:00:01  on  phy0  station"
+  else echo "  wlan0   90:de:80:00:00:01  on  phy0  ap"; fi
+fi
+exit 0
+EOF
+  chmod +x "$SHIMDIR/iwctl"
+  cat > "$SHIMDIR/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "ip $*" >> "$CALLS"
+exit 0
+EOF
+  chmod +x "$SHIMDIR/ip"
+  run "$PROD_BIN/wifi-connect" HomeNet wrongpass1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"did not come up - retrying once"* ]]
+  [[ "$output" == *"Hotspot restored on the second attempt"* ]]
+  [ "$(grep -c "ap wlan0 start-profile Recore" "$CALLS")" -eq 2 ]
+}
+
+@test "wifi-connect: says so when the hotspot cannot be started at all" {
+  with_adapter
+  no_lease_in_state disconnected
+  # device list never reports ap, so both attempts fail.
+  run "$PROD_BIN/wifi-connect" HomeNet wrongpass1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"WARNING: could not start the Recore hotspot"* ]]
 }
 
 @test "wifi-connect: associated but no lease is reported as a DHCP problem" {

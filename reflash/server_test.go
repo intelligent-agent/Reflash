@@ -43,9 +43,15 @@ func setupTest(t *testing.T) string {
 	lastChunkAt = time.Time{}
 	chunksInFlight = 0
 	uploadFailed = false
+	uploadStopping = false
+	uploadActive = false
 	// Never the real /tmp/mypipe: a test must not write into whatever a
 	// running server on the same machine has open.
 	magic_pipe = filepath.Join(dir, "mypipe")
+	// slowInit starts the real watchdog, which would outlive the test and act
+	// on the state of whichever test runs next.
+	startWatchdog = func() {}
+	isDirty = false
 	return dir
 }
 
@@ -1322,7 +1328,7 @@ func startAbandonedUpload(t *testing.T, dir string, stateName string) *os.File {
 		t.Fatal(err)
 	}
 	state = &State{State: stateName, Filename: "partial.img.xz", File: f, BytesNow: 500, BytesTotal: 1000}
-	markUploadStarted()
+	markUploadStarted(stateName == UPLOADING_MAGIC)
 	uploadMutex.Lock()
 	lastChunkAt = time.Now().Add(-2 * uploadTimeout)
 	uploadMutex.Unlock()
