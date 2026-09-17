@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -140,10 +141,13 @@ func TestCancelKillsOnlyTheJobsXz(t *testing.T) {
 	state = &State{State: IDLE}
 
 	bystander := exec.Command("bash", "-c", xzJob)
+	// Its own group, killed whole: killing only bash orphaned its yes and xz,
+	// and every run of this test left another pair spinning.
+	bystander.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := bystander.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = bystander.Process.Kill() })
+	t.Cleanup(func() { _ = syscall.Kill(-bystander.Process.Pid, syscall.SIGKILL) })
 	done := make(chan error, 1)
 	go func() { done <- bystander.Wait() }()
 
