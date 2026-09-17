@@ -18,12 +18,41 @@ info() {
 # A failed connection here (bad password, AP out of range, DHCP timeout)
 # would otherwise leave the board in station mode with no working
 # connection and no hotspot - unreachable until physical intervention (#90).
-restore_hotspot() {
-    restore_profile
-    info "Connection failed - restoring hotspot ($AP_PROFILE) so the board stays reachable."
+# Whether the adapter is actually serving the AP now.
+hotspot_up() {
+    [ "$(iwctl device list 2>/dev/null \
+        | sed $'s/\x1b\[[0-9;]*m//g' \
+        | awk -v i="$INTERFACE" '$1 == i {print $NF}')" = "ap" ]
+}
+
+start_hotspot() {
     iwctl ap "$INTERFACE" stop 2>/dev/null
     iwctl device "$INTERFACE" set-property Mode ap
     iwctl ap "$INTERFACE" start-profile "$AP_PROFILE" 2>/dev/null
+    sleep 1
+    hotspot_up
+}
+
+restore_hotspot() {
+    restore_profile
+    info "Connection failed - restoring hotspot ($AP_PROFILE) so the board stays reachable."
+    if start_hotspot; then
+        return 0
+    fi
+    # Checked rather than assumed, because it has been seen not to happen:
+    # iwd 3.8 segfaulted during this on an A8 (status=11/SEGV, while
+    # `iwctl ap start-profile` ran), systemd restarted it, and it came back in
+    # station mode - so the board had no hotspot at all, which is the state
+    # this function exists to prevent (#90). One retry against the restarted
+    # daemon is enough to get it back.
+    info "The hotspot did not come up - retrying once."
+    sleep 2
+    if start_hotspot; then
+        info "Hotspot restored on the second attempt."
+        return 0
+    fi
+    info "WARNING: could not start the $AP_PROFILE hotspot. The board is reachable over Ethernet only."
+    return 1
 }
 
 if [ -z "$SSID" ] || [ -z "$PASS" ]; then
