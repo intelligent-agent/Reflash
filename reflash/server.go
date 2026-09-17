@@ -1987,34 +1987,39 @@ func cancelInstallation(w http.ResponseWriter, r *http.Request) {
 }
 
 func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
-	var err error
-	err = cmdRotateScreen(options.ScreenRotation, "CMDLINE")
-	if err != nil {
-		sendResponse(w, err)
+	// One response, carrying the first error. Each failed rotate used to call
+	// sendResponse and carry on, so a single failure wrote two JSON bodies into
+	// one reply and the client could parse neither (#157).
+	var firstErr error
+	keep := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
-	err = cmdRotateScreen(options.ScreenRotation, "XORG")
-	if err != nil {
-		sendResponse(w, err)
-	}
-	err = cmdRotateScreen(options.ScreenRotation, "WESTON")
-	if err != nil {
-		sendResponse(w, err)
-	}
-	err = cmdRotateScreen(options.ScreenRotation, "PLYMOUTH")
-	if err != nil {
-		sendResponse(w, err)
+	for _, place := range []string{"CMDLINE", "XORG", "WESTON", "PLYMOUTH"} {
+		keep(cmdRotateScreen(options.ScreenRotation, place))
 	}
 
 	settings := "# Settings from Reflash\n" +
 		"SSH_ENABLED_ON_BOOT=" + strconv.FormatBool(options.EnableSsh) + "\n" +
 		"SSH_TIMEOUT=60\n" +
 		"EXTERNAL_SCREEN_ROTATION=" + strconv.FormatInt(int64(options.ScreenRotation), 10) + "\n" +
-		"WIFI_SSID='" + options.WifiSSID + "'\n" +
-		"WIFI_PSK='" + options.WifiPSK + "'"
+		"WIFI_SSID=" + shellQuote(options.WifiSSID) + "\n" +
+		"WIFI_PSK=" + shellQuote(options.WifiPSK)
 
-	runCommand2("save-settings", settings)
-	err = unmountUsb()
-	sendResponse(w, err)
+	_, _, err := runCommand2("save-settings", settings)
+	keep(err)
+	keep(unmountUsb())
+	sendResponse(w, firstErr)
+}
+
+// shellQuote makes v a single shell word. /etc/rebuild-settings is sourced by
+// bash as root on the flashed image (rebuild-first-run, autohotspot), and the
+// values were pasted between bare single quotes: a valid passphrase such as
+// it's-my-wifi broke the file, and a crafted SSID or passphrase could run
+// commands as root on the first boot (#157).
+func shellQuote(v string) string {
+	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
 
 func sendResponse(w http.ResponseWriter, err error) {
