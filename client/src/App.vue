@@ -478,6 +478,30 @@ export default {
       this.files = files;
       this.file = files.file;
     },
+    // Every start button below asks the board to begin something. Four of them
+    // set the state optimistically first, so the button can turn into Cancel -
+    // and nothing put that state back when the request failed. The UI then sat
+    // on a progress bar, rate and countdown included, rendered from the last
+    // poll of a previous transfer, for one that had never started (#166). The
+    // two that do not set the state failed silently instead, which swallowed
+    // the 409 that start_installation and start_magic answer with when the eMMC
+    // has stopped responding - the most useful sentence the board can say
+    // (#137).
+    transferFailed(what, err) {
+      this.state = "IDLE";
+      // A start that failed owns nothing, so the unload beacon must not fire a
+      // cancel at whatever is running by the time this tab closes.
+      this.ownsUpload = false;
+      // The board's own words when it answered, the transport error when it
+      // never did.
+      const detail =
+        (err && err.response && err.response.data) || (err && err.message) || "";
+      this.$waveui.notify(
+        `Could not start the ${what}.` + (detail ? ` ${detail}` : ""),
+        "error",
+        0
+      );
+    },
     async apiCall(call) {
       var self = this;
       // Whatever ends the upload also ends this tab's ownership of it, so a
@@ -512,17 +536,18 @@ export default {
         this.resetProgressBars();
         this.state = "UPLOADING_MAGIC";
         this.ownsUpload = true;
-        await axios
-          .put(`/api/upload_magic_start`, {
+        try {
+          const response = await axios.put(`/api/upload_magic_start`, {
             filename: self.file.name,
             size: self.file.size,
             start_time: Date.now(),
-          })
-          .then(function (response) {
-            self.status = response.data["success"];
-            self.magicUploadLocalFile();
-            self.checkProgress();
           });
+          self.status = response.data["success"];
+          self.magicUploadLocalFile();
+          self.checkProgress();
+        } catch (err) {
+          this.transferFailed("magic upload", err);
+        }
       } else {
         this.apiCall("upload_cancel");
       }
@@ -638,17 +663,18 @@ export default {
         this.resetProgressBars();
         this.state = "UPLOADING";
         this.ownsUpload = true;
-        await axios
-          .put(`/api/upload_start`, {
+        try {
+          const response = await axios.put(`/api/upload_start`, {
             filename: self.file.name,
             size: self.file.size,
             start_time: Date.now(),
-          })
-          .then(function (response) {
-            self.status = response.data["success"];
-            self.uploadLocalFile();
-            self.checkProgress();
           });
+          self.status = response.data["success"];
+          self.uploadLocalFile();
+          self.checkProgress();
+        } catch (err) {
+          this.transferFailed("upload", err);
+        }
       } else {
         this.apiCall("upload_cancel");
       }
@@ -766,16 +792,17 @@ export default {
       let self = this;
       if (this.state == "IDLE") {
         this.state = "MAGIC";
-        await axios
-          .put(`/api/start_magic`, {
+        try {
+          await axios.put(`/api/start_magic`, {
             filename: this.selectedGithubImage["name"],
             size: this.selectedGithubImage["size"],
             url: this.selectedGithubImage["url"],
             start_time: Date.now(),
-          })
-          .then(() => {
-            self.checkProgress();
           });
+          self.checkProgress();
+        } catch (err) {
+          this.transferFailed("magic flash", err);
+        }
       } else {
         axios.put(`/api/cancel_magic`);
       }
@@ -885,16 +912,17 @@ export default {
       let self = this;
       if (this.state == "IDLE") {
         this.state = "DOWNLOADING";
-        await axios
-          .put(`/api/start_download`, {
+        try {
+          await axios.put(`/api/start_download`, {
             filename: this.selectedGithubImage["name"],
             size: this.selectedGithubImage["size"],
             url: this.selectedGithubImage["url"],
             start_time: Date.now(),
-          })
-          .then(() => {
-            self.checkProgress();
           });
+          self.checkProgress();
+        } catch (err) {
+          this.transferFailed("download", err);
+        }
       } else {
         axios.put(`/api/cancel_download`);
       }
@@ -952,28 +980,30 @@ export default {
     },
     async installSelected() {
       let self = this;
-      await axios
-        .put(`/api/start_installation`, {
+      try {
+        await axios.put(`/api/start_installation`, {
           filename: this.selectedLocalImage,
           start_time: Date.now(),
-        })
-        .then(() => {
-          self.checkProgress();
         });
+        self.checkProgress();
+      } catch (err) {
+        this.transferFailed("installation", err);
+      }
     },
     async backupSelected() {
       this.setProgress({ progress: 0 });
       this.resetProgressBars();
       this.$refs.installprogressbar.update();
       let self = this;
-      await axios
-        .put(`/api/start_backup`, {
+      try {
+        await axios.put(`/api/start_backup`, {
           filename: this.backupFile,
           start_time: Date.now(),
-        })
-        .then(() => {
-          self.checkProgress();
         });
+        self.checkProgress();
+      } catch (err) {
+        this.transferFailed("backup", err);
+      }
     },
     rebootBoard() {
       this.showOverlay = true;
