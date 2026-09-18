@@ -18,12 +18,19 @@
       >
     </div>
     <p v-if="this.isConfigPresent">Config has been updated</p>
+    <!-- A way out that is not "click somewhere outside and hope". The dialog
+         offered only Set Serial Number, so anyone who opened it to read the
+         number had to guess that the backdrop dismisses it - and on the board's
+         own touchscreen there is not much backdrop to aim at (#163). -->
     <w-button
       xl
       outline
       class="ma1 btn"
       @click="clickUpdateConfig()"
       ><span>Set Serial Number</span></w-button
+    >
+    <w-button xl outline class="ma1 btn" @click="dialog.show = false"
+      ><span>Cancel</span></w-button
     >
   </w-dialog>
 </template>
@@ -98,6 +105,15 @@ export default {
           this.getInfo();
         }
       },
+    },
+    // Tell the parent whenever the dialog goes away, however it went away -
+    // Cancel or the backdrop. Without this its `openSerialNumber` stayed true
+    // after a dismissal, so the watcher above never saw false -> true again and
+    // the button simply stopped opening the dialog.
+    "dialog.show"(is_shown) {
+      if (!is_shown) {
+        this.$emit("close");
+      }
     },
   },
 };
