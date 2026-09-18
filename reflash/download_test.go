@@ -63,16 +63,23 @@ func TestDownloadCancelStopsTheTransfer(t *testing.T) {
 
 	startTestDownload(t, srv.URL, "slow.img.xz", 64<<20)
 	path := filepath.Join(images_folder, "slow.img.xz")
+	// The bytes land in the partial now, and only become the real name once
+	// they are all there (#159) - so that is what says the transfer is under
+	// way.
+	part := path + ".part"
 	waitFor(t, func() bool {
-		fi, err := os.Stat(path)
+		fi, err := os.Stat(part)
 		return err == nil && fi.Size() > 0
 	})
 	cancelDownload(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/cancel_download", nil))
 
 	waitForState(t, CANCELLED)
 	waitFor(t, disconnected.Load)
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
+	if _, err := os.Stat(part); !os.IsNotExist(err) {
 		t.Errorf("the cancelled download is still on the drive, stat err %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("a cancelled download must not leave an image under the real name, stat err %v", err)
 	}
 	got, _ := os.ReadFile(mounts)
 	if !strings.HasSuffix(strings.TrimSpace(string(got)), "mounted "+MODE_RO) {
