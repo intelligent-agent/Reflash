@@ -9,10 +9,28 @@ info() {
 info "Running expand USB script"
 umount -q /mnt/usb/ || true
 
-if [ -b /dev/sda2 ]; then
-    info "Partition 2 exists, exiting"
+# "The partition exists" is not "the partition has a filesystem", and treating
+# the two as the same is what made one bad boot permanent. A first boot that
+# created sda2 and then failed to format it - the mkfs below can lose a race
+# with udev, see the settle before it - left every later boot exiting here, so
+# the drive stayed unformatted for good: the mount fails with a bad superblock,
+# there is no options.cfg to read, ssh-keygen-boot cannot restore the host keys
+# so sshd never starts, and the board comes up on its own hotspot with no
+# storage. Seen on an A8 whose stick sat like that across five reboots.
+#
+# lsblk rather than blkid: both are in the image, and either would do, but lsblk
+# is what the rest of this tree already reaches for.
+if [ -b /dev/sda2 ] && [ -n "$(lsblk -no FSTYPE /dev/sda2 2>/dev/null)" ]; then
+    info "Partition 2 exists and holds a filesystem, exiting"
     exit 0
 fi
+
+if [ -b /dev/sda2 ]; then
+    # Nothing to create, everything still to format. Falling through rather
+    # than re-partitioning keeps this from throwing away a partition that is
+    # merely empty.
+    info "Partition 2 exists but has no filesystem - formatting it"
+else
 
 info "Creating partition on unused space"
 # fdisk's own in-place re-read of the table can fail with "Device or
@@ -41,6 +59,16 @@ if [ ! -b /dev/sda2 ]; then
     exit 1
 fi
 
+fi  # end of "the partition had to be created"
+
+# mke2fs opens the device O_EXCL, and udev probes a partition the instant it
+# appears - so the two race, and mke2fs loses by exiting immediately rather
+# than waiting. That is how a stick ends up partitioned but unformatted, which
+# used to be permanent (see the filesystem check at the top). Let udev finish
+# with the new node before claiming it.
+info "Waiting for udev to finish with the new partition"
+udevadm settle --timeout=30 || true
+
 info "Creating ext4 filesystem"
 # -J size=16 rather than the 128MB journal mke2fs picks by default for a
 # filesystem this size. That journal is the bulk of what mkfs writes here:
@@ -63,7 +91,15 @@ info "Creating ext4 filesystem"
 # Note that lazy inode table init is already the default in mke2fs 1.47, so
 # the 1.9M inodes are not what costs time here - confirmed by the default and
 # lazy_itable_init=1 writing byte-for-byte the same 134MB.
-mkfs.ext4 -F -E nodiscard -J size=16 /dev/sda2
+# Output into the log rather than onto stderr. set -e already stops the script
+# when this fails, but the reason went to the journal - and this rootfs is a
+# ramdisk, so the one explanation of why a board has no storage died with the
+# reboot that followed. A whole investigation later, the answer was still
+# unknown. Now it is in the same log as everything else.
+if ! mkfs.ext4 -F -E nodiscard -J size=16 /dev/sda2 >> /var/log/reflash.log 2>&1; then
+    info "Could not create the filesystem on /dev/sda2 - see the mkfs output above"
+    exit 1
+fi
 
 # Via mount-unmount-usb, not a direct mount: that script holds the flock, and
 # this was the one caller bypassing it. Mounting here directly stacked a second
