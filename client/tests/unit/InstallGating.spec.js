@@ -169,3 +169,39 @@ describe('IntegrityChecker reports its verdict', () => {
     expect(w.vm.spinner_visible).toBe(false);
   });
 });
+
+// The badge describes one specific file. Clearing the selection - which is what
+// deleting the selected image does - has to clear the verdict with it, or a
+// green check from the file that is now gone sits next to "Please select one"
+// and reads as "the thing I am about to install is fine" (#162).
+describe('the integrity verdict belongs to the selected image (#162)', () => {
+  function stand(selected) {
+    const fileSelected = vi.fn();
+    const self = {
+      selectedLocalImage: selected,
+      imageIntegrity: true,
+      $refs: { integritychecker: { fileSelected } },
+    };
+    return { self, fileSelected };
+  }
+
+  it('tells the checker when the selection is cleared', () => {
+    const { self, fileSelected } = stand(null);
+
+    App.methods.onSelectedFileChanged.call(self);
+
+    expect(self.imageIntegrity).toBe(null);
+    // Called with the empty selection rather than skipped: fileSelected()
+    // hides the icon for an empty name, and skipping the call is exactly what
+    // left the old verdict on screen.
+    expect(fileSelected).toHaveBeenCalledWith(null);
+  });
+
+  it('still checks a newly selected image', () => {
+    const { self, fileSelected } = stand('fresh.img.xz');
+
+    App.methods.onSelectedFileChanged.call(self);
+
+    expect(fileSelected).toHaveBeenCalledWith('fresh.img.xz');
+  });
+})

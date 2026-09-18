@@ -111,7 +111,9 @@ export default {
     },
     update: function() {
       let model = this.progress;
-      let timePassedSeconds = (Date.now() - model.timeStarted)/1000;
+      // Clamped: a start time in the future (the board and the browser do not
+      // share a clock) otherwise runs the elapsed count backwards too.
+      let timePassedSeconds = Math.max(0, (Date.now() - model.timeStarted)/1000);
       this.seconds = Math.floor(timePassedSeconds % 60) ;
       this.minutes = Math.floor(timePassedSeconds / (60));
       let progress = model.progress/100;
@@ -119,10 +121,12 @@ export default {
 
       let secondsTotal = (timePassedSeconds/progress);
       let timeFinished = new Date(new Date(model.timeStarted).getTime() + secondsTotal*1000);
-      let timeRemaining = (timeFinished - Date.now())/1000;
+      // Clamped before the split, so neither part can carry the sign:
+      // Math.floor(-4 % 60) is -4, which is how "0m:-4s" reached the screen.
+      let timeRemaining = Math.max(0, (timeFinished - Date.now())/1000);
       this.secondsR = Math.floor(timeRemaining % 60);
       this.minutesR = Math.floor(timeRemaining / 60);
-      if(isNaN(this.secondsR) || this.seconds == -1){
+      if(isNaN(this.secondsR)){
         this.secondsR = 0
         this.minutesR = 0
       }
@@ -138,6 +142,14 @@ export default {
   padding: 0.35em 0;
   cursor: crosshair;
 }
+/* The three figures under the bar are spread by justify-space-between, which
+   leaves no space at all once the row is narrow: elapsed, rate and remaining
+   ran together as "3.7 MB/s3m:13s". A gap keeps them apart, and nowrap stops a
+   single figure being broken across lines (#163). */
+.wrapper {
+  gap: 0.6em;
+  white-space: nowrap;
+}
 .metrics-popup {
   position: fixed;
   width: min(820px, calc(100vw - 16px));
@@ -146,7 +158,10 @@ export default {
   z-index: 1000;
   padding: 0.4em 0.6em;
   border-radius: 6px;
-  background: rgba(20, 20, 20, 0.92);
+  /* Opaque. At 0.92 the page behind showed through the panel - the REFLASH
+     wordmark and the version line ran underneath the plots, which is exactly
+     where the numbers are read from (#163). */
+  background: #141414;
   color: #eee;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
   pointer-events: auto;

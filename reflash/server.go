@@ -914,25 +914,26 @@ func startDownload(w http.ResponseWriter, r *http.Request) {
 func goDownload(ctx context.Context, filename string, url string) {
 	disarmReboot()
 	path := images_folder + "/" + filename
+	part := partialPath(filename)
 
 	// Every way out removes what was written and puts the drive back to
 	// read-only. This used to panic on a failed create or request, taking the
 	// server down with it.
 	fail := func(what string, err error) {
 		logError(what + ": " + err.Error())
-		os.Remove(path)
+		os.Remove(part)
 		mountUsb(MODE_RO)
 		state.State = ERROR
 		state.Error = "The download failed: " + err.Error()
 	}
 	cancelled := func() {
 		logInfo("Download cancelled.")
-		os.Remove(path)
+		os.Remove(part)
 		mountUsb(MODE_RO)
 		state.State = CANCELLED
 	}
 
-	out, err := os.Create(path)
+	out, err := os.Create(part)
 	if err != nil {
 		fail("Could not create "+filename, err)
 		return
@@ -982,6 +983,13 @@ func goDownload(ctx context.Context, filename string, url string) {
 		return
 	}
 
+	// All the bytes are here, so the new image earns the real name now. Until
+	// this rename the drive still holds whatever it held before (#159).
+	if err := os.Rename(part, path); err != nil {
+		fail("Could not put "+filename+" in place", err)
+		return
+	}
+
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Download finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
 	mountUsb(MODE_RO)
@@ -1022,7 +1030,7 @@ func uploadStart(w http.ResponseWriter, r *http.Request) {
 	timeStart = time.Now()
 	logInfo("Starting upload at " + timeStart.Format("15:04:05"))
 	logInfo("Filename: " + state.Filename)
-	f, err := os.Create(images_folder + "/" + state.Filename)
+	f, err := os.Create(partialPath(state.Filename))
 	if err != nil {
 		// Report the failure instead of log.Fatal. This runs on the USB
 		// drive, so a full disk or a drive that dropped off the bus is an
@@ -1508,6 +1516,16 @@ func uploadFinish(w http.ResponseWriter, r *http.Request) {
 		}
 		state.File = nil
 	}
+	// Everything is written and flushed, so the upload earns the real name. Any
+	// image already on the drive under that name survived until this point
+	// (#159).
+	if err := os.Rename(partialPath(state.Filename), images_folder+"/"+state.Filename); err != nil {
+		logError("Could not put " + state.Filename + " in place: " + err.Error())
+		state.Error = "The image was uploaded but could not be saved to the USB drive."
+		mountUsb(MODE_RO)
+		state.State = ERROR
+		return
+	}
 	mountUsb(MODE_RO)
 	duration := time.Since(timeStart)
 	logInfo(fmt.Sprintf("Upload finished in %d minutes and %d seconds", int(duration.Minutes()), int(duration.Seconds())%60))
@@ -1553,9 +1571,11 @@ func uploadCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	if !magic {
 		// A cancelled or failed upload is a truncated image; left in the list
-		// it could only ever fail its integrity check (#153).
+		// it could only ever fail its integrity check (#153). Only the partial
+		// goes - an image already on the drive under the same name was never
+		// touched, and removing the final name here destroyed it (#159).
 		if state.Filename != "" {
-			os.Remove(images_folder + "/" + state.Filename)
+			os.Remove(partialPath(state.Filename))
 		}
 		mountUsb(MODE_RO)
 	}
@@ -1758,7 +1778,9 @@ func refreshProgress() {
 		}
 		state.BytesNow = i
 	} else if state.State == DOWNLOADING {
-		fi, err := os.Stat(images_folder + "/" + state.Filename)
+		// The partial, not the final name: that is where the bytes are landing
+		// until the download completes and renames it into place (#159).
+		fi, err := os.Stat(partialPath(state.Filename))
 		if err == nil {
 			state.BytesNow = int(fi.Size())
 		}
@@ -1837,6 +1859,16 @@ func getProgress(w http.ResponseWriter, r *http.Request) {
 	if state.State == ERROR {
 		state.State = IDLE
 	}
+}
+
+// partialPath is where a download or an upload writes until it has every byte.
+// Both used to write straight onto the final name, which os.Create truncates -
+// so starting a transfer of an image the drive already held destroyed it before
+// a single new byte arrived, and cancelling (or any failure) left nothing at
+// all. The suffix keeps it out of getLocalImages' *.img.xz glob, so a partial
+// never appears in the install list (#159).
+func partialPath(filename string) string {
+	return images_folder + "/" + filename + ".part"
 }
 
 func getLocalImages() []Image {

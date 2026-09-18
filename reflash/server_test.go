@@ -1785,3 +1785,128 @@ func TestRunCommand2TimeoutPassesOutputThrough(t *testing.T) {
 		t.Errorf("stdout = %q, want \"hello\"", strings.TrimSpace(out))
 	}
 }
+
+// An image the drive already holds has to survive a transfer of the same name
+// until every new byte has arrived. Both paths wrote straight onto the final
+// name, so os.Create truncated the existing image on the first write and the
+// cleanup on cancel then removed what was left - pressing Download or Upload on
+// an image you already had and changing your mind destroyed it (#159).
+func TestCancelledDownloadKeepsTheImageAlreadyOnTheDrive(t *testing.T) {
+	setupTest(t)
+	state = &State{State: IDLE}
+
+	filename := "keepme.img.xz"
+	final := filepath.Join(images_folder, filename)
+	original := []byte("the image the user already had")
+	if err := os.WriteFile(final, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Holds the response open so the cancel lands mid-transfer rather than
+	// after the copy has already finished.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("replacement bytes"))
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	// Deferred after srv.Close so LIFO releases the handler first: closing the
+	// server while a request is still parked on the channel deadlocks, and a
+	// failed assertion below would otherwise hang the whole test binary rather
+	// than reporting.
+	defer srv.Close()
+	defer close(release)
+
+	body, _ := json.Marshal(map[string]any{
+		"filename": filename, "url": srv.URL, "size": 1 << 20, "start_time": 0,
+	})
+	startDownload(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/start_download", bytes.NewReader(body)))
+
+	// Wait until bytes are actually landing, so this tests a cancel during the
+	// transfer and not a race with its start.
+	waitFor(t, func() bool {
+		fi, err := os.Stat(final + ".part")
+		return err == nil && fi.Size() > 0
+	})
+
+	cancelDownload(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/cancel_download", nil))
+	waitFor(t, func() bool { return state.State == CANCELLED })
+
+	got, err := os.ReadFile(final)
+	if err != nil {
+		t.Fatalf("the image the user already had is gone: %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Errorf("existing image was modified: got %q, want %q", got, original)
+	}
+	if _, err := os.Stat(final + ".part"); !os.IsNotExist(err) {
+		t.Error("the partial file was left behind")
+	}
+}
+
+// The other half: a download that completes does replace the old image, and
+// leaves no partial file in the images folder.
+func TestCompletedDownloadReplacesTheImage(t *testing.T) {
+	setupTest(t)
+	state = &State{State: IDLE}
+
+	filename := "replaceme.img.xz"
+	final := filepath.Join(images_folder, filename)
+	if err := os.WriteFile(final, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh := []byte("a complete new image")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(fresh)
+	}))
+	defer srv.Close()
+
+	body, _ := json.Marshal(map[string]any{
+		"filename": filename, "url": srv.URL, "size": len(fresh), "start_time": 0,
+	})
+	startDownload(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/start_download", bytes.NewReader(body)))
+	waitFor(t, func() bool { return state.State == FINISHED })
+
+	got, err := os.ReadFile(final)
+	if err != nil {
+		t.Fatalf("reading the downloaded image: %v", err)
+	}
+	if !bytes.Equal(got, fresh) {
+		t.Errorf("image content = %q, want %q", got, fresh)
+	}
+	if _, err := os.Stat(final + ".part"); !os.IsNotExist(err) {
+		t.Error("the partial file was left behind")
+	}
+}
+
+// Same guarantee for the upload path, which had the same os.Create.
+func TestCancelledUploadKeepsTheImageAlreadyOnTheDrive(t *testing.T) {
+	setupTest(t)
+	state = &State{State: IDLE}
+
+	filename := "keepme-upload.img.xz"
+	final := filepath.Join(images_folder, filename)
+	original := []byte("the image the user already had")
+	if err := os.WriteFile(final, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	startBody, _ := json.Marshal(map[string]any{
+		"filename": filename, "size": 1 << 20, "start_time": 0,
+	})
+	uploadStart(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/upload_start", bytes.NewReader(startBody)))
+	uploadChunk(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/upload_chunk", bytes.NewReader([]byte("partial bytes"))))
+	uploadCancel(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/upload_cancel", nil))
+
+	got, err := os.ReadFile(final)
+	if err != nil {
+		t.Fatalf("the image the user already had is gone: %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Errorf("existing image was modified: got %q, want %q", got, original)
+	}
+	if _, err := os.Stat(final + ".part"); !os.IsNotExist(err) {
+		t.Error("the partial file was left behind")
+	}
+}

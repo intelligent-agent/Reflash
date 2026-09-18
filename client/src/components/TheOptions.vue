@@ -58,12 +58,19 @@
         </div>
         <w-divider class="my6 mx-3"></w-divider>
         <h4>Actions</h4>
+        <!-- Both ask twice. They sit side by side and fired on a single click,
+             and the two outcomes are not equally cheap: a stray Shut down on a
+             headless board needs someone to walk over and power-cycle it. Same
+             two-click pattern as Delete, for the same reason - a native
+             confirm() blocks the page (#163). -->
         <div>
-          <w-button xl outline class="ma2" @click="$emit('reboot-board')">
-            <span>Reboot now</span>
+          <w-button xl outline class="ma2" @click="confirmAction('reboot')">
+            <span>{{ pending === "reboot" ? "Reboot?" : "Reboot now" }}</span>
           </w-button>
-          <w-button xl outline class="ma2" @click="$emit('shutdown-board')"
-            ><span>Shut down</span></w-button
+          <w-button xl outline class="ma2" @click="confirmAction('shutdown')"
+            ><span>{{
+              pending === "shutdown" ? "Shut down?" : "Shut down"
+            }}</span></w-button
           >
         </div>
       </w-flex>
@@ -84,6 +91,24 @@ export default {
       this.setOption(data);
       this.$emit("set-option", name, value);
     },
+    // First click arms the button, second one within a few seconds does it.
+    // Arming one disarms the other, so a click meant for Reboot cannot confirm
+    // a pending Shut down.
+    confirmAction(which) {
+      clearTimeout(this.pendingTimer);
+      if (this.pending !== which) {
+        this.pending = which;
+        this.pendingTimer = setTimeout(() => (this.pending = null), 4000);
+        return;
+      }
+      this.pending = null;
+      this.$emit(which === "reboot" ? "reboot-board" : "shutdown-board");
+    },
+  },
+  // A drawer that is closed and reopened must not still be holding an armed
+  // button from minutes ago.
+  beforeUnmount() {
+    clearTimeout(this.pendingTimer);
   },
   computed: mapGetters(["options"]),
   created() {
@@ -95,6 +120,9 @@ export default {
     open: Boolean,
   },
   data: () => ({
+    // "reboot", "shutdown", or null when neither is armed.
+    pending: null,
+    pendingTimer: null,
     radioItems: [
       { label: "Normal", value: 0 },
       { label: "90 degrees", value: 90 },

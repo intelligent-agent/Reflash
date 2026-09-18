@@ -155,7 +155,15 @@
             <span>{{ this.computeTransferButtonText() }}</span>
           </w-button>
         </div>
-        <w-flex class="xs1 align-self-center flex justify-start">
+        <!-- wrap: the grid cell is a fixed fraction of the row (125px at a
+             960px viewport), while the select, the integrity icon and Delete
+             together are wider than that. Without wrapping they overflowed the
+             cell and were drawn on top of the Install button in the next one -
+             two controls sharing the same pixels, so aiming for Install could
+             hit Delete (#160). Wrapping puts Delete on its own line instead.
+             At desktop widths everything still fits on one line, so this
+             changes nothing there. -->
+        <w-flex class="xs1 align-self-center flex justify-start wrap">
           <w-select
             v-if="this.options.magicmode == false"
             v-model="selectedLocalImage"
@@ -439,12 +447,30 @@ export default {
         return "";
       }
     },
+    // Shared by every path that writes the eMMC - install, magic and magic
+    // upload - so the refresh cannot be added to one and forgotten in the
+    // others.
+    //
+    // getInfo() is deliberately fetched once per page load, which is right for
+    // the version, revision and serial number but not for emmc_version: a flash
+    // is exactly what changes it. Without this the pipeline kept showing the
+    // image that was on the eMMC before, on the one screen meant to confirm the
+    // flash worked (#161).
+    async onFlashFinished() {
+      await axios.get(`/api/run_install_finished_commands`);
+      await this.getInfo();
+      this.installFinished = true;
+    },
     onSelectedFileChanged() {
       // Whatever the previous image checked out as says nothing about this one,
       // and leaving the old verdict up would leave Install enabled for a
       // filename nobody has verified yet.
       this.imageIntegrity = null;
-      if (this.$refs.integritychecker && this.selectedLocalImage) {
+      // Told unconditionally, including when the selection has been cleared -
+      // fileSelected() hides the icon for an empty name, but it only ever got
+      // called for a non-empty one, so deleting the selected image left its
+      // verdict on screen next to "Please select one" (#162).
+      if (this.$refs.integritychecker) {
         this.$refs.integritychecker.fileSelected(this.selectedLocalImage);
       }
     },
@@ -814,8 +840,7 @@ export default {
         } else if (data.state == "FINISHED") {
           if (this.previousState == "INSTALLING") {
             this.selectedLocalImage = null;
-            await axios.get(`/api/run_install_finished_commands`);
-            this.installFinished = true;
+            await this.onFlashFinished();
           } else if (this.previousState == "BACKUPING") {
             this.backupFile = "";
             this.getStatus();
@@ -829,12 +854,10 @@ export default {
             this.selectedLocalImage = data.filename;
           } else if (this.previousState == "MAGIC") {
             this.selectedRebuildImage = null;
-            await axios.get(`/api/run_install_finished_commands`);
-            this.installFinished = true;
+            await this.onFlashFinished();
           } else if (this.previousState == "UPLOADING_MAGIC") {
             this.selectedUploadImage = [];
-            await axios.get(`/api/run_install_finished_commands`);
-            this.installFinished = true;
+            await this.onFlashFinished();
           }
         } else if (data.state == "CANCELLED") {
           this.selectedGithubImage = null;

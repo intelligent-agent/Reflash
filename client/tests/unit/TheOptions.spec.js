@@ -59,3 +59,57 @@ describe('TheOptions', () => {
     expect(binding[1]).toBe('screenRotation')
   })
 })
+
+// Reboot and Shut down sit next to each other and used to fire on one click.
+// The two outcomes are not equally cheap: a stray Shut down on a headless board
+// needs a person to go and power-cycle it (#163).
+describe('TheOptions destructive actions', () => {
+  it('does not reboot or shut down on the first click', () => {
+    const { wrapper } = mountOptions()
+
+    wrapper.vm.confirmAction('reboot')
+    wrapper.vm.confirmAction('shutdown')
+
+    expect(wrapper.emitted('reboot-board')).toBeUndefined()
+    expect(wrapper.emitted('shutdown-board')).toBeUndefined()
+  })
+
+  it('acts on the second click of the same button', () => {
+    const { wrapper } = mountOptions()
+
+    wrapper.vm.confirmAction('reboot')
+    wrapper.vm.confirmAction('reboot')
+
+    expect(wrapper.emitted('reboot-board')).toHaveLength(1)
+    expect(wrapper.emitted('shutdown-board')).toBeUndefined()
+  })
+
+  // Arming one has to disarm the other, or a click meant for Reboot would
+  // confirm a Shut down that was armed moments earlier - the precise mistake
+  // the confirmation exists to prevent.
+  it('arming the other button cancels the pending one', () => {
+    const { wrapper } = mountOptions()
+
+    wrapper.vm.confirmAction('reboot')
+    wrapper.vm.confirmAction('shutdown')
+    wrapper.vm.confirmAction('shutdown')
+
+    expect(wrapper.emitted('reboot-board')).toBeUndefined()
+    expect(wrapper.emitted('shutdown-board')).toHaveLength(1)
+  })
+
+  it('disarms itself after a few seconds so a stale click does not act', () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper } = mountOptions()
+
+      wrapper.vm.confirmAction('reboot')
+      vi.advanceTimersByTime(5000)
+      wrapper.vm.confirmAction('reboot')
+
+      expect(wrapper.emitted('reboot-board')).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
