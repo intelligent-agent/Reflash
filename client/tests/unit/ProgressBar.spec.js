@@ -96,3 +96,50 @@ describe('ProgressBar board metrics hover', () => {
     expect(w.vm.metricsVisible).toBe(false);
   });
 });
+
+// The countdown is a projection off a clock, so it can run backwards: a start
+// time in the future (the board and the browser do not share one), or a
+// progress figure at 100 while the estimate is still being recomputed. Neither
+// is a reason to show the user "0m:-4s".
+describe('the remaining time is never negative', () => {
+  function mountWith(progressModel) {
+    return shallowMount(ProgressBar, {
+      props: { revision: 'A8' },
+      global: {
+        mocks: { $store: { getters: { progress: progressModel } } },
+        stubs: { 'w-progress': true, 'w-flex': true, TheMetrics: true }
+      }
+    });
+  }
+
+  it('clamps a start time in the future', () => {
+    const w = mountWith({ progress: 50, bandwidth: 1.5, timeStarted: Date.now() + 60000 });
+    w.vm.update();
+    expect(w.vm.secondsR).toBeGreaterThanOrEqual(0);
+    expect(w.vm.minutesR).toBeGreaterThanOrEqual(0);
+    expect(w.vm.seconds).toBeGreaterThanOrEqual(0);
+    expect(w.vm.minutes).toBeGreaterThanOrEqual(0);
+  });
+
+  it('clamps a progress figure past 100', () => {
+    const w = mountWith({ progress: 140, bandwidth: 8, timeStarted: Date.now() - 30000 });
+    w.vm.update();
+    expect(w.vm.secondsR).toBeGreaterThanOrEqual(0);
+    expect(w.vm.minutesR).toBeGreaterThanOrEqual(0);
+  });
+
+  it('reports zero rather than NaN before any progress has been made', () => {
+    const w = mountWith({ progress: 0, bandwidth: 0, timeStarted: Date.now() });
+    w.vm.update();
+    expect(w.vm.secondsR).toBe(0);
+    expect(w.vm.minutesR).toBe(0);
+  });
+
+  it('still reports a real estimate for an ordinary transfer', () => {
+    // Half done after 60s, so about 60s left.
+    const w = mountWith({ progress: 50, bandwidth: 5, timeStarted: Date.now() - 60000 });
+    w.vm.update();
+    expect(w.vm.minutesR * 60 + w.vm.secondsR).toBeGreaterThan(50);
+    expect(w.vm.minutesR * 60 + w.vm.secondsR).toBeLessThan(70);
+  });
+});
