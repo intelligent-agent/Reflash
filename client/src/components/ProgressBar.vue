@@ -111,11 +111,8 @@ export default {
     },
     update: function() {
       let model = this.progress;
-      // Never below zero. Both figures are derived from a clock and a
-      // projection, and either can run backwards: a start time in the future
-      // (the board and the browser do not share a clock), or a progress figure
-      // at or past 100 while the estimate is still being recomputed. The
-      // result was a countdown showing a negative number of seconds.
+      // Clamped: a start time in the future (the board and the browser do not
+      // share a clock) otherwise runs the elapsed count backwards too.
       let timePassedSeconds = Math.max(0, (Date.now() - model.timeStarted)/1000);
       this.seconds = Math.floor(timePassedSeconds % 60) ;
       this.minutes = Math.floor(timePassedSeconds / (60));
@@ -124,13 +121,9 @@ export default {
 
       let secondsTotal = (timePassedSeconds/progress);
       let timeFinished = new Date(new Date(model.timeStarted).getTime() + secondsTotal*1000);
-      let timeRemaining = (timeFinished - Date.now())/1000;
-      // Clamped before it is split into minutes and seconds, so neither part
-      // can carry the sign: Math.floor(-4 % 60) is -4, which is how "0m:-4s"
-      // reached the screen.
-      if (!isFinite(timeRemaining) || timeRemaining < 0) {
-        timeRemaining = 0;
-      }
+      // Clamped before the split, so neither part can carry the sign:
+      // Math.floor(-4 % 60) is -4, which is how "0m:-4s" reached the screen.
+      let timeRemaining = Math.max(0, (timeFinished - Date.now())/1000);
       this.secondsR = Math.floor(timeRemaining % 60);
       this.minutesR = Math.floor(timeRemaining / 60);
       if(isNaN(this.secondsR)){
