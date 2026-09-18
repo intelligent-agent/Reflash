@@ -246,6 +246,7 @@ import TheWifiSetup from "./components/TheWifiSetup";
 import WaveUI from "wave-ui";
 import { mapGetters, mapActions } from "vuex";
 import axios from "axios";
+import { selectRebuildImages } from "./rebuildImages";
 
 export default {
   name: "App",
@@ -288,7 +289,10 @@ export default {
     selectedUploadImage: [],
     selectedLocalImage: undefined,
     githubImages: [],
-    rebuildImages: [],
+    // The releases payload as GitHub sent it. Kept raw so the picker can be
+    // filtered here rather than re-fetched: flicking "show pre-releases" is a
+    // question about a list we already have.
+    githubReleases: [],
     localImages: [],
     uploadError: false,
     openInfo: false,
@@ -333,6 +337,12 @@ export default {
       );
     },
     ...mapGetters(["options", "progress", "flash"]),
+    // Derived from the cached payload, so the pre-release switch re-filters a
+    // list that is already here instead of asking GitHub again - and so the
+    // order does not depend on what the API happened to return (#171, #172).
+    rebuildImages() {
+      return selectRebuildImages(this.githubReleases, this.options.showPrereleases);
+    },
     // Rebuild downloads from GitHub via the board itself (flash-from-url) -
     // without internet that can't work, so hide it and leave only the
     // local-file paths (upload, magic, install) - #74.
@@ -1024,20 +1034,6 @@ export default {
         }
       }
     },
-    populateRebuildImages(releases) {
-      for (let release of releases) {
-        for (let asset of release.assets) {
-          if (asset.name.includes("rebuild")) {
-            this.rebuildImages.push({
-              name: asset.name,
-              id: asset.id,
-              url: asset.browser_download_url,
-              size: asset.size,
-            });
-          }
-        }
-      }
-    },
     // Static for as long as the page is open, and every field costs a partition
     // mount on the board - so this is fetched once and never on a state change.
     async getInfo() {
@@ -1084,14 +1080,22 @@ export default {
         setTimeout(this.getStatus, 1000);
       }
     },
+    // Only fetches. What the picker shows - which releases, in what order - is
+    // decided by the rebuildImages computed, so this can be called twice (see
+    // checkInternet()) without duplicating anything, and the pre-release switch
+    // re-filters what is already here rather than asking GitHub again.
     async getGithubImages() {
-      // Reset first - this can now be called again (see checkInternet())
-      // after already having been called once, and populateRebuildImages
-      // appends rather than replaces.
-      this.rebuildImages = [];
-      fetch("https://api.github.com/repos/intelligent-agent/Rebuild/releases")
-        .then((response) => response.json())
-        .then((data) => this.populateRebuildImages(data));
+      try {
+        const response = await fetch(
+          "https://api.github.com/repos/intelligent-agent/Rebuild/releases"
+        );
+        this.githubReleases = await response.json();
+      } catch (err) {
+        // No internet, or GitHub rate-limiting this board's address. The empty
+        // picker already says there is nothing to download, and the methods
+        // list hides Download without internet (#74).
+        this.githubReleases = [];
+      }
     },
     async checkInternet() {
       const response = await axios.get(`/api/has_internet`);

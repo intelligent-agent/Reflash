@@ -149,13 +149,18 @@ type AccessPoint struct {
 }
 
 type Options struct {
-	Darkmode       bool   `json:"darkmode"`
-	RebootWhenDone bool   `json:"rebootWhenDone"`
-	EnableSsh      bool   `json:"enableSsh"`
-	Magicmode      bool   `json:"magicmode"`
-	ScreenRotation int    `json:"screenRotation"`
-	WifiSSID       string `json:"SSID"`
-	WifiPSK        string `json:"PSK"`
+	Darkmode       bool `json:"darkmode"`
+	RebootWhenDone bool `json:"rebootWhenDone"`
+	EnableSsh      bool `json:"enableSsh"`
+	Magicmode      bool `json:"magicmode"`
+	// Off by default, so the picker offers only released images. Reflash has
+	// not been tested against prereleases any more than against the old
+	// versions the picker now hides, and an RC is not what someone flashing a
+	// printer wants by accident (#172).
+	ShowPrereleases bool   `json:"showPrereleases"`
+	ScreenRotation  int    `json:"screenRotation"`
+	WifiSSID        string `json:"SSID"`
+	WifiPSK         string `json:"PSK"`
 }
 
 type Download struct {
@@ -237,6 +242,12 @@ var binDir string
 var images_folder string
 var options_file string
 var log_file string
+
+// Where the flashing scripts report their progress. A var rather than the
+// literal it used to be so a test can point it at its sandbox: the helper
+// refuses to write real paths, because a test must not scribble on what a
+// server running on the same machine has open.
+var flash_progress_file = "/tmp/recore-flash-progress"
 var http_port string
 var reflashVersion string
 
@@ -1764,6 +1775,20 @@ func resetTransfer() {
 	bytesAtLastLog = 0
 }
 
+// The watchdog's share of the redraw: sample and repaint while an operation is
+// running, and cost nothing when one is not.
+//
+// Only while busy, because refreshProgress is not free - it reads the progress
+// file, recomputes the bandwidth and redraws the panel - and an idle board has
+// nothing new to say. The idle screen is repainted by the events that change
+// it (drive in, drive out, state transitions), which is where it always was.
+func refreshProgressWhenBusy() {
+	switch state.State {
+	case DOWNLOADING, UPLOADING, INSTALLING, BACKUPING, MAGIC, UPLOADING_MAGIC:
+		refreshProgress()
+	}
+}
+
 // refreshProgress reads the active progress source (the flash-progress file
 // while installing/backing up/magicking, or the downloading file's size),
 // recomputes state.Progress + state.Bandwidth, and redraws the embedded
@@ -1771,7 +1796,7 @@ func resetTransfer() {
 // dispatcher so both paths keep the on-board display alive.
 func refreshProgress() {
 	if state.State == INSTALLING || state.State == BACKUPING || state.State == MAGIC {
-		bytes := lastLine("/tmp/recore-flash-progress")
+		bytes := lastLine(flash_progress_file)
 		i, err := strconv.Atoi(bytes)
 		if err != nil {
 			i = 0
@@ -2744,6 +2769,13 @@ var startWatchdog = func() {
 			// Give up on an upload whose client has gone away, rather than
 			// sitting in UPLOADING with the drive mounted rw forever (#118).
 			checkUploadLiveness()
+			// Keep the embedded screen moving while something is running, even
+			// with nothing watching. The redraw lived only inside
+			// refreshProgress, which runs from the HTTP poll and the USB STATUS
+			// command - both client-driven - so a flash started from the CI, or
+			// from the control protocol, or simply with the browser closed, ran
+			// to completion behind a frozen panel (#170).
+			refreshProgressWhenBusy()
 		}
 	}()
 }

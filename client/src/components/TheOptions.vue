@@ -31,6 +31,17 @@
           label="Magicmode"
         >
         </w-switch>
+        <!-- The picker offers released images only; this puts the release
+             candidates back. Filtered in the page from the releases it already
+             has, so flicking this re-sorts a list rather than asking GitHub
+             again (#172). -->
+        <w-switch
+          @change="onChange('showPrereleases', options.showPrereleases)"
+          v-model="options.showPrereleases"
+          class="ma2"
+          label="Show pre-releases"
+        >
+        </w-switch>
         <w-divider class="my6 mx-3"></w-divider>
         <h4>Screen rotation</h4>
         <w-radios

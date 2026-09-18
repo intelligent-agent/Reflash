@@ -48,6 +48,8 @@ func setupTest(t *testing.T) string {
 	// Never the real /tmp/mypipe: a test must not write into whatever a
 	// running server on the same machine has open.
 	magic_pipe = filepath.Join(dir, "mypipe")
+	// Same reasoning for where the flashing scripts report progress.
+	flash_progress_file = filepath.Join(dir, "recore-flash-progress")
 	// slowInit starts the real watchdog, which would outlive the test and act
 	// on the state of whichever test runs next.
 	startWatchdog = func() {}
@@ -1908,5 +1910,45 @@ func TestCancelledUploadKeepsTheImageAlreadyOnTheDrive(t *testing.T) {
 	}
 	if _, err := os.Stat(final + ".part"); !os.IsNotExist(err) {
 		t.Error("the partial file was left behind")
+	}
+}
+
+// The embedded screen used to move only while something was polling the
+// server: the redraw lived inside refreshProgress, which runs from the HTTP
+// poll and the USB STATUS command. A flash started from the CI, or with the
+// browser closed, therefore ran to completion behind a frozen panel (#170).
+// The watchdog now samples on the board's own clock while an operation runs.
+func TestProgressIsSampledWithoutAClientWatching(t *testing.T) {
+	setupTest(t)
+	state = &State{State: INSTALLING, BytesTotal: 1000}
+	if err := os.WriteFile(flash_progress_file, []byte("400\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	refreshProgressWhenBusy()
+
+	if state.BytesNow != 400 {
+		t.Errorf("bytes_now = %d, want 400 - the watchdog did not sample the progress file",
+			state.BytesNow)
+	}
+	if state.Progress != 40 {
+		t.Errorf("progress = %.1f%%, want 40%%", state.Progress)
+	}
+}
+
+// An idle board has nothing new to say, and refreshProgress is not free - it
+// reads a file, recomputes the bandwidth and repaints. The idle screen is
+// drawn by the events that change it instead.
+func TestAnIdleBoardIsNotResampled(t *testing.T) {
+	setupTest(t)
+	state = &State{State: IDLE, BytesTotal: 1000, BytesNow: 7}
+	if err := os.WriteFile(flash_progress_file, []byte("400\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	refreshProgressWhenBusy()
+
+	if state.BytesNow != 7 {
+		t.Errorf("bytes_now = %d, want it untouched at 7", state.BytesNow)
 	}
 }
