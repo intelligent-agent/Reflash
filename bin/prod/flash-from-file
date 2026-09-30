@@ -85,10 +85,14 @@ mount ${OUTFILE}p1 /mnt/emmc
 sed -i "/^rootdev=.*/d" /mnt/emmc/armbianEnv.txt
 sed -i '/^$/d' /mnt/emmc/armbianEnv.txt
 echo "rootdev=UUID=${UUID2}" >> /mnt/emmc/armbianEnv.txt
+sed -i "/^fdtfile=.*/d" /mnt/emmc/armbianEnv.txt
 
 cd /mnt/emmc/dtb/allwinner/ || exit
+# fdtfile= selects the tree; the symlink is for older Reflash sticks, as in
+# flash-cleanup.
 if test -f sun50i-a64-recore-"$REVISION".dtb; then
-  info "Symlinking device tree"
+  info "Selecting device tree"
+  echo "fdtfile=allwinner/sun50i-a64-recore-$REVISION.dtb" >> /mnt/emmc/armbianEnv.txt
   ln -sf sun50i-a64-recore-"$REVISION".dtb sun50i-a64-recore.dtb
 fi
 cd /

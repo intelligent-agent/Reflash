@@ -146,3 +146,17 @@ line_of() { grep -n "$1" "$SCRIPT" | head -1 | cut -d: -f1; }
   [ -n "$fsck" ] && [ -n "$symlink" ]
   [ "$fsck" -lt "$symlink" ]
 }
+
+# The symlink alone did not survive a kernel upgrade on the board: the
+# linux-dtb package owns that path and put the generic tree back.
+@test "flash-cleanup: the revision is selected with fdtfile= in armbianEnv.txt" {
+  grep -q 'echo "fdtfile=allwinner/sun50i-a64-recore-$REVISION.dtb" >> /mnt/emmc/armbianEnv.txt' "$SCRIPT"
+}
+
+@test "flash-cleanup: an fdtfile= the image shipped with is cleared before the new one" {
+  local clear write
+  clear=$(line_of 'sed -i "/^fdtfile=.*/d" /mnt/emmc/armbianEnv.txt')
+  write=$(line_of 'echo "fdtfile=allwinner')
+  [ -n "$clear" ] && [ -n "$write" ]
+  [ "$clear" -lt "$write" ]
+}
