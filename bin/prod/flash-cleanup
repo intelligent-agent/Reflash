@@ -194,14 +194,21 @@ mount ${OUTFILE}p1 /mnt/emmc
 sed -i "/^rootdev=.*/d" /mnt/emmc/armbianEnv.txt
 sed -i '/^$/d' /mnt/emmc/armbianEnv.txt
 echo "rootdev=UUID=${UUID2}" >> /mnt/emmc/armbianEnv.txt
+sed -i "/^fdtfile=.*/d" /mnt/emmc/armbianEnv.txt
 
 cd /mnt/emmc/dtb/allwinner/ || exit
 # An else, because this silently doing nothing is the whole of #138. It is also
 # load-bearing beyond the installed system: boot.cmd reads the model out of this
-# symlink to decide whether to raise the DRAM rail, so a missing symlink costs
-# an A5/A6 its 1.5V under Reflash on the NEXT flash as well.
+# tree to decide whether to raise the DRAM rail, so a missing one costs an A5/A6
+# its 1.5V under Reflash on the NEXT flash as well.
+#
+# fdtfile= is what selects it. The symlink is how that used to be done, and
+# does not last - sun50i-a64-recore.dtb belongs to the linux-dtb package, so
+# the first kernel upgrade on the board puts the generic tree back. It is still
+# made because Reflash sticks from before this read the symlink for the rail.
 if test -f sun50i-a64-recore-"$REVISION".dtb; then
-  info "Symlinking device tree for $REVISION"
+  info "Selecting device tree for $REVISION"
+  echo "fdtfile=allwinner/sun50i-a64-recore-$REVISION.dtb" >> /mnt/emmc/armbianEnv.txt
   ln -sf sun50i-a64-recore-"$REVISION".dtb sun50i-a64-recore.dtb
 else
   info "FATAL: no device tree for revision '$REVISION' in $(pwd)"

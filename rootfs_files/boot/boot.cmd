@@ -65,9 +65,14 @@ fdt resize 65536
 # corrupts memory under load, and Reflash's whole job is writing an OS image.
 #
 # The revision is not guessed from a serial number: the eMMC already holds the
-# answer. flash-cleanup points /boot/dtb/allwinner/sun50i-a64-recore.dtb at the
-# per-revision DTB, so reading that symlink's model property is the same fact
-# the installed system boots with, and cannot drift from it.
+# answer. flash-cleanup writes fdtfile= into the eMMC's armbianEnv.txt, so
+# reading the model property of that DTB is the same fact the installed system
+# boots with, and cannot drift from it. Only fdtfile is imported: the rest of
+# that file (rootdev above all) describes the installed system, not this boot.
+#
+# Boards flashed before that fall back to the sun50i-a64-recore.dtb symlink
+# flash-cleanup used to make - until a kernel upgrade on the board replaces it
+# with the generic tree, when they fall to the safe default below.
 #
 # Deliberately fails safe. A blank, half-flashed or unreadable eMMC - exactly
 # the boards Reflash exists to fix - leaves emmcmodel empty and the rail at
@@ -77,7 +82,15 @@ setenv dram_probe "0x46000000"
 setenv emmcmodel
 setenv dram_uv
 if mmc dev 1; then
-	if load mmc 1:1 ${dram_probe} /dtb/allwinner/sun50i-a64-recore.dtb; then
+	setenv reflash_fdtfile "${fdtfile}"
+	setenv fdtfile
+	if load mmc 1:1 ${dram_probe} /armbianEnv.txt; then
+		env import -t ${dram_probe} ${filesize} fdtfile
+	fi
+	setenv emmcfdt "/dtb/allwinner/sun50i-a64-recore.dtb"
+	if test -n "${fdtfile}"; then setenv emmcfdt "/dtb/${fdtfile}"; fi
+	setenv fdtfile "${reflash_fdtfile}"
+	if load mmc 1:1 ${dram_probe} ${emmcfdt}; then
 		fdt addr ${dram_probe}
 		fdt get value emmcmodel / model
 	fi
