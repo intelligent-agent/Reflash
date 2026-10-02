@@ -160,3 +160,17 @@ line_of() { grep -n "$1" "$SCRIPT" | head -1 | cut -d: -f1; }
   [ -n "$clear" ] && [ -n "$write" ]
   [ "$clear" -lt "$write" ]
 }
+
+# From Rebuild v1.2.0 the example configs come with the rebuild-printer
+# package, not inside Klipper's checkout (Rebuild #116).
+@test "flash-cleanup: the example config is taken from the package first" {
+  local pkg
+  pkg=$(line_of '/mnt/emmc/usr/share/rebuild/klipper/config klipper/config')
+  [ -n "$pkg" ]
+}
+
+# Older images already had the include in the example config; adding it again
+# gave the A5 two.
+@test "flash-cleanup: the web interface's config is included only if missing" {
+  grep -q 'grep -q "^\\\[include $ui.cfg\\\]" printer_data/config/printer.cfg && continue' "$SCRIPT"
+}

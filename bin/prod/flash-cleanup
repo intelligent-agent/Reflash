@@ -148,24 +148,35 @@ touch /mnt/emmc/root/.no_rootfs_resize
 # Copy config file, if one is not already present
 if test -d /mnt/emmc/home/printer; then
   cd /mnt/emmc/home/printer/ || exit
-  if test -f klipper/config/generic-recore-"$REVISION".cfg; then
+  # The example config for this revision. From Rebuild v1.2.0 it comes with
+  # the rebuild-printer package; older images kept it in Klipper's checkout.
+  cfg=""
+  for dir in /mnt/emmc/usr/share/rebuild/klipper/config klipper/config; do
+    if test -f "$dir/generic-recore-$REVISION.cfg"; then
+      cfg="$dir/generic-recore-$REVISION.cfg"
+      break
+    fi
+  done
+  if test -n "$cfg"; then
     info "Installing Klipper config file"
-    cp klipper/config/generic-recore-"$REVISION".cfg printer_data/config/printer.cfg
+    cp "$cfg" printer_data/config/printer.cfg
   fi
-  # Enable mainsail on mainsail distros
-  if test -f printer_data/config/mainsail.cfg; then
-    info "Including Mainsail in config file, above the first section"
-    # Older distros has the include fiel as a comment
+  # Include the web interface's own config - once. Older images put the line
+  # in the example configs already, and this added a second one on the A5;
+  # the package's configs carry none. After the "# See docs" line, which
+  # every Recore config has, or else at the top.
+  for ui in mainsail fluidd; do
+    test -f printer_data/config/$ui.cfg || continue
+    grep -q "^\[include $ui.cfg\]" printer_data/config/printer.cfg && continue
+    info "Including $ui.cfg in the config file"
+    # Older distros have the include line as a comment
     sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
-    sed -i 's:\(\[recore.*\]\):\[include mainsail.cfg\]\n\n\1:' printer_data/config/printer.cfg
-  fi
-  # Enable fluidd on fluidd distros
-  if test -f printer_data/config/fluidd.cfg; then
-    info "Including Fluidd in config file, above the first section"
-    # Older distros has the include fiel as a comment
-    sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
-    sed -i 's:\(\[recore.*\]\):\[include fluidd.cfg\]\n\n\1:' printer_data/config/printer.cfg
-  fi
+    if grep -q '^# See docs' printer_data/config/printer.cfg; then
+      sed -i "0,/^# See docs.*/s//&\n\n[include $ui.cfg]/" printer_data/config/printer.cfg
+    else
+      sed -i "1i [include $ui.cfg]\n" printer_data/config/printer.cfg
+    fi
+  done
 fi
 
 if [ -f /mnt/emmc/etc/default/armbian-firstrun ]; then
