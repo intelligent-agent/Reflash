@@ -31,7 +31,7 @@ root=2
 boot=1
 prepare=ext4-grow-root
 installer=/usr/lib/reflash/target-installer
-log=/var/log.hdd/reflash.log
+log=/var/log/reflash.log
 settings=SSH_ENABLED,SCREEN_ROTATION,WIFI_SSID,WIFI_PSK,LOGIN_PASSWORD
 actions=settings,backup,restore
 ```
