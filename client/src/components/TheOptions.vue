@@ -127,6 +127,10 @@
           <w-button xl outline class="ma2" @click="$emit('open-installed-settings')">
             <span>Change its settings</span>
           </w-button>
+          <!-- Its configuration, to keep across a reinstall (#175). -->
+          <w-button xl outline class="ma2" @click="$emit('open-file-backups')">
+            <span>Backups of files</span>
+          </w-button>
         </div>
         <w-divider class="my6 mx-3"></w-divider>
         <h4>Actions</h4>

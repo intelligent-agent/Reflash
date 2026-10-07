@@ -26,6 +26,7 @@ func setupTest(t *testing.T) string {
 	binDir = dir
 	log_file = filepath.Join(dir, "reflash.log")
 	images_folder = filepath.Join(dir, "images")
+	backups_folder = filepath.Join(dir, "backups")
 	options_file = filepath.Join(dir, "options.cfg")
 	if err := os.MkdirAll(images_folder, 0o755); err != nil {
 		t.Fatal(err)

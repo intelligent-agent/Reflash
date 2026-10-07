@@ -322,3 +322,82 @@ func TestInstalledSettingsTooOldOrBusy(t *testing.T) {
 		t.Errorf("while installing: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// #175: a backup of the installed system's files is made by its installer,
+// listed, and downloadable only by a name that cannot leave the folder.
+func TestFileBackupsMakeListDownload(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	fakeBin(t, dir, "get-emmc-version", `echo "rebuild-fluidd-v1.2.0"`)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	fakeBin(t, dir, "target-install", `[ "$1" = backup ] && printf ARCHIVE > "$2"`)
+
+	w := httptest.NewRecorder()
+	fileBackups(w, httptest.NewRequest("POST", "/api/file_backups", nil))
+	var made map[string]string
+	json.NewDecoder(w.Body).Decode(&made)
+	if made["status"] != "OK" || !strings.HasPrefix(made["name"], "rebuild-fluidd-v1.2.0-files-") {
+		t.Fatalf("made %v", made)
+	}
+
+	w = httptest.NewRecorder()
+	fileBackups(w, httptest.NewRequest("GET", "/api/file_backups", nil))
+	var list []FileBackup
+	json.NewDecoder(w.Body).Decode(&list)
+	if len(list) != 1 || list[0].Name != made["name"] || list[0].Size != 7 {
+		t.Errorf("list %v", list)
+	}
+
+	w = httptest.NewRecorder()
+	downloadFileBackup(w, httptest.NewRequest("GET", "/api/file_backups/download?name="+made["name"], nil))
+	if w.Body.String() != "ARCHIVE" {
+		t.Errorf("download %q", w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	downloadFileBackup(w, httptest.NewRequest("GET", "/api/file_backups/download?name=../options.cfg", nil))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("a name outside the folder answered %d", w.Code)
+	}
+}
+
+func TestFileBackupNotSupported(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	fakeBin(t, dir, "get-emmc-version", `echo rebuild`)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	fakeBin(t, dir, "target-install", `exit 3`)
+	w := httptest.NewRecorder()
+	fileBackups(w, httptest.NewRequest("POST", "/api/file_backups", nil))
+	if b := w.Body.String(); !strings.Contains(b, "does not support backing up") {
+		t.Errorf("answered %s", b)
+	}
+	if left, _ := filepath.Glob(backups_folder + "/*"); len(left) != 0 {
+		t.Errorf("left %v behind", left)
+	}
+}
+
+// The chosen backup goes into the next installed system after prepare and
+// before configure, and only once.
+func TestRestoreBackupAtInstall(t *testing.T) {
+	dir := setupTest(t)
+	order := filepath.Join(dir, "order")
+	os.MkdirAll(backups_folder, 0o755)
+	os.WriteFile(backups_folder+"/old-files-1.tar.gz", []byte("x"), 0o644)
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=restore\n'`)
+	fakeBin(t, dir, "target-install", `echo "$1" >> `+order)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	options = &Options{RestoreBackup: "old-files-1.tar.gz"}
+
+	w := httptest.NewRecorder()
+	runInstallFinishedCommands(w, httptest.NewRequest("GET", "/api/run_install_finished_commands", nil))
+
+	if b := w.Body.String(); strings.Contains(b, "ERROR") {
+		t.Fatalf("answered %s", b)
+	}
+	if got, _ := os.ReadFile(order); string(got) != "restore\nconfigure\n" {
+		t.Errorf("order %q", got)
+	}
+	if options.RestoreBackup != "" {
+		t.Error("the restore choice was kept for the next install")
+	}
+}

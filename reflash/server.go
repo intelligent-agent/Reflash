@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -166,6 +167,10 @@ type Options struct {
 	// only - never in options.cfg on the USB drive, never sent back by
 	// get_options - and dropped once an installed system has taken it.
 	LoginPassword string `json:"loginPassword" toml:"-"`
+	// A backup of files (backups_folder) to put back into the next installed
+	// system, between its prepare and configure (#175). Like the password, a
+	// choice for one installation, so not saved on the drive.
+	RestoreBackup string `json:"restoreBackup" toml:"-"`
 }
 
 type Download struct {
@@ -245,6 +250,9 @@ var oldUsb = true
 var static_dir string
 var binDir string
 var images_folder string
+
+// Where backups of an installed system's files go on the USB drive (#175).
+var backups_folder string
 var options_file string
 var log_file string
 
@@ -385,6 +393,7 @@ func ServerInit() {
 	static_dir = "/var/www/html/reflash/dist"
 	binDir = "/usr/local/bin"
 	images_folder = "/mnt/usb/images"
+	backups_folder = "/mnt/usb/backups"
 	options_file = "/mnt/usb/options.cfg"
 	log_file = "/var/log/reflash.log"
 	http_port = ":80"
@@ -466,6 +475,8 @@ func ServerInit() {
 	http.HandleFunc("/api/delete_image", deleteImage)
 	http.HandleFunc("/api/run_install_finished_commands", runInstallFinishedCommands)
 	http.HandleFunc("/api/installed_settings", installedSettings)
+	http.HandleFunc("/api/file_backups", fileBackups)
+	http.HandleFunc("/api/file_backups/download", downloadFileBackup)
 	http.HandleFunc("/api/clear_log", clearLog)
 	http.HandleFunc("/api/rotate_screen", rotateScreen)
 	http.HandleFunc("/api/update_config", updateConfig)
@@ -2129,6 +2140,12 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 		if options.LoginPassword != "" && !allowed["LOGIN_PASSWORD"] {
 			keep(errNoLoginPassword)
 		}
+		// After prepare, before configure, as the interface says: the user's
+		// choices in Reflash win over restored ones.
+		if options.RestoreBackup != "" {
+			keep(restoreFileBackup(options.RestoreBackup))
+			options.RestoreBackup = ""
+		}
 		if err := configureTarget(allowed); err != nil {
 			keep(err)
 		} else if allowed["LOGIN_PASSWORD"] {
@@ -2138,6 +2155,10 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	default:
 		if options.LoginPassword != "" {
 			keep(errNoLoginPassword)
+		}
+		if options.RestoreBackup != "" {
+			keep(fmt.Errorf("this image cannot have files restored into it by Reflash, so %s was not restored", options.RestoreBackup))
+			options.RestoreBackup = ""
 		}
 		for _, place := range []string{"CMDLINE", "XORG", "WESTON", "PLYMOUTH"} {
 			keep(cmdRotateScreen(options.ScreenRotation, place))
@@ -2377,6 +2398,97 @@ func applyInstalledSettings(allowed map[string]bool, changes map[string]string) 
 		return fmt.Errorf("%s", preparationFailure(out, err.Error()))
 	}
 	logInfo("Changed the installed system's settings: " + strings.Join(keys, ", "))
+	return nil
+}
+
+// A backup's file name: what fileBackups makes, and nothing that could leave
+// the backups folder.
+var backupName = regexp.MustCompile(`^[A-Za-z0-9._-]+\.tar\.gz$`)
+
+type FileBackup struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// fileBackups: GET lists the backups on the USB drive, POST makes one of the
+// system on the eMMC, through its own installer - which decides what is worth
+// keeping (#175). The whole-eMMC image backup is a separate thing.
+func fileBackups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		entries, _ := filepath.Glob(backups_folder + "/*.tar.gz")
+		list := []FileBackup{}
+		for _, e := range entries {
+			if fi, err := os.Stat(e); err == nil {
+				list = append(list, FileBackup{Name: filepath.Base(e), Size: fi.Size()})
+			}
+		}
+		sort.Slice(list, func(i, j int) bool { return list[i].Name > list[j].Name })
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(list)
+		return
+	}
+	if busy := eMMCBusy(); busy != "" {
+		http.Error(w, "busy: "+busy, http.StatusConflict)
+		return
+	}
+	installedSettingsLock.Lock()
+	defer installedSettingsLock.Unlock()
+
+	// Named after the system it came from, so a list of them says what each is.
+	from := regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(strings.TrimSpace(runCommandReturnString("get-emmc-version")), "-")
+	if from == "" {
+		from = "installed-system"
+	}
+	name := from + "-files-" + time.Now().Format("20060102-150405") + ".tar.gz"
+	if err := mountUsb(MODE_RW); err != nil {
+		sendResponse(w, fmt.Errorf("the USB drive could not be written to: %w", err))
+		return
+	}
+	defer mountUsb(MODE_RO)
+	os.MkdirAll(backups_folder, 0o755)
+	path := backups_folder + "/" + name
+	out, _, err := runCommand2Timeout(10*time.Minute, "target-install", "backup", path)
+	if err != nil {
+		os.Remove(path)
+		if strings.Contains(err.Error(), "exit status 3") {
+			err = fmt.Errorf("the installed system does not support backing up its files from Reflash")
+		} else {
+			err = fmt.Errorf("%s", preparationFailure(out, err.Error()))
+		}
+		sendResponse(w, err)
+		return
+	}
+	logInfo("Backed up the installed system's files to " + name)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "OK", "name": name})
+}
+
+func downloadFileBackup(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if !backupName.MatchString(name) {
+		http.Error(w, "no such backup", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	http.ServeFile(w, r, backups_folder+"/"+name)
+}
+
+func restoreFileBackup(name string) error {
+	if !backupName.MatchString(name) {
+		return fmt.Errorf("no such backup: %s", name)
+	}
+	path := backups_folder + "/" + name
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("the backup %s is not on the USB drive", name)
+	}
+	out, _, err := runCommand2Timeout(10*time.Minute, "target-install", "restore", path)
+	if err != nil {
+		if strings.Contains(err.Error(), "exit status 3") {
+			return fmt.Errorf("this image cannot have files restored into it by Reflash, so %s was not restored", name)
+		}
+		return fmt.Errorf("%s", preparationFailure(out, err.Error()))
+	}
+	logInfo("Restored " + name + " into the installed system")
 	return nil
 }
 
