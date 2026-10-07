@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // /etc/rebuild-settings is sourced by bash as root on the flashed image. What
@@ -170,5 +172,83 @@ func TestTargetSettingsFollowTheManifest(t *testing.T) {
 	got, _ = targetSettings(manifestSettings("interface=1\nroot=2\n"))
 	if want := "SETTINGS=1\nSSH_ENABLED=true\nSCREEN_ROTATION=90\nWIFI_SSID=net\nWIFI_PSK=pass\n"; got != want {
 		t.Errorf("without settings= got %q, want %q", got, want)
+	}
+}
+
+// The login password lives in memory only: not in options.cfg on the USB
+// drive, and never sent back by get_options - only whether one is set (#182).
+func TestLoginPasswordIsNeverStoredOrReturned(t *testing.T) {
+	setupTest(t)
+	options = &Options{WifiSSID: "net"}
+	if err := lockSetOptions([]byte(`{"loginPassword":"correct horse"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if options.LoginPassword != "correct horse" {
+		t.Fatalf("not set: %+v", options)
+	}
+	saved, _ := toml.Marshal(options)
+	if strings.Contains(string(saved), "horse") {
+		t.Errorf("the password would be written to options.cfg:\n%s", saved)
+	}
+	w := httptest.NewRecorder()
+	writeOptions(w)
+	body := w.Body.String()
+	if strings.Contains(body, "horse") || !strings.Contains(body, `"loginPasswordSet":true`) {
+		t.Errorf("get_options answered %s", body)
+	}
+}
+
+// Sent to an image that takes it, and then forgotten: the next board starts
+// afresh.
+func TestLoginPasswordGoesToTheImageAndIsForgotten(t *testing.T) {
+	dir := setupTest(t)
+	got := filepath.Join(dir, "settings-seen")
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nsettings=SSH_ENABLED,LOGIN_PASSWORD\n'`)
+	fakeBin(t, dir, "target-install", `cat "$2" > `+got)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	options = &Options{EnableSsh: true, LoginPassword: "correct horse"}
+
+	w := httptest.NewRecorder()
+	runInstallFinishedCommands(w, httptest.NewRequest("GET", "/api/run_install_finished_commands", nil))
+
+	if b := w.Body.String(); strings.Contains(b, "ERROR") {
+		t.Fatalf("answered %s", b)
+	}
+	s, _ := os.ReadFile(got)
+	if string(s) != "SETTINGS=1\nSSH_ENABLED=true\nLOGIN_PASSWORD=correct horse\n" {
+		t.Errorf("settings = %q", s)
+	}
+	if options.LoginPassword != "" {
+		t.Error("the password was kept after the image took it")
+	}
+}
+
+// An image that cannot take a password - one whose manifest does not list
+// it, or one with no manifest at all - is said to, not silently skipped.
+func TestLoginPasswordForAnImageThatCannotTakeIt(t *testing.T) {
+	for name, manifest := range map[string]string{
+		"manifest without LOGIN_PASSWORD": `printf 'interface=1\n'`,
+		"no manifest":                     `exit 0`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := setupTest(t)
+			got := filepath.Join(dir, "settings-seen")
+			fakeBin(t, dir, "target-manifest", manifest)
+			fakeBin(t, dir, "target-install", `cat "$2" > `+got)
+			fakeBin(t, dir, "rotate-screen", `exit 0`)
+			fakeBin(t, dir, "save-settings", `exit 0`)
+			fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+			options = &Options{LoginPassword: "correct horse"}
+
+			w := httptest.NewRecorder()
+			runInstallFinishedCommands(w, httptest.NewRequest("GET", "/api/run_install_finished_commands", nil))
+
+			if b := w.Body.String(); !strings.Contains(b, "keeps its factory password") {
+				t.Errorf("answered %s", b)
+			}
+			if s, _ := os.ReadFile(got); strings.Contains(string(s), "horse") {
+				t.Errorf("sent the password to an image that does not take it: %q", s)
+			}
+		})
 	}
 }

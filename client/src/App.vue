@@ -467,7 +467,13 @@ export default {
     // image that was on the eMMC before, on the one screen meant to confirm the
     // flash worked (#161).
     async onFlashFinished() {
-      await axios.get(`/api/run_install_finished_commands`);
+      // The image's settings step can refuse - a password its rules reject,
+      // or an image that cannot take one (#182) - and that answer used to be
+      // dropped, leaving the user to find out at the first login.
+      const res = await axios.get(`/api/run_install_finished_commands`);
+      if (res?.data?.status == "ERROR") {
+        this.$waveui.notify(res.data.error, "error", 0);
+      }
       await this.getInfo();
       this.installFinished = true;
     },

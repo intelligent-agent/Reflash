@@ -161,6 +161,10 @@ type Options struct {
 	ScreenRotation  int    `json:"screenRotation"`
 	WifiSSID        string `json:"SSID"`
 	WifiPSK         string `json:"PSK"`
+	// The login password for the next installed system (#182). Held in memory
+	// only - never in options.cfg on the USB drive, never sent back by
+	// get_options - and dropped once an installed system has taken it.
+	LoginPassword string `json:"loginPassword" toml:"-"`
 }
 
 type Download struct {
@@ -797,6 +801,12 @@ func writeOptions(w http.ResponseWriter) {
 		return
 	}
 	delete(fields, "PSK")
+	// Only whether one is set, so the options panel can say so.
+	delete(fields, "loginPassword")
+	optionsLock.Lock()
+	passwordSet := options.LoginPassword != ""
+	optionsLock.Unlock()
+	fields["loginPasswordSet"], _ = json.Marshal(passwordSet)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(fields)
@@ -2113,8 +2123,20 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		keep(fmt.Errorf("could not read the installed image's manifest: %w", err))
 	case strings.TrimSpace(manifest) != "":
-		keep(configureTarget(manifestSettings(manifest)))
+		allowed := manifestSettings(manifest)
+		if options.LoginPassword != "" && !allowed["LOGIN_PASSWORD"] {
+			keep(errNoLoginPassword)
+		}
+		if err := configureTarget(allowed); err != nil {
+			keep(err)
+		} else if allowed["LOGIN_PASSWORD"] {
+			// Taken: the next board is set up afresh, not with this one's password.
+			options.LoginPassword = ""
+		}
 	default:
+		if options.LoginPassword != "" {
+			keep(errNoLoginPassword)
+		}
 		for _, place := range []string{"CMDLINE", "XORG", "WESTON", "PLYMOUTH"} {
 			keep(cmdRotateScreen(options.ScreenRotation, place))
 		}
@@ -2123,6 +2145,11 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	keep(unmountUsb())
 	sendResponse(w, firstErr)
 }
+
+// Said rather than dropped: an image that does not take LOGIN_PASSWORD keeps
+// its factory password, and the user believes they set another one (#182).
+var errNoLoginPassword = fmt.Errorf("this image cannot have its login password set by Reflash: " +
+	"it keeps its factory password, and asks for a new one at the first login")
 
 func saveLegacySettings() error {
 	settings := "# Settings from Reflash\n" +
@@ -2162,7 +2189,7 @@ func manifestSettings(manifest string) map[string]bool {
 // value would end it early and start a line of the user's making, so such a
 // value is refused rather than sent.
 func targetSettings(allowed map[string]bool) (string, error) {
-	for name, v := range map[string]string{"Wi-Fi network name": options.WifiSSID, "Wi-Fi passphrase": options.WifiPSK} {
+	for name, v := range map[string]string{"Wi-Fi network name": options.WifiSSID, "Wi-Fi passphrase": options.WifiPSK, "login password": options.LoginPassword} {
 		if strings.ContainsAny(v, "\r\n") {
 			return "", fmt.Errorf("the %s contains a line break", name)
 		}
@@ -2173,7 +2200,13 @@ func targetSettings(allowed map[string]bool) (string, error) {
 		{"SCREEN_ROTATION", strconv.Itoa(options.ScreenRotation)},
 		{"WIFI_SSID", options.WifiSSID},
 		{"WIFI_PSK", options.WifiPSK},
+		{"LOGIN_PASSWORD", options.LoginPassword},
 	} {
+		// An empty password is not a password: the key is left out, and the
+		// image keeps its account as it is.
+		if kv[0] == "LOGIN_PASSWORD" && kv[1] == "" {
+			continue
+		}
 		if allowed[kv[0]] {
 			out += kv[0] + "=" + kv[1] + "\n"
 		}
