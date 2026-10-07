@@ -146,3 +146,14 @@ func TestInstallFinishedReportsTheInstallersReason(t *testing.T) {
 		t.Errorf("response %s does not carry the installer's reason", body)
 	}
 }
+
+// A failed preparation shows the user why, not "Check log for details" (#179).
+func TestPreparationFailureSurfacesTheReason(t *testing.T) {
+	out := "Target manifest: ...\n  installer: working\nFATAL: the image cannot be installed by this Reflash: interface '2' is not supported by this Reflash (it knows 1)\n"
+	if got := preparationFailure(out, "generic"); got != "the image cannot be installed by this Reflash: interface '2' is not supported by this Reflash (it knows 1)" {
+		t.Errorf("got %q", got)
+	}
+	if got := preparationFailure("some output\nexit 1\n", "generic"); got != "generic" {
+		t.Errorf("without a FATAL line got %q, want the fallback", got)
+	}
+}

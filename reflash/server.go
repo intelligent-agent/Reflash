@@ -1492,7 +1492,7 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 			state.Error = "The eMMC stopped responding during cleanup. " +
 				"Power cycle the board and try again."
 		} else {
-			state.Error = "An error was encountered during magic. Check log for details"
+			state.Error = preparationFailure(stdout, "An error was encountered during magic. Check log for details")
 		}
 	} else {
 		// Same tail as goInstall and goMagic. Without armReboot() this path
@@ -1665,7 +1665,7 @@ func goMagic(url string) {
 		state.Error = "An error was encountered during magic"
 		lines := strings.Split(strings.TrimSpace(stdout), "\n")
 		if lastLine := lines[len(lines)-1]; lastLine != "" {
-			state.Error = lastLine
+			state.Error = strings.TrimPrefix(lastLine, "FATAL: ")
 		}
 		return
 	}
@@ -2027,7 +2027,7 @@ func goInstall(filename string) {
 		}
 		logError("Error encountered during install: \n" + stdout)
 		state.State = ERROR
-		state.Error = "An error was encountered during install. Check log for details"
+		state.Error = preparationFailure(stdout, "An error was encountered during install. Check log for details")
 		return
 	}
 
@@ -2182,6 +2182,24 @@ func configureTarget() error {
 		}
 	}
 	return err
+}
+
+// preparationFailure is the reason target-install (or flash-cleanup) gave for
+// failing, from its last "FATAL: " line, or fallback when there is none. The
+// reason matters more now that the image prepares itself: "the image cannot be
+// installed by this Reflash: interface '2' is not supported" tells a user to
+// update Reflash, where "Check log for details" tells them nothing (#179).
+func preparationFailure(stdout, fallback string) string {
+	reason := ""
+	for _, line := range strings.Split(stdout, "\n") {
+		if r, ok := strings.CutPrefix(strings.TrimSpace(line), "FATAL: "); ok && r != "" {
+			reason = r
+		}
+	}
+	if reason == "" {
+		return fallback
+	}
+	return reason
 }
 
 // shellQuote makes v a single shell word. /etc/rebuild-settings is sourced by
