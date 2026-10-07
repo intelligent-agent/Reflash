@@ -34,80 +34,14 @@ info "Starting flashing..."
 info "Flashing done"
 sync
 
-# Re-read partition table
-partprobe ${OUTFILE}
+# The same preparation as every other way of writing the eMMC. This used to be
+# an older copy of flash-cleanup, inline, and it had drifted: no wait for the
+# partition nodes (#145), a bare e2fsck that aborted on a repaired filesystem
+# (#127), no partition growth, no new SSH host keys, and a missing device tree
+# passed in silence - the generic tree, and an A5/A6's DRAM under voltage
+# (#138). One path now, and it is the image's own installer where there is one
+# (#179).
+info "Preparing the installed image"
+target-install prepare "$REVISION"
 
-info "Checking filesystems"
-e2fsck -y -f ${OUTFILE}p1
-e2fsck -y -f ${OUTFILE}p2
-
-# Create new uuids so they are different than the USB drive
-info "Creating new UUIDs"
-tune2fs -U random ${OUTFILE}p1
-tune2fs -U random ${OUTFILE}p2
-
-UUID1=$(blkid -s UUID -o value ${OUTFILE}p1)
-UUID2=$(blkid -s UUID -o value ${OUTFILE}p2)
-
-mkdir -p /mnt/emmc
-# mount and exchange UUID
-mount ${OUTFILE}p2 /mnt/emmc
-info "Updating fstab with new UUIDs"
-sed -i "s:UUID=.* \/ :UUID=${UUID2} / :" /mnt/emmc/etc/fstab
-sed -i "s:UUID=.* \/boot :UUID=${UUID1} /boot :" /mnt/emmc/etc/fstab
-
-# Copy config file, if one is not already present
-if test -d /mnt/emmc/home/printer; then
-  cd /mnt/emmc/home/printer || exit
-  # The example config for this revision. From Rebuild v1.2.0 it comes with
-  # the rebuild-printer package; older images kept it in Klipper's checkout.
-  cfg=""
-  for dir in /mnt/emmc/usr/share/rebuild/klipper/config klipper/config; do
-    if test -f "$dir/generic-recore-$REVISION.cfg"; then
-      cfg="$dir/generic-recore-$REVISION.cfg"
-      break
-    fi
-  done
-  if test -n "$cfg"; then
-    info "Installing Klipper config file"
-    cp "$cfg" printer_data/config/printer.cfg
-  fi
-  # Include the web interface's own config - once. Older images put the line
-  # in the example configs already, and this added a second one on the A5;
-  # the package's configs carry none. After the "# See docs" line, which
-  # every Recore config has, or else at the top.
-  for ui in mainsail fluidd; do
-    test -f printer_data/config/$ui.cfg || continue
-    grep -q "^\[include $ui.cfg\]" printer_data/config/printer.cfg && continue
-    info "Including $ui.cfg in the config file"
-    # Older distros have the include line as a comment
-    sed -i 's/\#\[include mainsail.cfg\]//' printer_data/config/printer.cfg
-    if grep -q '^# See docs' printer_data/config/printer.cfg; then
-      sed -i "0,/^# See docs.*/s//&\n\n[include $ui.cfg]/" printer_data/config/printer.cfg
-    else
-      sed -i "1i [include $ui.cfg]\n" printer_data/config/printer.cfg
-    fi
-  done
-fi
-cd /
-umount ${OUTFILE}p2
-
-mount ${OUTFILE}p1 /mnt/emmc
-sed -i "/^rootdev=.*/d" /mnt/emmc/armbianEnv.txt
-sed -i '/^$/d' /mnt/emmc/armbianEnv.txt
-echo "rootdev=UUID=${UUID2}" >> /mnt/emmc/armbianEnv.txt
-sed -i "/^fdtfile=.*/d" /mnt/emmc/armbianEnv.txt
-
-cd /mnt/emmc/dtb/allwinner/ || exit
-# fdtfile= selects the tree; the symlink is for older Reflash sticks, as in
-# flash-cleanup.
-if test -f sun50i-a64-recore-"$REVISION".dtb; then
-  info "Selecting device tree"
-  echo "fdtfile=allwinner/sun50i-a64-recore-$REVISION.dtb" >> /mnt/emmc/armbianEnv.txt
-  ln -sf sun50i-a64-recore-"$REVISION".dtb sun50i-a64-recore.dtb
-fi
-cd /
-umount ${OUTFILE}p1
-
-sync
-info "Install script done!"
+info "Recore flash script done!"

@@ -1,0 +1,213 @@
+#!/bin/bash
+# Prepare the image just written to the eMMC, through the installer the image
+# ships (docs/target-interface.md, #179).
+#
+#   target-install prepare <revision>         straight after the write
+#   target-install configure <settings-file>  when the user finishes
+#
+# Reflash knows nothing about the image beyond its manifest: the image says
+# which partitions are which, which device step it wants, and where its
+# installer is, and the installer does everything specific to that system.
+#
+# An image without a manifest is a Rebuild v1.0/v1.1 image. `prepare` hands it
+# to flash-cleanup, as before; `configure` refuses, because the server applies
+# those images' settings itself (rotate-screen, save-settings).
+set -euo pipefail
+
+LOG_FILE="${LOG_FILE:-/var/log/reflash.log}"
+EMMC="${REFLASH_EMMC:-/dev/mmcblk2}"
+MNT="${REFLASH_TARGET_MNT:-/mnt/target}"
+# How a partition node is recognised. A seam for the tests, which cannot make
+# block devices.
+NODE_TEST="${REFLASH_NODE_TEST:--b}"
+
+info() {
+    echo "[info] $1" >> "$LOG_FILE"
+    echo "$1"
+}
+
+fatal() {
+    info "FATAL: $1"
+    exit 1
+}
+
+ACTION=${1:-}
+ARG=${2:-}
+case $ACTION in
+    prepare)
+        # Same refusal as flash-cleanup, for the same reason (#138): without a
+        # revision the device tree cannot be chosen, and an A5/A6 would boot the
+        # generic tree with its DRAM under voltage.
+        [ -n "$ARG" ] || fatal "no hardware revision given - refusing to prepare the image. Nothing has been changed."
+        ;;
+    configure)
+        [ -f "$ARG" ] || fatal "no settings file given"
+        ;;
+    *)
+        echo "usage: $0 prepare <revision> | configure <settings-file>" >&2
+        exit 2
+        ;;
+esac
+
+MANIFEST=$(target-manifest 2>&1) || fatal "the image cannot be installed by this Reflash: ${MANIFEST##*target manifest: }"
+if [ -z "$MANIFEST" ]; then
+    if [ "$ACTION" = prepare ]; then
+        info "No target manifest: preparing the image as Rebuild v1.0/v1.1"
+        exec flash-cleanup "$ARG"
+    fi
+    fatal "the image has no target manifest, so it has no installer to configure it"
+fi
+
+# Already checked by target-manifest; only read back here.
+ROOT="" BOOT="" PREPARE="" INSTALLER="" TARGET_LOG=""
+while IFS='=' read -r key val; do
+    case $key in
+        root) ROOT=$val ;;
+        boot) BOOT=$val ;;
+        prepare) PREPARE=$val ;;
+        installer) INSTALLER=$val ;;
+        log) TARGET_LOG=$val ;;
+    esac
+done <<< "$(grep -v '^target manifest:' <<< "$MANIFEST" || true)"
+ROOT_DEV="${EMMC}p$ROOT"
+BOOT_DEV=""
+[ -z "$BOOT" ] || BOOT_DEV="${EMMC}p$BOOT"
+info "Target manifest: root ${ROOT_DEV}, boot ${BOOT_DEV:-none}, prepare $PREPARE, installer $INSTALLER"
+
+# Everything mounted here, innermost last, so cleanup can unmount in reverse.
+MOUNTED=()
+unmount_all() {
+    local i
+    for ((i = ${#MOUNTED[@]} - 1; i >= 0; i--)); do
+        umount "${MOUNTED[$i]}" 2>/dev/null || umount -l "${MOUNTED[$i]}" 2>/dev/null || true
+    done
+    MOUNTED=()
+}
+
+mount_target() {
+    mkdir -p "$MNT"
+    mount "$ROOT_DEV" "$MNT"
+    MOUNTED+=("$MNT")
+    if [ -n "$BOOT_DEV" ]; then
+        mkdir -p "$MNT/boot"
+        mount "$BOOT_DEV" "$MNT/boot"
+        MOUNTED+=("$MNT/boot")
+    fi
+}
+
+# Keep Reflash's log on the installed system, where the image asked for it.
+# It lives in the initramfs and dies with the reboot that ends every flash,
+# which is when it becomes interesting (#138). Best effort, and on EXIT, so a
+# failed preparation leaves its log too - without changing the exit status.
+persist_log() {
+    local rc=$?
+    unmount_all
+    if [ "$ACTION" = prepare ] && [ -n "$TARGET_LOG" ] && mount "$ROOT_DEV" "$MNT" 2>/dev/null; then
+        MOUNTED+=("$MNT")
+        mkdir -p "$MNT$(dirname "$TARGET_LOG")" 2>/dev/null || true
+        cp "$LOG_FILE" "$MNT$TARGET_LOG" 2>/dev/null || true
+        sync
+        unmount_all
+    fi
+    return $rc
+}
+trap persist_log EXIT
+
+# e2fsck's exit status is a bitmask: 1 and 2 mean errors were found and
+# corrected, which is a success (#127). 4 and up is a real failure.
+check_fs() {
+    local dev=$1 rc=0
+    e2fsck -y -f "$dev" || rc=$?
+    case $rc in
+        0) info "  $dev: clean" ;;
+        1 | 2) info "  $dev: errors found and repaired (e2fsck $rc) - the write or the image was interrupted" ;;
+        *) fatal "$dev: errors left uncorrected (e2fsck $rc)" ;;
+    esac
+}
+
+prepare_ext4_grow_root() {
+    local dev
+    sync
+    partprobe "$EMMC"
+    # partprobe returns before udev has recreated the partition nodes; e2fsck
+    # in that window fails with "No such file or directory" (#145).
+    udevadm settle --timeout=30 || true
+    for _ in $(seq 1 100); do
+        if test "$NODE_TEST" "$ROOT_DEV" && { [ -z "$BOOT_DEV" ] || test "$NODE_TEST" "$BOOT_DEV"; }; then
+            break
+        fi
+        sleep 0.1
+    done
+    for dev in $BOOT_DEV $ROOT_DEV; do
+        test "$NODE_TEST" "$dev" || fatal "partition $dev did not appear after partprobe"
+    done
+
+    info "Checking filesystems"
+    for dev in $BOOT_DEV $ROOT_DEV; do check_fs "$dev"; done
+
+    info "Growing partition $ROOT to fill the device"
+    parted -s "$EMMC" resizepart "$ROOT" 100%
+    partprobe "$EMMC"
+    udevadm settle --timeout=30 || true
+    resize2fs "$ROOT_DEV"
+
+    info "Giving the filesystems new UUIDs"
+    for dev in $BOOT_DEV $ROOT_DEV; do tune2fs -U random "$dev"; done
+}
+
+# Run the installer inside the image. Its output goes to the log; the last
+# "ERROR: " line it printed is what the user is shown when it fails.
+run_installer() {
+    local stdin=$1 out rc=0 line reason=""
+    mount_target
+    [ -x "$MNT$INSTALLER" ] || fatal "the image's installer $INSTALLER is missing or not executable"
+    for d in dev proc sys; do
+        mount --bind "/$d" "$MNT/$d"
+        MOUNTED+=("$MNT/$d")
+    done
+
+    out=$(mktemp)
+    # Resolved before env -i replaces PATH with the image's.
+    local chroot_cmd
+    chroot_cmd=$(command -v chroot)
+    env -i \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        REFLASH_INTERFACE=1 \
+        REFLASH_VERSION="$(get-reflash-version 2>/dev/null || true)" \
+        REFLASH_DEVICE="$EMMC" \
+        REFLASH_ROOT_DEV="$ROOT_DEV" \
+        REFLASH_BOOT_DEV="$BOOT_DEV" \
+        REFLASH_REVISION="${REVISION:-}" \
+        REFLASH_SERIAL="${SERIAL:-}" \
+        "$chroot_cmd" "$MNT" "$INSTALLER" "$ACTION" < "$stdin" > "$out" 2>&1 || rc=$?
+    while IFS= read -r line || [ -n "$line" ]; do
+        info "  installer: $line"
+        case $line in "ERROR: "*) reason=${line#ERROR: } ;; esac
+    done < "$out"
+    rm -f "$out"
+    sync
+    unmount_all
+    [ "$rc" = 0 ] || fatal "the image's installer failed (exit $rc)${reason:+: $reason}"
+}
+
+REVISION="" SERIAL=""
+case $ACTION in
+    prepare)
+        REVISION=$ARG
+        SERIAL=$(get-recore-serial-number 2>/dev/null || true)
+        info "Preparing the installed image for Recore $REVISION${SERIAL:+, serial $SERIAL}"
+        case $PREPARE in
+            ext4-grow-root) prepare_ext4_grow_root ;;
+            none) ;;
+        esac
+        run_installer /dev/null
+        info "The image is prepared"
+        ;;
+    configure)
+        REVISION=$(get-recore-revision 2>/dev/null || true)
+        SERIAL=$(get-recore-serial-number 2>/dev/null || true)
+        info "Configuring the installed image"
+        run_installer "$ARG"
+        info "The image is configured"
+        ;;
+esac

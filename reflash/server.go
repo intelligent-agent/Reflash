@@ -1480,7 +1480,7 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	// 15 minutes: long enough for e2fsck plus resize2fs on a multi-gigabyte
 	// rootfs on slow eMMC, short enough that a wedged card is reported rather
 	// than leaving the UI at 100% forever (#137).
-	stdout, _, err := runCommand2Timeout(15*time.Minute, "flash-cleanup", revision)
+	stdout, _, err := runCommand2Timeout(15*time.Minute, "target-install", "prepare", revision)
 	if err != nil {
 		logError("Error encountered during cleanup: \n" + stdout)
 		state.State = ERROR
@@ -1492,7 +1492,7 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 			state.Error = "The eMMC stopped responding during cleanup. " +
 				"Power cycle the board and try again."
 		} else {
-			state.Error = "An error was encountered during magic. Check log for details"
+			state.Error = preparationFailure(stdout, "An error was encountered during magic. Check log for details")
 		}
 	} else {
 		// Same tail as goInstall and goMagic. Without armReboot() this path
@@ -1665,7 +1665,7 @@ func goMagic(url string) {
 		state.Error = "An error was encountered during magic"
 		lines := strings.Split(strings.TrimSpace(stdout), "\n")
 		if lastLine := lines[len(lines)-1]; lastLine != "" {
-			state.Error = lastLine
+			state.Error = strings.TrimPrefix(lastLine, "FATAL: ")
 		}
 		return
 	}
@@ -2027,7 +2027,7 @@ func goInstall(filename string) {
 		}
 		logError("Error encountered during install: \n" + stdout)
 		state.State = ERROR
-		state.Error = "An error was encountered during install. Check log for details"
+		state.Error = preparationFailure(stdout, "An error was encountered during install. Check log for details")
 		return
 	}
 
@@ -2103,10 +2103,28 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 			firstErr = err
 		}
 	}
-	for _, place := range []string{"CMDLINE", "XORG", "WESTON", "PLYMOUTH"} {
-		keep(cmdRotateScreen(options.ScreenRotation, place))
-	}
 
+	// An image with a target manifest applies the user's choices itself,
+	// through its own installer (docs/target-interface.md, #179). Only images
+	// without one - Rebuild v1.0/v1.1 - get Reflash's own rotation and
+	// settings file, which is what ties Reflash to their layout.
+	manifest, _, err := runCommand2("target-manifest")
+	switch {
+	case err != nil:
+		keep(fmt.Errorf("could not read the installed image's manifest: %w", err))
+	case strings.TrimSpace(manifest) != "":
+		keep(configureTarget())
+	default:
+		for _, place := range []string{"CMDLINE", "XORG", "WESTON", "PLYMOUTH"} {
+			keep(cmdRotateScreen(options.ScreenRotation, place))
+		}
+		keep(saveLegacySettings())
+	}
+	keep(unmountUsb())
+	sendResponse(w, firstErr)
+}
+
+func saveLegacySettings() error {
 	settings := "# Settings from Reflash\n" +
 		"SSH_ENABLED_ON_BOOT=" + strconv.FormatBool(options.EnableSsh) + "\n" +
 		"SSH_TIMEOUT=60\n" +
@@ -2115,9 +2133,73 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 		"WIFI_PSK=" + shellQuote(options.WifiPSK)
 
 	_, _, err := runCommand2("save-settings", settings)
-	keep(err)
-	keep(unmountUsb())
-	sendResponse(w, firstErr)
+	return err
+}
+
+// targetSettings is the user's choices in the interface's settings format:
+// KEY=VALUE lines, the value literal to the end of the line. A newline in a
+// value would end it early and start a line of the user's making, so such a
+// value is refused rather than sent.
+func targetSettings() (string, error) {
+	for name, v := range map[string]string{"Wi-Fi network name": options.WifiSSID, "Wi-Fi passphrase": options.WifiPSK} {
+		if strings.ContainsAny(v, "\r\n") {
+			return "", fmt.Errorf("the %s contains a line break", name)
+		}
+	}
+	return "SETTINGS=1\n" +
+		"SSH_ENABLED=" + strconv.FormatBool(options.EnableSsh) + "\n" +
+		"SCREEN_ROTATION=" + strconv.Itoa(options.ScreenRotation) + "\n" +
+		"WIFI_SSID=" + options.WifiSSID + "\n" +
+		"WIFI_PSK=" + options.WifiPSK + "\n", nil
+}
+
+// configureTarget hands the settings to the image's installer. Through a file
+// readable only by root, not an argument: the passphrase must not show up in
+// ps or in the log.
+func configureTarget() error {
+	settings, err := targetSettings()
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp("", "reflash-settings-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(settings); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	out, _, err := runCommand2Timeout(5*time.Minute, "target-install", "configure", f.Name())
+	if err != nil {
+		// target-install's last line says why, in words meant for the user.
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if last := strings.TrimPrefix(lines[len(lines)-1], "FATAL: "); last != "" {
+			return fmt.Errorf("%s", last)
+		}
+	}
+	return err
+}
+
+// preparationFailure is the reason target-install (or flash-cleanup) gave for
+// failing, from its last "FATAL: " line, or fallback when there is none. The
+// reason matters more now that the image prepares itself: "the image cannot be
+// installed by this Reflash: interface '2' is not supported" tells a user to
+// update Reflash, where "Check log for details" tells them nothing (#179).
+func preparationFailure(stdout, fallback string) string {
+	reason := ""
+	for _, line := range strings.Split(stdout, "\n") {
+		if r, ok := strings.CutPrefix(strings.TrimSpace(line), "FATAL: "); ok && r != "" {
+			reason = r
+		}
+	}
+	if reason == "" {
+		return fallback
+	}
+	return reason
 }
 
 // shellQuote makes v a single shell word. /etc/rebuild-settings is sourced by
