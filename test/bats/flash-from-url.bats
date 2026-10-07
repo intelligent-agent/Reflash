@@ -57,10 +57,10 @@ ERR
   stub_silent wget
   stub_silent xz
   stub_silent sync
-  stub_silent flash-cleanup
+  stub_silent target-install
 
   run "$PROD_BIN/flash-from-url" http://example/image.img.xz
   [ "$status" -eq 0 ]
-  assert_called_with "flash-cleanup a5"
+  assert_called_with "target-install prepare a5"
   [[ "$output" == *"Running post-flash cleanup"* ]]
 }
