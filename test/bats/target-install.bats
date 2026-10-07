@@ -34,6 +34,7 @@ echo "chroot \$*" >> "$CALLS"
 env | grep '^REFLASH_\|^PATH=' | sort > "$SANDBOX/installer.env"
 cat > "$SANDBOX/installer.stdin"
 printf '%b' "\$(cat "$SANDBOX/installer.out" 2>/dev/null)"
+printf '%b' "\$(cat "$SANDBOX/installer.err" 2>/dev/null)" >&2
 exit \$(cat "$SANDBOX/installer.rc" 2>/dev/null || echo 0)
 EOF
   chmod +x "$SHIMDIR/chroot"
@@ -237,4 +238,70 @@ EOF
   # configure keeps no log on the target: that belongs to a flash.
   [ ! -e "$SANDBOX/target/var/log.hdd/reflash.log" ]
   ! grep -q hunter2 "$LOG_FILE"
+}
+
+optional_manifest() {
+  manifest interface=1 root=2 boot=1 prepare=ext4-grow-root \
+    installer=/usr/lib/reflash/target-installer "$@"
+}
+
+@test "target-manifest: settings= and actions= come through; unknown actions and bad lists are dropped" {
+  optional_manifest settings=SSH_ENABLED,LOGIN_PASSWORD actions=settings,teleport,backup
+  run "$PROD_BIN/target-manifest"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"settings=SSH_ENABLED,LOGIN_PASSWORD"* ]]
+  [[ "$output" == *"actions=settings,backup"* ]]
+  [[ "$output" == *"ignoring unknown action 'teleport'"* ]]
+
+  optional_manifest 'settings=ssh enabled;rm' actions=settings
+  run "$PROD_BIN/target-manifest"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"settings=ssh"* ]]
+  [[ "$output" == *"ignoring settings"* ]]
+}
+
+@test "target-install settings: prints only what the installer wrote to stdout" {
+  optional_manifest actions=settings
+  printf 'SETTINGS=1\\nSSH_ENABLED=true\\n' > "$SANDBOX/installer.out"
+  echo 'reading weston.ini' > "$SANDBOX/installer.err"
+  run --separate-stderr "$PROD_BIN/target-install" settings
+  [ "$status" -eq 0 ]
+  [ "$output" = $'SETTINGS=1\nSSH_ENABLED=true' ]
+  assert_called_with "chroot $REFLASH_TARGET_MNT /usr/lib/reflash/target-installer settings"
+  grep -q "installer: reading weston.ini" "$LOG_FILE"
+  ! grep -qE '^(e2fsck|parted|tune2fs)' "$CALLS"
+}
+
+@test "target-install: an optional action the manifest does not list is not supported (3)" {
+  optional_manifest actions=settings
+  run "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
+  [ "$status" -eq 3 ]
+  ! grep -q '^chroot' "$CALLS"
+}
+
+@test "target-install: optional actions on an image without a manifest are not supported (3)" {
+  run "$PROD_BIN/target-install" settings
+  [ "$status" -eq 3 ]
+  ! grep -qE '^(chroot|flash-cleanup)' "$CALLS"
+}
+
+@test "target-install backup and restore: the archive goes to the file and comes back on stdin" {
+  optional_manifest actions=backup,restore
+  printf 'ARCHIVE' > "$SANDBOX/installer.out"
+  run "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SANDBOX/b.tgz")" = ARCHIVE ]
+
+  : > "$SANDBOX/installer.out"
+  run "$PROD_BIN/target-install" restore "$SANDBOX/b.tgz"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SANDBOX/installer.stdin")" = ARCHIVE ]
+  assert_called_with "chroot $REFLASH_TARGET_MNT /usr/lib/reflash/target-installer restore"
+}
+
+@test "target-install: an installer that says 3 to an optional action means not supported" {
+  optional_manifest actions=backup
+  echo 3 > "$SANDBOX/installer.rc"
+  run "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
+  [ "$status" -eq 3 ]
 }

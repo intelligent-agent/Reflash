@@ -4,6 +4,13 @@
 #
 #   target-install prepare <revision>         straight after the write
 #   target-install configure <settings-file>  when the user finishes
+#   target-install settings                   print the installed system's settings
+#   target-install backup <file>              the user's files, into <file>
+#   target-install restore <file>             ...and back, after prepare
+#
+# The last three are optional: an image that does not list one in its
+# manifest's actions= - or has no manifest at all - gets exit status 3, "not
+# supported", and nothing is changed.
 #
 # Reflash knows nothing about the image beyond its manifest: the image says
 # which partitions are which, which device step it wants, and where its
@@ -21,9 +28,11 @@ MNT="${REFLASH_TARGET_MNT:-/mnt/target}"
 # block devices.
 NODE_TEST="${REFLASH_NODE_TEST:--b}"
 
+# The settings action's stdout is the settings and nothing else, so its
+# messages go to stderr.
 info() {
     echo "[info] $1" >> "$LOG_FILE"
-    echo "$1"
+    if [ "${1:-}" ] && [ "${ACTION:-}" = settings ]; then echo "$1" >&2; else echo "$1"; fi
 }
 
 fatal() {
@@ -40,14 +49,23 @@ case $ACTION in
         # generic tree with its DRAM under voltage.
         [ -n "$ARG" ] || fatal "no hardware revision given - refusing to prepare the image. Nothing has been changed."
         ;;
-    configure)
-        [ -f "$ARG" ] || fatal "no settings file given"
+    configure | restore)
+        [ -f "$ARG" ] || fatal "no $ACTION file given"
         ;;
+    backup)
+        [ -n "$ARG" ] || fatal "no backup file given"
+        ;;
+    settings) ;;
     *)
-        echo "usage: $0 prepare <revision> | configure <settings-file>" >&2
+        echo "usage: $0 prepare <revision> | configure <settings-file> | settings | backup <file> | restore <file>" >&2
         exit 2
         ;;
 esac
+
+unsupported() {
+    info "Not supported by the installed image: $ACTION ($1)"
+    exit 3
+}
 
 MANIFEST=$(target-manifest 2>&1) || fatal "the image cannot be installed by this Reflash: ${MANIFEST##*target manifest: }"
 if [ -z "$MANIFEST" ]; then
@@ -55,11 +73,12 @@ if [ -z "$MANIFEST" ]; then
         info "No target manifest: preparing the image as Rebuild v1.0/v1.1"
         exec flash-cleanup "$ARG"
     fi
+    case $ACTION in configure) ;; *) unsupported "no target manifest" ;; esac
     fatal "the image has no target manifest, so it has no installer to configure it"
 fi
 
 # Already checked by target-manifest; only read back here.
-ROOT="" BOOT="" PREPARE="" INSTALLER="" TARGET_LOG=""
+ROOT="" BOOT="" PREPARE="" INSTALLER="" TARGET_LOG="" ACTIONS=""
 while IFS='=' read -r key val; do
     case $key in
         root) ROOT=$val ;;
@@ -67,8 +86,15 @@ while IFS='=' read -r key val; do
         prepare) PREPARE=$val ;;
         installer) INSTALLER=$val ;;
         log) TARGET_LOG=$val ;;
+        actions) ACTIONS=$val ;;
     esac
 done <<< "$(grep -v '^target manifest:' <<< "$MANIFEST" || true)"
+case $ACTION in
+    settings | backup | restore)
+        [[ ",$ACTIONS," == *",$ACTION,"* ]] || unsupported "not in the manifest's actions"
+        ;;
+esac
+
 ROOT_DEV="${EMMC}p$ROOT"
 BOOT_DEV=""
 [ -z "$BOOT" ] || BOOT_DEV="${EMMC}p$BOOT"
@@ -156,9 +182,11 @@ prepare_ext4_grow_root() {
 }
 
 # Run the installer inside the image. Its output goes to the log; the last
-# "ERROR: " line it printed is what the user is shown when it fails.
+# "ERROR: " line it printed is what the user is shown when it fails. With a
+# second argument, its stdout is data and goes there instead, and only its
+# stderr is logged (settings, backup).
 run_installer() {
-    local stdin=$1 out rc=0 line reason=""
+    local stdin=$1 data=${2:-} out rc=0 line reason=""
     mount_target
     [ -x "$MNT$INSTALLER" ] || fatal "the image's installer $INSTALLER is missing or not executable"
     for d in dev proc sys; do
@@ -179,7 +207,11 @@ run_installer() {
         REFLASH_BOOT_DEV="$BOOT_DEV" \
         REFLASH_REVISION="${REVISION:-}" \
         REFLASH_SERIAL="${SERIAL:-}" \
-        "$chroot_cmd" "$MNT" "$INSTALLER" "$ACTION" < "$stdin" > "$out" 2>&1 || rc=$?
+        "$chroot_cmd" "$MNT" "$INSTALLER" "$ACTION" < "$stdin" > "${data:-$out}" 2>"$out.err" || rc=$?
+    # Without a data destination stdout went to $out too: the order of the two
+    # streams is lost, which a log of an installer's few lines can afford.
+    cat "$out.err" >> "$out"
+    rm -f "$out.err"
     while IFS= read -r line || [ -n "$line" ]; do
         info "  installer: $line"
         case $line in "ERROR: "*) reason=${line#ERROR: } ;; esac
@@ -187,6 +219,7 @@ run_installer() {
     rm -f "$out"
     sync
     unmount_all
+    [ "$rc" != 3 ] || [ "$ACTION" = prepare ] || [ "$ACTION" = configure ] || unsupported "the installer says so"
     [ "$rc" = 0 ] || fatal "the image's installer failed (exit $rc)${reason:+: $reason}"
 }
 
@@ -209,5 +242,28 @@ case $ACTION in
         info "Configuring the installed image"
         run_installer "$ARG"
         info "The image is configured"
+        ;;
+    settings)
+        REVISION=$(get-recore-revision 2>/dev/null || true)
+        SERIAL=$(get-recore-serial-number 2>/dev/null || true)
+        # Into a file first, printed only once the installer succeeded.
+        current=$(mktemp)
+        run_installer /dev/null "$current"
+        cat "$current"
+        rm -f "$current"
+        ;;
+    backup)
+        REVISION=$(get-recore-revision 2>/dev/null || true)
+        SERIAL=$(get-recore-serial-number 2>/dev/null || true)
+        info "Backing up the installed system's files to $ARG"
+        run_installer /dev/null "$ARG"
+        info "Backup written: $(stat -c %s "$ARG") bytes"
+        ;;
+    restore)
+        REVISION=$(get-recore-revision 2>/dev/null || true)
+        SERIAL=$(get-recore-serial-number 2>/dev/null || true)
+        info "Restoring files from $ARG into the installed system"
+        run_installer "$ARG"
+        info "Files restored"
         ;;
 esac

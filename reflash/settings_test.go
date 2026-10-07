@@ -157,3 +157,18 @@ func TestPreparationFailureSurfacesTheReason(t *testing.T) {
 		t.Errorf("without a FATAL line got %q, want the fallback", got)
 	}
 }
+
+// An image's manifest says which settings it applies; others are not sent,
+// and an image without settings= gets the original four.
+func TestTargetSettingsFollowTheManifest(t *testing.T) {
+	options = &Options{WifiSSID: "net", WifiPSK: "pass", EnableSsh: true, ScreenRotation: 90}
+
+	got, err := targetSettings(manifestSettings("interface=1\nsettings=SCREEN_ROTATION,LOGIN_PASSWORD\n"))
+	if err != nil || got != "SETTINGS=1\nSCREEN_ROTATION=90\n" {
+		t.Errorf("with settings= got %q, %v", got, err)
+	}
+	got, _ = targetSettings(manifestSettings("interface=1\nroot=2\n"))
+	if want := "SETTINGS=1\nSSH_ENABLED=true\nSCREEN_ROTATION=90\nWIFI_SSID=net\nWIFI_PSK=pass\n"; got != want {
+		t.Errorf("without settings= got %q, want %q", got, want)
+	}
+}

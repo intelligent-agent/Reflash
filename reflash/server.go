@@ -2113,7 +2113,7 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		keep(fmt.Errorf("could not read the installed image's manifest: %w", err))
 	case strings.TrimSpace(manifest) != "":
-		keep(configureTarget())
+		keep(configureTarget(manifestSettings(manifest)))
 	default:
 		for _, place := range []string{"CMDLINE", "XORG", "WESTON", "PLYMOUTH"} {
 			keep(cmdRotateScreen(options.ScreenRotation, place))
@@ -2136,28 +2136,56 @@ func saveLegacySettings() error {
 	return err
 }
 
+// The settings an image without a settings= line applies: the four of
+// interface v1 as it first shipped.
+var baseSettings = []string{"SSH_ENABLED", "SCREEN_ROTATION", "WIFI_SSID", "WIFI_PSK"}
+
+// manifestSettings is the settings= list of target-manifest's output: the keys
+// the image's installer applies. An installer ignores keys it does not know,
+// so a choice it would drop is not sent - and, once the UI asks, not offered.
+func manifestSettings(manifest string) map[string]bool {
+	keys := baseSettings
+	for _, line := range strings.Split(manifest, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "settings="); ok && v != "" {
+			keys = strings.Split(v, ",")
+		}
+	}
+	set := map[string]bool{}
+	for _, k := range keys {
+		set[k] = true
+	}
+	return set
+}
+
 // targetSettings is the user's choices in the interface's settings format:
 // KEY=VALUE lines, the value literal to the end of the line. A newline in a
 // value would end it early and start a line of the user's making, so such a
 // value is refused rather than sent.
-func targetSettings() (string, error) {
+func targetSettings(allowed map[string]bool) (string, error) {
 	for name, v := range map[string]string{"Wi-Fi network name": options.WifiSSID, "Wi-Fi passphrase": options.WifiPSK} {
 		if strings.ContainsAny(v, "\r\n") {
 			return "", fmt.Errorf("the %s contains a line break", name)
 		}
 	}
-	return "SETTINGS=1\n" +
-		"SSH_ENABLED=" + strconv.FormatBool(options.EnableSsh) + "\n" +
-		"SCREEN_ROTATION=" + strconv.Itoa(options.ScreenRotation) + "\n" +
-		"WIFI_SSID=" + options.WifiSSID + "\n" +
-		"WIFI_PSK=" + options.WifiPSK + "\n", nil
+	out := "SETTINGS=1\n"
+	for _, kv := range [][2]string{
+		{"SSH_ENABLED", strconv.FormatBool(options.EnableSsh)},
+		{"SCREEN_ROTATION", strconv.Itoa(options.ScreenRotation)},
+		{"WIFI_SSID", options.WifiSSID},
+		{"WIFI_PSK", options.WifiPSK},
+	} {
+		if allowed[kv[0]] {
+			out += kv[0] + "=" + kv[1] + "\n"
+		}
+	}
+	return out, nil
 }
 
 // configureTarget hands the settings to the image's installer. Through a file
 // readable only by root, not an argument: the passphrase must not show up in
 // ps or in the log.
-func configureTarget() error {
-	settings, err := targetSettings()
+func configureTarget(allowed map[string]bool) error {
+	settings, err := targetSettings(allowed)
 	if err != nil {
 		return err
 	}
