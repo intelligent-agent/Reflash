@@ -120,6 +120,15 @@
           }}
         </div>
         <w-divider class="my6 mx-3"></w-divider>
+        <h4>Installed system</h4>
+        <!-- Change the system already on the eMMC without reinstalling it:
+             a forgotten password, the wrong Wi-Fi (#173). -->
+        <div>
+          <w-button xl outline class="ma2" @click="$emit('open-installed-settings')">
+            <span>Change its settings</span>
+          </w-button>
+        </div>
+        <w-divider class="my6 mx-3"></w-divider>
         <h4>Actions</h4>
         <!-- Both ask twice. They sit side by side and fired on a single click,
              and the two outcomes are not equally cheap: a stray Shut down on a

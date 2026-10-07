@@ -19,6 +19,7 @@
       @close="openOptions = false"
       @open-serial-number="openSerialNumber=true"
       @open-wifi="openWifi=true"
+      @open-installed-settings="openInstalledSettings=true"
     />
     <w-card class="mxa pa3 card secondary">
       <w-flex wrap class="text-center">
@@ -228,6 +229,10 @@
           ref="TheWifiSetup"
           @close="openWifi = false; this.checkInternet(); this.getStatus()"
         />
+        <TheInstalledSettings
+          :open="openInstalledSettings"
+          @close="openInstalledSettings = false"
+        />
       </w-flex>
     </w-card>
   </w-app>
@@ -243,6 +248,7 @@ import IntegrityChecker from "./components/IntegrityChecker";
 import TheUsbChecker from "./components/TheUsbChecker";
 import TheConfigUpdater from "./components/TheConfigUpdater";
 import TheWifiSetup from "./components/TheWifiSetup";
+import TheInstalledSettings from "./components/TheInstalledSettings";
 import WaveUI from "wave-ui";
 import { mapGetters, mapActions } from "vuex";
 import axios from "axios";
@@ -260,6 +266,7 @@ export default {
     TheUsbChecker,
     TheConfigUpdater,
     TheWifiSetup,
+    TheInstalledSettings,
   },
   setup() {
     const waveui = new WaveUI(this, {});
@@ -301,6 +308,7 @@ export default {
     showOverlay: false,
     openSerialNumber: false,
     openWifi: false,
+    openInstalledSettings: false,
     availableMethods: [
       { id: 0, label: "Rebuild", value: 0, image: "Cloud" },
       { id: 2, label: "File upload", value: 2, image: "File" },

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -250,5 +251,74 @@ func TestLoginPasswordForAnImageThatCannotTakeIt(t *testing.T) {
 				t.Errorf("sent the password to an image that does not take it: %q", s)
 			}
 		})
+	}
+}
+
+// #173: read the installed system's settings through its installer, never a
+// secret among them, and change only the ones the user changed.
+func TestInstalledSettingsRead(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nsettings=SSH_ENABLED,WIFI_SSID,WIFI_PSK,LOGIN_PASSWORD\nactions=settings\n'`)
+	fakeBin(t, dir, "target-install", `[ "$1" = settings ] && printf 'SETTINGS=1\nSSH_ENABLED=true\nWIFI_SSID=home\nSCREEN_ROTATION=90\n'`)
+
+	w := httptest.NewRecorder()
+	installedSettings(w, httptest.NewRequest("GET", "/api/installed_settings", nil))
+
+	var got InstalledSettings
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Supported || strings.Join(got.Keys, ",") != "LOGIN_PASSWORD,SSH_ENABLED,WIFI_PSK,WIFI_SSID" {
+		t.Errorf("got %+v", got)
+	}
+	// SCREEN_ROTATION is not in this image's settings=, so it is not offered.
+	if len(got.Current) != 2 || got.Current["WIFI_SSID"] != "home" || got.Current["SSH_ENABLED"] != "true" {
+		t.Errorf("current = %v", got.Current)
+	}
+}
+
+func TestInstalledSettingsChangeOnlyWhatIsGiven(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	seen := filepath.Join(dir, "seen")
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nsettings=SSH_ENABLED,LOGIN_PASSWORD\n'`)
+	fakeBin(t, dir, "target-install", `cat "$2" > `+seen)
+
+	w := httptest.NewRecorder()
+	installedSettings(w, httptest.NewRequest("POST", "/api/installed_settings",
+		strings.NewReader(`{"LOGIN_PASSWORD":"correct horse"}`)))
+	if b := w.Body.String(); !strings.Contains(b, `"OK"`) {
+		t.Fatalf("answered %s", b)
+	}
+	if s, _ := os.ReadFile(seen); string(s) != "SETTINGS=1\nLOGIN_PASSWORD=correct horse\n" {
+		t.Errorf("sent %q", s)
+	}
+
+	w = httptest.NewRecorder()
+	installedSettings(w, httptest.NewRequest("POST", "/api/installed_settings",
+		strings.NewReader(`{"WIFI_SSID":"home"}`)))
+	if b := w.Body.String(); !strings.Contains(b, "cannot change WIFI_SSID") {
+		t.Errorf("a key the image does not list answered %s", b)
+	}
+}
+
+func TestInstalledSettingsTooOldOrBusy(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "target-manifest", `exit 0`)
+	state = &State{State: IDLE}
+	w := httptest.NewRecorder()
+	installedSettings(w, httptest.NewRequest("GET", "/api/installed_settings", nil))
+	var got InstalledSettings
+	json.NewDecoder(w.Body).Decode(&got)
+	if got.Supported || !strings.Contains(got.Reason, "too old") {
+		t.Errorf("an image without a manifest answered %+v", got)
+	}
+
+	state = &State{State: INSTALLING}
+	w = httptest.NewRecorder()
+	installedSettings(w, httptest.NewRequest("GET", "/api/installed_settings", nil))
+	if w.Code != http.StatusConflict {
+		t.Errorf("while installing: %d %s", w.Code, w.Body.String())
 	}
 }

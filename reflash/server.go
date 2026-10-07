@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -464,6 +465,7 @@ func ServerInit() {
 	http.HandleFunc("/api/check_file_integrity", checkFileIntegrity)
 	http.HandleFunc("/api/delete_image", deleteImage)
 	http.HandleFunc("/api/run_install_finished_commands", runInstallFinishedCommands)
+	http.HandleFunc("/api/installed_settings", installedSettings)
 	http.HandleFunc("/api/clear_log", clearLog)
 	http.HandleFunc("/api/rotate_screen", rotateScreen)
 	http.HandleFunc("/api/update_config", updateConfig)
@@ -2261,6 +2263,121 @@ func preparationFailure(stdout, fallback string) string {
 		return fallback
 	}
 	return reason
+}
+
+// InstalledSettings is what the system on the eMMC lets Reflash change, and its
+// current values - read with the image's own installer, so Reflash does not
+// need to know where it keeps them (#173). Never a secret among the values.
+type InstalledSettings struct {
+	Supported bool              `json:"supported"`
+	Reason    string            `json:"reason,omitempty"`
+	Keys      []string          `json:"keys"`
+	Current   map[string]string `json:"current"`
+}
+
+// Serialises reading and changing the installed system's settings: both mount
+// its root, and two at once would trip over each other's mounts.
+var installedSettingsLock sync.Mutex
+
+func eMMCBusy() string {
+	state.Lock()
+	defer state.Unlock()
+	switch state.State {
+	case IDLE, FINISHED, ERROR, CANCELLED:
+		return ""
+	}
+	return string(state.State)
+}
+
+// installedSettings: GET reads them, POST changes the ones it is given - only
+// those, so changing a forgotten password from a Reflash booted to repair it
+// leaves the Wi-Fi and the rotation alone.
+func installedSettings(w http.ResponseWriter, r *http.Request) {
+	if busy := eMMCBusy(); busy != "" {
+		http.Error(w, "busy: "+busy, http.StatusConflict)
+		return
+	}
+	installedSettingsLock.Lock()
+	defer installedSettingsLock.Unlock()
+
+	manifest, _, err := runCommand2("target-manifest")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(InstalledSettings{Reason: "the installed system's manifest could not be read"})
+		return
+	}
+	if strings.TrimSpace(manifest) == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(InstalledSettings{Reason: "the installed system is too old to have its settings changed from Reflash: reinstall it"})
+		return
+	}
+	allowed := manifestSettings(manifest)
+
+	if r.Method == http.MethodPost {
+		var changes map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&changes); err != nil {
+			http.Error(w, "bad settings: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		sendResponse(w, applyInstalledSettings(allowed, changes))
+		return
+	}
+
+	out := InstalledSettings{Supported: true, Current: map[string]string{}}
+	for k := range allowed {
+		out.Keys = append(out.Keys, k)
+	}
+	sort.Strings(out.Keys)
+	// An image without the settings action can still be changed, only not
+	// shown first: exit 3 is "not supported", and the form starts empty.
+	if current, _, err := runCommand2("target-install", "settings"); err == nil {
+		for _, line := range strings.Split(current, "\n") {
+			if k, v, ok := strings.Cut(line, "="); ok && k != "SETTINGS" && allowed[k] {
+				out.Current[k] = v
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func applyInstalledSettings(allowed map[string]bool, changes map[string]string) error {
+	if len(changes) == 0 {
+		return fmt.Errorf("nothing to change")
+	}
+	keys := make([]string, 0, len(changes))
+	for k, v := range changes {
+		if !allowed[k] {
+			return fmt.Errorf("the installed system cannot change %s", k)
+		}
+		if strings.ContainsAny(v, "\r\n") {
+			return fmt.Errorf("%s contains a line break", k)
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	settings := "SETTINGS=1\n"
+	for _, k := range keys {
+		settings += k + "=" + changes[k] + "\n"
+	}
+	f, err := os.CreateTemp("", "reflash-settings-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(settings); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	out, _, err := runCommand2Timeout(5*time.Minute, "target-install", "configure", f.Name())
+	if err != nil {
+		return fmt.Errorf("%s", preparationFailure(out, err.Error()))
+	}
+	logInfo("Changed the installed system's settings: " + strings.Join(keys, ", "))
+	return nil
 }
 
 // shellQuote makes v a single shell word. /etc/rebuild-settings is sourced by
