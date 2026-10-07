@@ -72,8 +72,10 @@ sync
 # of flash-cleanup, so it raced partprobe against udev and ran e2fsck before
 # /dev/mmcblk2p1 had reappeared (#145).  flash-cleanup waits for both nodes,
 # handles e2fsck's non-fatal repair statuses, and performs the common UUID,
-# filesystem-resize, host-key and device-tree setup.
+# filesystem-resize, host-key and device-tree setup. target-install runs it
+# for an image without a manifest, and the image's own installer otherwise
+# (#179).
 info "Running post-flash cleanup"
-flash-cleanup "$REVISION"
+target-install prepare "$REVISION"
 
 info "Magic script done!"

@@ -1,0 +1,69 @@
+#!/bin/bash
+# Print the target manifest of the image on the eMMC, checked against interface
+# v1 (docs/target-interface.md), one key=value per line in a fixed order.
+#
+# Prints nothing and succeeds when the image has no manifest: that is a
+# Rebuild v1.0/v1.1 image, prepared the old way. Fails, saying why, when the
+# manifest is there but this Reflash cannot honour it - an image asking for an
+# interface this Reflash does not know must be refused before anything is
+# changed, not prepared half the old way.
+#
+# The file is parsed here, never sourced: it comes from whatever image was
+# just written.
+set -euo pipefail
+
+EMMC="${REFLASH_EMMC:-/dev/mmcblk2}"
+MNT="${REFLASH_MANIFEST_MNT:-/mnt/target-manifest}"
+
+fail() {
+    echo "target manifest: $1" >&2
+    exit 1
+}
+
+mkdir -p "$MNT"
+mount -o ro "${EMMC}p1" "$MNT" || fail "cannot mount ${EMMC}p1 to look for a manifest"
+trap 'umount "$MNT" 2>/dev/null || true' EXIT
+
+file=""
+for f in reflash/manifest boot/reflash/manifest; do
+    if [ -f "$MNT/$f" ]; then
+        file="$MNT/$f"
+        break
+    fi
+done
+[ -n "$file" ] || exit 0
+
+declare -A m=()
+while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    case $line in
+        '' | '#'*) continue ;;
+        *=*) ;;
+        *) fail "not a key=value line: $line" ;;
+    esac
+    key=${line%%=*}
+    val=${line#*=}
+    case $key in
+        interface | root | boot | prepare | installer | log) m[$key]=$val ;;
+        *) echo "target manifest: ignoring unknown key '$key'" >&2 ;;
+    esac
+done < "$file"
+
+[ "${m[interface]:-}" = 1 ] || fail "interface '${m[interface]:-}' is not supported by this Reflash (it knows 1)"
+[[ ${m[root]:-} =~ ^[1-9]$ ]] || fail "root '${m[root]:-}' is not a partition number"
+[[ ${m[boot]:-1} =~ ^[1-9]$ ]] || fail "boot '${m[boot]}' is not a partition number"
+[ "${m[boot]:-}" != "${m[root]}" ] || fail "boot and root are the same partition"
+case ${m[prepare]:-} in
+    ext4-grow-root | none) ;;
+    *) fail "prepare '${m[prepare]:-}' is not a procedure this Reflash knows" ;;
+esac
+# A path the chroot resolves inside the image; the character set keeps it from
+# being anything but a path, and no .. keeps it inside.
+path_ok() { [[ $1 =~ ^/[A-Za-z0-9._/-]+$ ]] && [[ $1 != *..* ]]; }
+path_ok "${m[installer]:-}" || fail "installer '${m[installer]:-}' is not an absolute path"
+[ -z "${m[log]:-}" ] || path_ok "${m[log]}" || fail "log '${m[log]}' is not an absolute path"
+
+for key in interface root boot prepare installer log; do
+    [ -n "${m[$key]:-}" ] && printf '%s=%s\n' "$key" "${m[$key]}"
+done
+exit 0

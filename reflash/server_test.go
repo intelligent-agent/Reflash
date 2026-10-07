@@ -1184,7 +1184,7 @@ func TestBandwidthIsNotLoggedWhenNothingIsTransferring(t *testing.T) {
 func TestUploadMagicFinishArmsReboot(t *testing.T) {
 	dir := setupTest(t)
 	fakeBin(t, dir, "get-recore-revision", `echo a8`)
-	fakeBin(t, dir, "flash-cleanup", `exit 0`)
+	fakeBin(t, dir, "target-install", `exit 0`)
 
 	f, err := os.Create(filepath.Join(dir, "pipe"))
 	if err != nil {
@@ -1208,7 +1208,7 @@ func TestUploadMagicFinishArmsReboot(t *testing.T) {
 func TestUploadMagicFinishDoesNotArmOnError(t *testing.T) {
 	dir := setupTest(t)
 	fakeBin(t, dir, "get-recore-revision", `echo a8`)
-	fakeBin(t, dir, "flash-cleanup", `echo "resizepart failed"; exit 1`)
+	fakeBin(t, dir, "target-install", `echo "resizepart failed"; exit 1`)
 
 	f, err := os.Create(filepath.Join(dir, "pipe"))
 	if err != nil {
@@ -1235,7 +1235,7 @@ func TestUploadMagicRoundTrip(t *testing.T) {
 	dir := setupTest(t)
 	fakeBin(t, dir, "flash-mkfifo", `exit 0`)
 	fakeBin(t, dir, "get-recore-revision", `echo a8`)
-	fakeBin(t, dir, "flash-cleanup", `exit 0`)
+	fakeBin(t, dir, "target-install", `exit 0`)
 	state = &State{State: IDLE}
 	disarmReboot()
 
@@ -1685,7 +1685,7 @@ func TestOptionsResponsesDoNotCarryThePassphrase(t *testing.T) {
 func TestUploadMagicFinishClearsFileHandle(t *testing.T) {
 	dir := setupTest(t)
 	fakeBin(t, dir, "get-recore-revision", `echo a8`)
-	fakeBin(t, dir, "flash-cleanup", `exit 0`)
+	fakeBin(t, dir, "target-install", `exit 0`)
 
 	f, err := os.Create(filepath.Join(dir, "pipe"))
 	if err != nil {
@@ -1707,7 +1707,7 @@ func TestUploadMagicFinishClearsFileHandle(t *testing.T) {
 func TestSecondMagicUploadOpensAFreshPipe(t *testing.T) {
 	dir := setupTest(t)
 	fakeBin(t, dir, "get-recore-revision", `echo a8`)
-	fakeBin(t, dir, "flash-cleanup", `exit 0`)
+	fakeBin(t, dir, "target-install", `exit 0`)
 
 	// First upload: finish it the way the client does.
 	first := newFifo(t, magic_pipe)
