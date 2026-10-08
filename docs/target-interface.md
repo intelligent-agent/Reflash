@@ -168,13 +168,17 @@ For these actions stdout carries data, and only stderr goes to Reflash's log.
   are never printed. Changes nothing.
 - **`backup`**: write the user's own files - configuration, and whatever else
   the image judges worth keeping across a reinstall - to stdout as a
-  gzip-compressed tar archive. Reflash stores it as it is and does not look
-  inside. Changes nothing.
+  gzip-compressed tar archive. Reflash stores it as it is; the only look
+  inside is at an uploaded file's first tar header, to tell a backup from an
+  image. Changes nothing.
 - **`restore`**: read an archive made by `backup` on stdin and put its files
-  back. Reflash runs it after `prepare` and before `configure`, on a freshly
-  written image, so the user's choices in Reflash win over restored ones. The
-  archive may come from an older version of the same system; the installer
-  decides what still applies, and says so on stderr.
+  back. Reflash runs it in two places: after `prepare` and before
+  `configure` on a freshly written image, so the user's choices in Reflash
+  win over restored ones; and on its own, into the system already on the
+  board, when the user installs a backup without an image. The archive may
+  come from an older version of the same system, or hold none of this
+  system's files; the installer decides what still applies, and says so on
+  stderr.
 
 ### Output and exit status
 
