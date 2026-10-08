@@ -327,6 +327,7 @@ func TestInstalledSettingsTooOldOrBusy(t *testing.T) {
 // listed, and downloadable only by a name that cannot leave the folder.
 func TestFileBackupsMakeListDownload(t *testing.T) {
 	dir := setupTest(t)
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=backup,restore\n'`)
 	state = &State{State: IDLE}
 	fakeBin(t, dir, "get-emmc-version", `echo "rebuild-fluidd-v1.2.0"`)
 	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
@@ -362,6 +363,7 @@ func TestFileBackupsMakeListDownload(t *testing.T) {
 
 func TestFileBackupNotSupported(t *testing.T) {
 	dir := setupTest(t)
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=backup,restore\n'`)
 	state = &State{State: IDLE}
 	fakeBin(t, dir, "get-emmc-version", `echo rebuild`)
 	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)

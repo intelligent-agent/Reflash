@@ -1,7 +1,10 @@
 <template>
   <div v-if="open">
-    <w-drawer absolute width="30%" @close="this.$emit('close')">
-      <w-flex class="pa5 secondary" column>
+    <!-- Fixed to the window, not absolute: the panel outgrew the page, and an
+         absolute drawer as tall as the page cut off what was below its edge
+         with no way to reach it (#186). Its contents scroll instead. -->
+    <w-drawer width="30%" @close="this.$emit('close')">
+      <w-flex class="pa5 secondary options-panel" column>
         <h3>Options</h3>
         <w-switch
           @change="onChange('darkmode', options.darkmode)"
@@ -69,55 +72,13 @@
         </div>
         <w-divider class="my6 mx-3"></w-divider>
         <h4>Login password</h4>
-        <!-- For the installed system, not for Reflash (#182). Sent to the
-             server and nowhere else: it is not kept in the page's store, and
-             the server holds it in memory only and never sends it back - this
-             panel learns just whether one is set. -->
-        <div class="caption ma2">
-          For the system you install. Without one it keeps its factory
-          password and asks for a new one at the first login.
-        </div>
-        <w-input
-          v-model="password"
-          type="password"
-          class="ma2"
-          label="New password"
-        ></w-input>
-        <w-input
-          v-model="passwordAgain"
-          type="password"
-          class="ma2"
-          label="Again"
-        ></w-input>
-        <div v-if="password && passwordAgain && password !== passwordAgain" class="error ma2">
-          The two passwords differ.
-        </div>
         <div>
-          <w-button
-            xl
-            outline
-            class="ma2"
-            :disabled="!password || password !== passwordAgain"
-            @click="setPassword(password)"
-          >
-            <span>Set password</span>
-          </w-button>
-          <w-button
-            v-if="options.loginPasswordSet"
-            xl
-            outline
-            class="ma2"
-            @click="setPassword('')"
-          >
-            <span>Clear</span>
+          <w-button xl outline class="ma2" @click="$emit('open-login-password')">
+            <span>Set login password</span>
           </w-button>
         </div>
         <div class="caption ma2">
-          {{
-            options.loginPasswordSet
-              ? "Set: the next system you install gets it."
-              : "Not set."
-          }}
+          {{ options.loginPasswordSet ? "Set for the next install." : "Not set." }}
         </div>
         <w-divider class="my6 mx-3"></w-divider>
         <h4>Installed system</h4>
@@ -126,10 +87,6 @@
         <div>
           <w-button xl outline class="ma2" @click="$emit('open-installed-settings')">
             <span>Change its settings</span>
-          </w-button>
-          <!-- Its configuration, to keep across a reinstall (#175). -->
-          <w-button xl outline class="ma2" @click="$emit('open-file-backups')">
-            <span>Backups of files</span>
           </w-button>
         </div>
         <w-divider class="my6 mx-3"></w-divider>
@@ -155,7 +112,6 @@
 </template>
 
 <script>
-import axios from "axios";
 import { mapGetters, mapActions } from "vuex";
 
 export default {
@@ -167,16 +123,6 @@ export default {
       data[name] = value;
       this.setOption(data);
       this.$emit("set-option", name, value);
-    },
-    // Straight to the server, not through setOption: that would keep the
-    // password in the page's store. The fields are emptied either way, and
-    // the options reread for the one thing this panel may know - whether a
-    // password is set.
-    async setPassword(value) {
-      this.password = "";
-      this.passwordAgain = "";
-      await axios.post(`/api/set_options`, { loginPassword: value });
-      await this.getOptions();
     },
     // First click arms the button, second one within a few seconds does it.
     // Arming one disarms the other, so a click meant for Reboot cannot confirm
@@ -209,8 +155,6 @@ export default {
   data: () => ({
     // "reboot", "shutdown", or null when neither is armed.
     pending: null,
-    password: "",
-    passwordAgain: "",
     pendingTimer: null,
     radioItems: [
       { label: "Normal", value: 0 },
@@ -221,3 +165,10 @@ export default {
   }),
 };
 </script>
+
+<style>
+.options-panel {
+  height: 100%;
+  overflow-y: auto;
+}
+</style>

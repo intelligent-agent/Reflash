@@ -218,12 +218,16 @@ run_installer() {
     # 2026-10-07 - the log has to say which step it was in, and the 15-minute
     # timeout kills this before any collected output would have been logged.
     # The last "ERROR: " line is kept in $out for the reason, since the loop
-    # runs in a subshell. With a data destination only stderr is logged.
+    # runs in a subshell, and the last line of any kind in $out.last: an
+    # installer that dies without an ERROR: line - a shell error, say - showed
+    # only "exit 1", the reason sitting unread in the log. With a data
+    # destination only stderr is logged.
     log_lines() {
         local line
         while IFS= read -r line || [ -n "$line" ]; do
             info "  installer: $line"
             case $line in "ERROR: "*) printf '%s\n' "${line#ERROR: }" > "$out" ;; esac
+            [ -z "${line//[[:space:]]/}" ] || printf '%s\n' "$line" > "$out.last"
         done
     }
     set +e
@@ -235,7 +239,8 @@ run_installer() {
     rc=${PIPESTATUS[0]}
     set -e
     reason=$(cat "$out")
-    rm -f "$out"
+    [ -n "$reason" ] || reason=$(cat "$out.last" 2>/dev/null || true)
+    rm -f "$out" "$out.last"
     sync
     unmount_all
     [ "$rc" != 3 ] || [ "$ACTION" = prepare ] || [ "$ACTION" = configure ] || unsupported "the installer says so"

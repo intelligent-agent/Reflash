@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/tar"
 	"bufio"
+	"compress/gzip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -477,6 +479,8 @@ func ServerInit() {
 	http.HandleFunc("/api/installed_settings", installedSettings)
 	http.HandleFunc("/api/file_backups", fileBackups)
 	http.HandleFunc("/api/file_backups/download", downloadFileBackup)
+	http.HandleFunc("/api/file_backups/restore", restoreIntoInstalled)
+	http.HandleFunc("/api/images/download", downloadImage)
 	http.HandleFunc("/api/clear_log", clearLog)
 	http.HandleFunc("/api/rotate_screen", rotateScreen)
 	http.HandleFunc("/api/update_config", updateConfig)
@@ -507,6 +511,7 @@ func getInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func getStatus(w http.ResponseWriter, r *http.Request) {
+	ensureUsbMounted()
 	var get_status *GetStatus = &GetStatus{
 		LocalImages:    getLocalImages(),
 		BytesAvailable: getFreeSpace(),
@@ -1530,6 +1535,25 @@ func uploadMagicFinish(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// A config backup is a gzip'd tar (target-installer backup); an image is xz.
+// Judged by content as well as name, so a renamed file goes where it belongs.
+func isConfigArchive(path, name string) bool {
+	if !strings.HasSuffix(name, ".tar.gz") {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return false
+	}
+	_, err = tar.NewReader(gz).Next()
+	return err == nil
+}
+
 func uploadFinish(w http.ResponseWriter, r *http.Request) {
 	markUploadDone()
 	uploadMutex.Lock()
@@ -1553,7 +1577,14 @@ func uploadFinish(w http.ResponseWriter, r *http.Request) {
 	// Everything is written and flushed, so the upload earns the real name. Any
 	// image already on the drive under that name survived until this point
 	// (#159).
-	if err := os.Rename(partialPath(state.Filename), images_folder+"/"+state.Filename); err != nil {
+	// #184: a config archive goes with the other backups, not the images.
+	dest := images_folder
+	if isConfigArchive(partialPath(state.Filename), state.Filename) {
+		os.MkdirAll(backups_folder, 0o755)
+		dest = backups_folder
+		logInfo(state.Filename + " is a config archive - saved with the backups")
+	}
+	if err := os.Rename(partialPath(state.Filename), dest+"/"+state.Filename); err != nil {
 		logError("Could not put " + state.Filename + " in place: " + err.Error())
 		state.Error = "The image was uploaded but could not be saved to the USB drive."
 		mountUsb(MODE_RO)
@@ -2415,14 +2446,19 @@ type FileBackup struct {
 // keeping (#175). The whole-eMMC image backup is a separate thing.
 func fileBackups(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		ensureUsbMounted()
 		entries, _ := filepath.Glob(backups_folder + "/*.tar.gz")
 		list := []FileBackup{}
+		when := map[string]time.Time{}
 		for _, e := range entries {
 			if fi, err := os.Stat(e); err == nil {
 				list = append(list, FileBackup{Name: filepath.Base(e), Size: fi.Size()})
+				when[filepath.Base(e)] = fi.ModTime()
 			}
 		}
-		sort.Slice(list, func(i, j int) bool { return list[i].Name > list[j].Name })
+		// Newest first by when it reached the drive: names are free text now
+		// (#184), so sorting them says nothing about age.
+		sort.Slice(list, func(i, j int) bool { return when[list[i].Name].After(when[list[j].Name]) })
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(list)
 		return
@@ -2434,12 +2470,25 @@ func fileBackups(w http.ResponseWriter, r *http.Request) {
 	installedSettingsLock.Lock()
 	defer installedSettingsLock.Unlock()
 
+	if err := installedSupports("backup", "backing up its config files"); err != nil {
+		sendResponse(w, err)
+		return
+	}
 	// Named after the system it came from, so a list of them says what each is.
 	from := regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(strings.TrimSpace(runCommandReturnString("get-emmc-version")), "-")
 	if from == "" {
 		from = "installed-system"
 	}
 	name := from + "-files-" + time.Now().Format("20060102-150405") + ".tar.gz"
+	// #184: the name the user kept or typed, when one is given.
+	var req struct {
+		Name string `json:"name"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) == nil {
+		if n := regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(strings.TrimSpace(req.Name), "-"); strings.Trim(n, ".-") != "" {
+			name = strings.TrimSuffix(n, ".tar.gz") + ".tar.gz"
+		}
+	}
 	if err := mountUsb(MODE_RW); err != nil {
 		sendResponse(w, fmt.Errorf("the USB drive could not be written to: %w", err))
 		return
@@ -2469,14 +2518,81 @@ func downloadFileBackup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such backup", http.StatusNotFound)
 		return
 	}
+	ensureUsbMounted()
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 	http.ServeFile(w, r, backups_folder+"/"+name)
+}
+
+var imageName = regexp.MustCompile(`^[A-Za-z0-9._-]+\.img\.xz$`)
+
+// An image on the USB drive, to this computer (#184): Local storage, Download.
+func downloadImage(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if !imageName.MatchString(name) {
+		http.Error(w, "no such image", http.StatusNotFound)
+		return
+	}
+	ensureUsbMounted()
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	http.ServeFile(w, r, images_folder+"/"+name)
+}
+
+// Whether the system on the eMMC can do one of the optional actions, asked of
+// its manifest before anything runs (#184). An image older than the target
+// interface has no manifest at all; a newer one lists what it supports.
+func installedSupports(action, doing string) error {
+	manifest, _, err := runCommand2("target-manifest")
+	if err != nil {
+		return fmt.Errorf("the installed system's manifest could not be read, so %s is not possible", doing)
+	}
+	system := strings.TrimSpace(runCommandReturnString("get-emmc-version"))
+	if system == "" {
+		system = "the installed system"
+	}
+	if strings.TrimSpace(manifest) == "" {
+		return fmt.Errorf("not supported: %s is too old for %s from Reflash", system, doing)
+	}
+	for _, line := range strings.Split(manifest, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "actions="); ok {
+			for _, a := range strings.Split(v, ",") {
+				if a == action {
+					return nil
+				}
+			}
+		}
+	}
+	return fmt.Errorf("not supported: %s does not support %s from Reflash", system, doing)
+}
+
+// #184: a config put back into the system already on the eMMC, without
+// installing an image first.
+func restoreIntoInstalled(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if busy := eMMCBusy(); busy != "" {
+		http.Error(w, "busy: "+busy, http.StatusConflict)
+		return
+	}
+	installedSettingsLock.Lock()
+	defer installedSettingsLock.Unlock()
+	if err := installedSupports("restore", "installing a config"); err != nil {
+		sendResponse(w, err)
+		return
+	}
+	sendResponse(w, restoreFileBackup(req.Name))
 }
 
 func restoreFileBackup(name string) error {
 	if !backupName.MatchString(name) {
 		return fmt.Errorf("no such backup: %s", name)
 	}
+	ensureUsbMounted()
 	path := backups_folder + "/" + name
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("the backup %s is not on the USB drive", name)
@@ -2909,6 +3025,21 @@ func killWorkerXz() bool {
 func mountUsb(mode string) error {
 	_, _, err := runCommand2("mount-unmount-usb", "mounted", mode)
 	return err
+}
+
+// ensureUsbMounted puts the drive back, read-only, when nothing is using it and
+// it is not mounted. The end of an install unmounts it - the board may be about
+// to reboot - and with the board staying in Reflash the image list, the config
+// backups and a config restore all found an empty folder (#184).
+func ensureUsbMounted() {
+	if getStorage() != STORAGE_READY || eMMCBusy() != "" {
+		return
+	}
+	mounts, err := os.ReadFile("/proc/self/mounts")
+	if err != nil || strings.Contains(string(mounts), " "+filepath.Dir(images_folder)+" ") {
+		return
+	}
+	mountUsb(MODE_RO)
 }
 
 func unmountUsb() error {

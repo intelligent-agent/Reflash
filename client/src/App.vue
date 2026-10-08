@@ -19,8 +19,8 @@
       @close="openOptions = false"
       @open-serial-number="openSerialNumber=true"
       @open-wifi="openWifi=true"
+      @open-login-password="openLoginPassword=true"
       @open-installed-settings="openInstalledSettings=true"
-      @open-file-backups="openFileBackups=true"
     />
     <w-card class="mxa pa3 card secondary">
       <w-flex wrap class="text-center">
@@ -63,8 +63,17 @@
           >
           </w-select>
         </div>
+        <!-- With local storage, files go either way (#184): Upload from this
+             computer to the USB drive, Download back to it. -->
         <div class="xs1 pa1 align-self-center">
-          {{ selectedMethod.id == 2 ? "Upload" : "Download" }}
+          <w-select
+            v-if="selectedMethod.id == 2"
+            v-model="transferDirection"
+            :items="directions"
+            no-unselect
+          >
+          </w-select>
+          <span v-else>Download</span>
         </div>
         <div class="xs1 pa1 align-self-center">
           {{ this.options.magicmode ? "Magic" : "USB drive" }}
@@ -72,13 +81,24 @@
         <div class="xs1 pa1 align-self-center">
           <FlashSelector ref="flashSelector" />
         </div>
-        <div class="xs1 pa1 align-self-center">eMMC</div>
+        <!-- When backing up, the whole eMMC or the installed system's config
+             files (#184). -->
+        <div class="xs1 pa1 align-self-center">
+          <w-select
+            v-if="flash.selectedMethod == 1"
+            v-model="backupTarget"
+            :items="backupTargets"
+            no-unselect
+          >
+          </w-select>
+          <span v-else>eMMC</span>
+        </div>
 
         <div class="xs1 pa1 align-self-center">
           <img style="width: 60%" :src="computeSVG(selectedMethod.image)" />
         </div>
         <div class="xs1 pa1 align-self-center">
-          <img style="width: 60%" :src="computeSVG('Arrow-right')" />
+          <img style="width: 60%" :src="computeSVG(isDownloadToComputer() ? 'Arrow-left' : 'Arrow-right')" />
         </div>
         <div class="xs1 pa1 align-self-center">
           <img
@@ -93,11 +113,13 @@
           />
         </div>
         <div class="xs1 pa1 align-self-center">
-          <img style="width: 60%" :src="computeSVG('eMMC')" />
+          <img style="width: 60%" :src="computeSVG(isConfigBackup() ? 'Document' : 'eMMC')" />
         </div>
 
         <div class="xs1 pa1 therow">
-          Choose image to {{ selectedMethod.id == 2 ? "Upload" : "Download" }}
+          <span v-if="!isDownloadToComputer()">
+            Choose image to {{ selectedMethod.id == 2 ? "Upload" : "Download" }}
+          </span>
         </div>
         <div class="xs1 pa1">
           <ProgressBar
@@ -137,7 +159,7 @@
           >
           </w-select>
           <w-input
-            v-if="selectedMethod.id == 2"
+            v-if="selectedMethod.id == 2 && !isDownloadToComputer()"
             type="file"
             ref="inputFile"
             v-model="selectedUploadImage"
@@ -146,13 +168,26 @@
           >
             Select image file to upload
           </w-input>
+          <div v-if="selectedMethod.id == 2 && !isDownloadToComputer() && uploadKind" class="mt1">
+            {{ uploadKind }}
+          </div>
         </div>
         <div class="xs1 align-self-center justify-space-between">
+          <!-- What to take off the USB drive: its own choice, so it works
+               whether the right-hand side is set to Install or Backup. -->
+          <w-button
+            xl
+            outline
+            @click="downloadToComputer()"
+            v-if="isDownloadToComputer() && selectedDownload"
+          >
+            <span>Download</span>
+          </w-button>
           <w-button
             xl
             outline
             @click="onTransferButtonClick()"
-            v-if="this.isTransferButtonVisible()"
+            v-if="!isDownloadToComputer() && this.isTransferButtonVisible()"
           >
             <span>{{ this.computeTransferButtonText() }}</span>
           </w-button>
@@ -187,6 +222,27 @@
             ref="integritychecker"
             v-if="!options.magicmode"
             @integrity="imageIntegrity = $event" />
+          <!-- What Download takes to this computer: its own choice, so it
+               works whether the right-hand side is Install or Backup. -->
+          <div v-if="isDownloadToComputer()" style="width: 100%" class="mt2">
+            <w-select
+              v-model="selectedDownload"
+              :items="downloadChoices"
+              placeholder="Choose file to download"
+            >
+            </w-select>
+          </div>
+          <!-- The config that goes in after the image, or on its own into the
+               system already installed (#184). -->
+          <div v-if="flash.selectedMethod == 0 && !isDownloadToComputer()" style="width: 100%" class="mt2">
+            <w-select
+              v-if="configBackups.length"
+              v-model="selectedConfig"
+              :items="configChoices"
+            >
+            </w-select>
+            <span v-else>Default config</span>
+          </div>
           <w-button
             text
             class="ml1"
@@ -203,10 +259,10 @@
             outline
             @click="onInstallButtonClick()"
             v-if="isInstallButtonVisibile()"
-            :disabled="isInstallButtonDisabled()"
+            :disabled="isInstallButtonDisabled() || configBackupBusy"
           >
             <span>
-              {{ this.installButtonText() }}
+              {{ configBackupBusy ? "Backing up..." : configRestoreBusy ? "Installing config..." : this.installButtonText() }}
             </span>
           </w-button>
         </div>
@@ -230,13 +286,13 @@
           ref="TheWifiSetup"
           @close="openWifi = false; this.checkInternet(); this.getStatus()"
         />
+        <TheLoginPassword
+          :open="openLoginPassword"
+          @close="openLoginPassword = false"
+        />
         <TheInstalledSettings
           :open="openInstalledSettings"
           @close="openInstalledSettings = false"
-        />
-        <TheFileBackups
-          :open="openFileBackups"
-          @close="openFileBackups = false"
         />
       </w-flex>
     </w-card>
@@ -253,8 +309,8 @@ import IntegrityChecker from "./components/IntegrityChecker";
 import TheUsbChecker from "./components/TheUsbChecker";
 import TheConfigUpdater from "./components/TheConfigUpdater";
 import TheWifiSetup from "./components/TheWifiSetup";
+import TheLoginPassword from "./components/TheLoginPassword";
 import TheInstalledSettings from "./components/TheInstalledSettings";
-import TheFileBackups from "./components/TheFileBackups";
 import WaveUI from "wave-ui";
 import { mapGetters, mapActions } from "vuex";
 import axios from "axios";
@@ -272,8 +328,8 @@ export default {
     TheUsbChecker,
     TheConfigUpdater,
     TheWifiSetup,
+    TheLoginPassword,
     TheInstalledSettings,
-    TheFileBackups,
   },
   setup() {
     const waveui = new WaveUI(this, {});
@@ -316,10 +372,10 @@ export default {
     openSerialNumber: false,
     openWifi: false,
     openInstalledSettings: false,
-    openFileBackups: false,
+    openLoginPassword: false,
     availableMethods: [
       { id: 0, label: "Rebuild", value: 0, image: "Cloud" },
-      { id: 2, label: "File upload", value: 2, image: "File" },
+      { id: 2, label: "Local storage", value: 2, image: "File" },
     ],
     // Optimistic default so the download options aren't shown then
     // immediately hidden while the check is in flight - see checkInternet().
@@ -328,6 +384,23 @@ export default {
     imageColor: "white",
     files: [],
     backupFile: "",
+    configBackups: [],
+    uploadKind: "",
+    transferDirection: "Upload",
+    selectedDownload: "",
+    directions: [
+      { label: "Upload", value: "Upload" },
+      { label: "Download", value: "Download" },
+    ],
+    backupTarget: "eMMC",
+    backupTargets: [
+      { label: "eMMC", value: "eMMC" },
+      { label: "Config files", value: "config" },
+    ],
+    suggestedBackupName: "",
+    configBackupBusy: false,
+    configRestoreBusy: false,
+    selectedConfig: "",
     reflash_version: "Unknown",
     emmc_version: "Unknown",
     recore_revision: "Unknown",
@@ -362,6 +435,18 @@ export default {
     // Rebuild downloads from GitHub via the board itself (flash-from-url) -
     // without internet that can't work, so hide it and leave only the
     // local-file paths (upload, magic, install) - #74.
+    // "Default config" first: installing a config is optional.
+    // Everything on the USB drive that can go to this computer.
+    downloadChoices() {
+      return this.configBackups
+        .map((b) => ({ label: b.name, value: b.name }))
+        .concat(this.localImages.map((name) => ({ label: name, value: name })));
+    },
+    configChoices() {
+      return [{ label: "Default config", value: "" }].concat(
+        this.configBackups.map((b) => ({ label: b.name, value: b.name }))
+      );
+    },
     filteredMethods() {
       if (this.hasInternet) {
         return this.availableMethods;
@@ -370,6 +455,7 @@ export default {
     },
   },
   methods: {
+    ...mapActions({ storeSetOption: "setOption" }),
     ...mapActions([
       "setProgress",
       "setBandwidth",
@@ -379,6 +465,86 @@ export default {
     ]),
     computeImage(name) {
       return require("./assets/" + name + "-" + this.imageColor + ".png");
+    },
+    isDownloadToComputer() {
+      return this.selectedMethod.id == 2 && this.transferDirection == "Download";
+    },
+    // What Download takes from the USB drive: the config archive chosen under
+    // the image, else the image.
+    downloadToComputer() {
+      const name = this.selectedDownload;
+      window.location = this.downloadUrl(name);
+    },
+    downloadUrl(name) {
+      const config = this.configBackups.some((b) => b.name == name);
+      return (config ? "/api/file_backups/download?name=" : "/api/images/download?name=") +
+        encodeURIComponent(name);
+    },
+    isConfigBackup() {
+      return this.flash.selectedMethod == 1 && this.backupTarget == "config";
+    },
+    // A name the user can keep or edit: board, what is on it, and when.
+    defaultBackupName() {
+      const pad = (n) => String(n).padStart(2, "0");
+      const d = new Date();
+      const when = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+      const variant = (this.emmc_version.match(/^rebuild-([a-z]+)-/) || [])[1];
+      const serial = /^\d+$/.test(this.serial_number) ? this.serial_number : "";
+      return ["recore", serial, variant, this.backupTarget == "config" ? "config" : "", when]
+        .filter(Boolean)
+        .join("-");
+    },
+    // Renamed with the target only while it is still the suggested name.
+    suggestBackupName() {
+      if (this.flash.selectedMethod != 1) return;
+      if (this.backupFile == "" || this.backupFile == this.suggestedBackupName) {
+        this.suggestedBackupName = this.defaultBackupName();
+        this.backupFile = this.suggestedBackupName;
+      }
+    },
+    // The image's installer packs the files (#175); Reflash puts the archive
+    // in backups/ on the USB drive, apart from the images.
+    // A config alone: its files go into the system already on the eMMC.
+    async restoreConfigOnly() {
+      this.configRestoreBusy = true;
+      try {
+        const res = await axios.post(`/api/file_backups/restore`, { name: this.selectedConfig });
+        if (res.data.status === "OK") {
+          this.$waveui.notify(`Installed ${this.selectedConfig} into ${this.emmc_version}`, "success", 6000);
+          this.selectedConfig = "";
+        } else {
+          this.$waveui.notify(res.data.error || "Installing the config failed", "error", 0);
+        }
+      } catch (err) {
+        this.$waveui.notify(err.response?.data || String(err), "error", 0);
+      }
+      this.configRestoreBusy = false;
+    },
+    async backupConfigFiles() {
+      this.configBackupBusy = true;
+      try {
+        const res = await axios.post(`/api/file_backups`, { name: this.backupFile });
+        if (res.data.status === "OK") {
+          this.$waveui.notify(`Saved ${res.data.name} on the USB drive`, "success", 6000);
+          // Ready to take to this computer.
+          this.selectedDownload = res.data.name;
+          this.backupFile = "";
+          this.suggestBackupName();
+        } else {
+          this.$waveui.notify(res.data.error || "The backup failed", "error", 0);
+        }
+      } catch (err) {
+        this.$waveui.notify(err.response?.data || String(err), "error", 0);
+      }
+      this.configBackupBusy = false;
+      this.listConfigBackups();
+    },
+    async listConfigBackups() {
+      try {
+        this.configBackups = (await axios.get(`/api/file_backups`)).data || [];
+      } catch (err) {
+        this.configBackups = [];
+      }
     },
     computeSVG(name) {
       return require("./assets/" + name + "-" + this.$waveui.theme + ".svg");
@@ -413,7 +579,8 @@ export default {
       if (this.flash.selectedMethod == 1) {
         return this.backupFile != "";
       } else {
-        return this.selectedLocalImage;
+        // An image, a config, or both (#184).
+        return this.selectedLocalImage || this.selectedConfig;
       }
     },
     // Installing an image that failed its integrity check writes a truncated
@@ -433,8 +600,10 @@ export default {
       // cancel_installation - or cancel_backup - at a transfer it had nothing
       // to do with (#156).
       if (this.state != "IDLE") return true;
-      // Backups write no image, so there is nothing to verify.
+      // Backups write no image, so there is nothing to verify; nor does
+      // putting a config into the installed system.
       if (this.flash.selectedMethod == 1) return false;
+      if (!this.selectedLocalImage && this.selectedConfig) return !!this.configRestoreBusy;
       // null covers both "still checking" and "the check did not answer".
       // Neither is a pass, and enabling on either is how a truncated image
       // gets flashed during the second the spinner is up.
@@ -509,6 +678,19 @@ export default {
     onFileInput(files) {
       this.files = files;
       this.file = files.file;
+      this.detectUploadKind(files.file);
+    },
+    // #184: tell an image from a config archive by its first bytes - xz for
+    // an image, gzip for a config backup - before anything is uploaded.
+    async detectUploadKind(file) {
+      this.uploadKind = "";
+      if (!file) return;
+      this.uploadKind = this.uploadKindOf(new Uint8Array(await file.slice(0, 6).arrayBuffer()));
+    },
+    uploadKindOf(b) {
+      const xz = [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00].every((v, i) => b[i] === v);
+      const gz = b[0] === 0x1f && b[1] === 0x8b;
+      return xz ? "Image" : gz ? "Config archive" : "Not an image or a config archive";
     },
     // Every start button below asks the board to begin something. Four of them
     // set the state optimistically first, so the button can turn into Cancel -
@@ -768,7 +950,13 @@ export default {
               if (offset < filesize) {
                 sendChunk();
               } else {
-                self.apiCall("upload_finish");
+                // Refreshed here, not only on the poll: a small upload - a
+                // config archive - is over before the poll ever sees it
+                // uploading, and the lists stayed stale.
+                self.apiCall("upload_finish").then(() => {
+                  self.getStatus();
+                  self.listConfigBackups();
+                });
               }
             } else {
               self.apiCall("upload_cancel");
@@ -910,7 +1098,10 @@ export default {
           } else if (this.previousState == "UPLOADING") {
             this.selectedUploadImage = [];
             await this.getStatus();
-            this.selectedLocalImage = data.filename;
+            // A config archive goes to the backups (#184), not the images.
+            if (this.localImages.includes(data.filename)) {
+              this.selectedLocalImage = data.filename;
+            }
           } else if (this.previousState == "MAGIC") {
             this.selectedRebuildImage = null;
             await this.onFlashFinished();
@@ -960,8 +1151,14 @@ export default {
       }
     },
     onInstallButtonClick() {
+      if (this.flash.selectedMethod == 1 && this.backupTarget == "config") {
+        if (!this.configBackupBusy && this.state == "IDLE") this.backupConfigFiles();
+        return;
+      }
       if (this.flash.selectedMethod == 0) {
-        if (this.state == "IDLE") {
+        if (this.state == "IDLE" && !this.selectedLocalImage && this.selectedConfig) {
+          this.restoreConfigOnly();
+        } else if (this.state == "IDLE") {
           this.installSelected();
         } else if (this.state == "INSTALLING") {
           this.apiCall("cancel_installation");
@@ -1144,10 +1341,30 @@ export default {
       this.confirmDelete = false;
       this.onSelectedFileChanged();
     },
+    // The config to restore after the image (#184): the server's
+    // restoreBackup, which it puts back after prepare and before configure.
+    selectedConfig(name) {
+      if ((this.options.restoreBackup || "") != name) {
+        this.storeSetOption({ restoreBackup: name });
+      }
+    },
+    "options.restoreBackup": {
+      immediate: true,
+      handler(name) {
+        this.selectedConfig = name || "";
+      },
+    },
+    "flash.selectedMethod"() {
+      this.suggestBackupName();
+    },
+    backupTarget() {
+      this.suggestBackupName();
+    },
   },
   created() {
     this.selectedMethod = this.availableMethods.find((m) => m.id == 0);
     this.getGithubImages();
+    this.listConfigBackups();
     this.getInfo();
     this.getStatus();
     this.checkInternet();

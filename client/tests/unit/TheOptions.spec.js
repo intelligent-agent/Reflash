@@ -134,34 +134,18 @@ function mountWithText(options = {}) {
   })
 }
 
-describe('TheOptions login password (#182)', () => {
-  // Never through setOption: that keeps what it posts in the page's store.
-  it('posts the password straight to the server, empties the fields and rereads', async () => {
-    axios.post.mockClear()
-    const { wrapper, dispatch } = mountOptions()
-    wrapper.vm.password = 'correct horse'
-    wrapper.vm.passwordAgain = 'correct horse'
-    await wrapper.vm.setPassword(wrapper.vm.password)
-
-    expect(axios.post).toHaveBeenCalledWith('/api/set_options', { loginPassword: 'correct horse' })
-    expect(wrapper.vm.password).toBe('')
-    expect(wrapper.vm.passwordAgain).toBe('')
-    expect(optionPayloads(dispatch)).toEqual([])
-    expect(dispatch).toHaveBeenCalledWith('getOptions')
+// The password itself is set in its own window (TheLoginPassword, #186); the
+// panel opens it and says whether one is set.
+describe('TheOptions login password (#182, #186)', () => {
+  it('opens the password window', async () => {
+    const wrapper = mountWithText()
+    const button = wrapper.findAll('w-button-stub').find((b) => b.text().includes('Set login password'))
+    await button.trigger('click')
+    expect(wrapper.emitted('open-login-password')).toBeTruthy()
   })
 
   it('says whether one is set, and never shows it', () => {
-    const set = mountWithText({ loginPasswordSet: true })
-    expect(set.text()).toContain('Set: the next system you install gets it.')
-    const unset = mountWithText({ loginPasswordSet: false })
-    expect(unset.text()).toContain('Not set.')
-  })
-
-  it('says so when the two fields differ', async () => {
-    const wrapper = mountWithText()
-    wrapper.vm.password = 'correct horse'
-    wrapper.vm.passwordAgain = 'correct hose'
-    await wrapper.vm.$nextTick()
-    expect(wrapper.text()).toContain('The two passwords differ.')
+    expect(mountWithText({ loginPasswordSet: true }).text()).toContain('Set for the next install.')
+    expect(mountWithText({ loginPasswordSet: false }).text()).toContain('Not set.')
   })
 })
