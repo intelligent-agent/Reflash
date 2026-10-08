@@ -160,6 +160,30 @@ if test -n "${dram_uv}"; then
 	fi
 fi
 
+# The STM32's serial line is not where it is on the later revisions either. On
+# A7/A8/B0 it is UART2 (PB0/PB1), which this DTB enables as serial2, so
+# flash-stm32's /dev/ttyS2 reaches it (#181). On A5/A6 it is UART4 (PD2/PD3):
+# their own DTBs leave UART2 disabled and enable UART4, which comes up as ttyS2
+# there. Here ttyS2 was UART2, where nothing listens, and the install-time flash
+# failed with "Failed to init device" (Rebuild #130). So for A5/A6, swap them:
+# UART4 on, UART2 off, and serial2 pointing at UART4 - ttyS2 is the STM32's line
+# on every revision. Not in the DTB itself: PD2/PD3 belong to other functions on
+# the later boards.
+if test -n "${dram_uv}"; then
+	fdt get value uart4_pins /soc/pinctrl@1c20800/uart4-pins phandle
+	fdt set /soc/serial@1c29000 pinctrl-names "default"
+	fdt set /soc/serial@1c29000 pinctrl-0 <${uart4_pins}>
+	fdt set /soc/serial@1c29000 status "okay"
+	fdt set /soc/serial@1c28800 status "disabled"
+	fdt set /aliases serial2 "/soc/serial@1c29000"
+	fdt get value stm32_line /aliases serial2
+	if test "${stm32_line}" = "/soc/serial@1c29000"; then
+		echo "STM32 line on UART4 (ttyS2) for ${emmcmodel}"
+	else
+		echo "WARNING: could not move the STM32 line to UART4 for ${emmcmodel} (got ${stm32_line})"
+	fi
+fi
+
 if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/allwinner/overlay/${overlay_prefix}-fixup.scr; then
 	echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
 	source ${load_addr}
