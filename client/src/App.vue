@@ -19,6 +19,8 @@
       @close="openOptions = false"
       @open-serial-number="openSerialNumber=true"
       @open-wifi="openWifi=true"
+      @open-installed-settings="openInstalledSettings=true"
+      @open-file-backups="openFileBackups=true"
     />
     <w-card class="mxa pa3 card secondary">
       <w-flex wrap class="text-center">
@@ -228,6 +230,14 @@
           ref="TheWifiSetup"
           @close="openWifi = false; this.checkInternet(); this.getStatus()"
         />
+        <TheInstalledSettings
+          :open="openInstalledSettings"
+          @close="openInstalledSettings = false"
+        />
+        <TheFileBackups
+          :open="openFileBackups"
+          @close="openFileBackups = false"
+        />
       </w-flex>
     </w-card>
   </w-app>
@@ -243,6 +253,8 @@ import IntegrityChecker from "./components/IntegrityChecker";
 import TheUsbChecker from "./components/TheUsbChecker";
 import TheConfigUpdater from "./components/TheConfigUpdater";
 import TheWifiSetup from "./components/TheWifiSetup";
+import TheInstalledSettings from "./components/TheInstalledSettings";
+import TheFileBackups from "./components/TheFileBackups";
 import WaveUI from "wave-ui";
 import { mapGetters, mapActions } from "vuex";
 import axios from "axios";
@@ -260,6 +272,8 @@ export default {
     TheUsbChecker,
     TheConfigUpdater,
     TheWifiSetup,
+    TheInstalledSettings,
+    TheFileBackups,
   },
   setup() {
     const waveui = new WaveUI(this, {});
@@ -301,6 +315,8 @@ export default {
     showOverlay: false,
     openSerialNumber: false,
     openWifi: false,
+    openInstalledSettings: false,
+    openFileBackups: false,
     availableMethods: [
       { id: 0, label: "Rebuild", value: 0, image: "Cloud" },
       { id: 2, label: "File upload", value: 2, image: "File" },
@@ -467,7 +483,13 @@ export default {
     // image that was on the eMMC before, on the one screen meant to confirm the
     // flash worked (#161).
     async onFlashFinished() {
-      await axios.get(`/api/run_install_finished_commands`);
+      // The image's settings step can refuse - a password its rules reject,
+      // or an image that cannot take one (#182) - and that answer used to be
+      // dropped, leaving the user to find out at the first login.
+      const res = await axios.get(`/api/run_install_finished_commands`);
+      if (res?.data?.status == "ERROR") {
+        this.$waveui.notify(res.data.error, "error", 0);
+      }
       await this.getInfo();
       this.installFinished = true;
     },

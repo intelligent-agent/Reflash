@@ -44,7 +44,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     key=${line%%=*}
     val=${line#*=}
     case $key in
-        interface | root | boot | prepare | installer | log) m[$key]=$val ;;
+        interface | root | boot | prepare | installer | log | settings | actions) m[$key]=$val ;;
         *) echo "target manifest: ignoring unknown key '$key'" >&2 ;;
     esac
 done < "$file"
@@ -63,7 +63,25 @@ path_ok() { [[ $1 =~ ^/[A-Za-z0-9._/-]+$ ]] && [[ $1 != *..* ]]; }
 path_ok "${m[installer]:-}" || fail "installer '${m[installer]:-}' is not an absolute path"
 [ -z "${m[log]:-}" ] || path_ok "${m[log]}" || fail "log '${m[log]}' is not an absolute path"
 
-for key in interface root boot prepare installer log; do
+# Comma separated names; settings are KEYS, actions only ones this Reflash knows.
+# Both optional: a malformed one is dropped with a warning, not a refused image.
+if [ -n "${m[settings]:-}" ] && ! [[ ${m[settings]} =~ ^[A-Z][A-Z0-9_]*(,[A-Z][A-Z0-9_]*)*$ ]]; then
+    echo "target manifest: ignoring settings '${m[settings]}', not a comma separated list of KEYS" >&2
+    unset 'm[settings]'
+fi
+if [ -n "${m[actions]:-}" ]; then
+    IFS=, read -ra acts <<< "${m[actions]}"
+    known=()
+    for a in "${acts[@]}"; do
+        case $a in
+            settings | backup | restore) known+=("$a") ;;
+            *) echo "target manifest: ignoring unknown action '$a'" >&2 ;;
+        esac
+    done
+    m[actions]=$(IFS=,; echo "${known[*]}")
+fi
+
+for key in interface root boot prepare installer log settings actions; do
     [ -n "${m[$key]:-}" ] && printf '%s=%s\n' "$key" "${m[$key]}"
 done
 exit 0

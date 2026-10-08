@@ -31,7 +31,9 @@ root=2
 boot=1
 prepare=ext4-grow-root
 installer=/usr/lib/reflash/target-installer
-log=/var/log.hdd/reflash.log
+log=/var/log/reflash.log
+settings=SSH_ENABLED,SCREEN_ROTATION,WIFI_SSID,WIFI_PSK,LOGIN_PASSWORD
+actions=settings,backup,restore
 ```
 
 One `key=value` per line. `#` starts a comment line, and blank lines are
@@ -45,6 +47,8 @@ ignored. The file is parsed, never sourced or executed.
 | `prepare` | yes | the device step Reflash runs before the installer (section 2). |
 | `installer` | yes | absolute path of the installer inside the root filesystem. Letters, digits, `.`, `_`, `-` and `/` only; no `..`. |
 | `log` | no | absolute path inside the root where Reflash copies its own log after preparing. Same characters as `installer`. |
+| `settings` | no | the settings keys `configure` applies (section 3), comma separated. Reflash offers the user only these. Without it: `SSH_ENABLED,SCREEN_ROTATION,WIFI_SSID,WIFI_PSK`. |
+| `actions` | no | the optional actions the installer supports (section 3), comma separated: any of `settings`, `backup`, `restore`. Without it: none. |
 
 Unknown keys are logged and ignored, so a later image can add optional keys
 without breaking this Reflash. A key whose absence would make this Reflash do
@@ -123,7 +127,8 @@ WIFI_PSK=it's-my-wifi
 One `KEY=VALUE` per line. The value is everything after the first `=` up to
 the end of the line, taken literally: no quoting and no escapes. Reflash
 refuses a value containing a newline rather than sending it. The installer
-ignores keys it does not know, and must never write `WIFI_PSK` to a log.
+ignores keys it does not know, and must never write `WIFI_PSK` or
+`LOGIN_PASSWORD` to a log.
 
 | key | value |
 | --- | --- |
@@ -132,10 +137,49 @@ ignores keys it does not know, and must never write `WIFI_PSK` to a log.
 | `SCREEN_ROTATION` | `0`, `90`, `180` or `270` (degrees clockwise) |
 | `WIFI_SSID` | network name, may be empty |
 | `WIFI_PSK` | passphrase, may be empty |
+| `LOGIN_PASSWORD` | a new password for the system's login account, or empty to leave the account as it is |
+
+Settings are sent only when the manifest lists them (`settings=`), because an
+installer ignores keys it does not know: a choice the image would silently
+drop must not be offered at all.
+
+`LOGIN_PASSWORD` is the image's to apply: which account it is, and whether the
+password is good enough by the image's own rules. A password it refuses fails
+`configure` with an `ERROR: ` line saying why. Once set, the system does not ask
+for a new password at its first login. Like `WIFI_PSK`, it is never logged and
+never printed back by the `settings` action.
+
+`configure` applies the keys it is given and leaves every other setting as it
+is, so changing one choice later (for example from a Reflash booted to repair a
+forgotten password) does not reset the rest.
+
+### Optional actions
+
+An installer may support more actions, listed in the manifest's `actions=`.
+Reflash calls only those, and an installer given an action it does not
+support exits 3 without changing anything - so a wrong manifest costs a
+message, not a board.
+
+For these actions stdout carries data, and only stderr goes to Reflash's log.
+
+- **`settings`**: print the system's current settings in the `configure`
+  format, read from where the system keeps them, so Reflash can show them
+  before the user changes anything. Secrets (`WIFI_PSK`, `LOGIN_PASSWORD`)
+  are never printed. Changes nothing.
+- **`backup`**: write the user's own files - configuration, and whatever else
+  the image judges worth keeping across a reinstall - to stdout as a
+  gzip-compressed tar archive. Reflash stores it as it is and does not look
+  inside. Changes nothing.
+- **`restore`**: read an archive made by `backup` on stdin and put its files
+  back. Reflash runs it after `prepare` and before `configure`, on a freshly
+  written image, so the user's choices in Reflash win over restored ones. The
+  archive may come from an older version of the same system; the installer
+  decides what still applies, and says so on stderr.
 
 ### Output and exit status
 
-Exit status 0 is success; anything else fails the installation. Everything the
+Exit status 0 is success, and 3 from an optional action means it is not
+supported; anything else fails the installation. Everything the
 installer prints goes to Reflash's log. A line starting with `ERROR: ` is a
 reason meant for the user, and the last one is shown when the installer fails.
 

@@ -1,11 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
+import axios from 'axios'
 import TheOptions from '../../src/components/TheOptions.vue'
 // ?raw hands us the file's text at transform time. Reading it with fs and
 // import.meta.url instead passed locally and threw ERR_INVALID_ARG_TYPE on the
 // CI runner, because that URL resolves differently there - a test that depends
 // on how it is run, which is not a property worth having.
 import theOptionsSource from '../../src/components/TheOptions.vue?raw'
+
+vi.mock('axios', () => ({ default: { post: vi.fn().mockResolvedValue({}), get: vi.fn() } }))
 
 // mapGetters/mapActions reach into a store the tests do not build, so the
 // component gets a stub $store and assertions go against dispatch().
@@ -111,5 +114,54 @@ describe('TheOptions destructive actions', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// The drawer and its layout are stubs under shallowMount; rendering their
+// default slots puts the panel's own text in front of the assertions.
+function mountWithText(options = {}) {
+  return shallowMount(TheOptions, {
+    props: { open: true },
+    global: {
+      renderStubDefaultSlot: true,
+      mocks: {
+        $store: {
+          getters: { options: { darkmode: false, screenRotation: 0, ...options } },
+          dispatch: vi.fn().mockResolvedValue(),
+        },
+      },
+    },
+  })
+}
+
+describe('TheOptions login password (#182)', () => {
+  // Never through setOption: that keeps what it posts in the page's store.
+  it('posts the password straight to the server, empties the fields and rereads', async () => {
+    axios.post.mockClear()
+    const { wrapper, dispatch } = mountOptions()
+    wrapper.vm.password = 'correct horse'
+    wrapper.vm.passwordAgain = 'correct horse'
+    await wrapper.vm.setPassword(wrapper.vm.password)
+
+    expect(axios.post).toHaveBeenCalledWith('/api/set_options', { loginPassword: 'correct horse' })
+    expect(wrapper.vm.password).toBe('')
+    expect(wrapper.vm.passwordAgain).toBe('')
+    expect(optionPayloads(dispatch)).toEqual([])
+    expect(dispatch).toHaveBeenCalledWith('getOptions')
+  })
+
+  it('says whether one is set, and never shows it', () => {
+    const set = mountWithText({ loginPasswordSet: true })
+    expect(set.text()).toContain('Set: the next system you install gets it.')
+    const unset = mountWithText({ loginPasswordSet: false })
+    expect(unset.text()).toContain('Not set.')
+  })
+
+  it('says so when the two fields differ', async () => {
+    const wrapper = mountWithText()
+    wrapper.vm.password = 'correct horse'
+    wrapper.vm.passwordAgain = 'correct hose'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('The two passwords differ.')
   })
 })

@@ -46,8 +46,12 @@ persist_log() {
     if [ -b "${OUTFILE}p2" ]; then
         mkdir -p /mnt/logsave 2>/dev/null || true
         if mount "${OUTFILE}p2" /mnt/logsave 2>/dev/null; then
-            mkdir -p /mnt/logsave/var/log.hdd 2>/dev/null || true
-            cp /var/log/reflash.log /mnt/logsave/var/log.hdd/reflash.log 2>/dev/null || true
+            # The disk's /var/log, not its /var/log.hdd: armbian-ramlog
+            # bind-mounts the first over the second at boot, hiding anything
+            # written into the /var/log.hdd directory itself (Rebuild #133).
+            # Here it is /var/log.hdd/reflash.log on the running system.
+            mkdir -p /mnt/logsave/var/log 2>/dev/null || true
+            cp /var/log/reflash.log /mnt/logsave/var/log/reflash.log 2>/dev/null || true
             sync
             umount /mnt/logsave 2>/dev/null || true
         fi

@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -161,6 +163,14 @@ type Options struct {
 	ScreenRotation  int    `json:"screenRotation"`
 	WifiSSID        string `json:"SSID"`
 	WifiPSK         string `json:"PSK"`
+	// The login password for the next installed system (#182). Held in memory
+	// only - never in options.cfg on the USB drive, never sent back by
+	// get_options - and dropped once an installed system has taken it.
+	LoginPassword string `json:"loginPassword" toml:"-"`
+	// A backup of files (backups_folder) to put back into the next installed
+	// system, between its prepare and configure (#175). Like the password, a
+	// choice for one installation, so not saved on the drive.
+	RestoreBackup string `json:"restoreBackup" toml:"-"`
 }
 
 type Download struct {
@@ -240,6 +250,9 @@ var oldUsb = true
 var static_dir string
 var binDir string
 var images_folder string
+
+// Where backups of an installed system's files go on the USB drive (#175).
+var backups_folder string
 var options_file string
 var log_file string
 
@@ -380,6 +393,7 @@ func ServerInit() {
 	static_dir = "/var/www/html/reflash/dist"
 	binDir = "/usr/local/bin"
 	images_folder = "/mnt/usb/images"
+	backups_folder = "/mnt/usb/backups"
 	options_file = "/mnt/usb/options.cfg"
 	log_file = "/var/log/reflash.log"
 	http_port = ":80"
@@ -460,6 +474,9 @@ func ServerInit() {
 	http.HandleFunc("/api/check_file_integrity", checkFileIntegrity)
 	http.HandleFunc("/api/delete_image", deleteImage)
 	http.HandleFunc("/api/run_install_finished_commands", runInstallFinishedCommands)
+	http.HandleFunc("/api/installed_settings", installedSettings)
+	http.HandleFunc("/api/file_backups", fileBackups)
+	http.HandleFunc("/api/file_backups/download", downloadFileBackup)
 	http.HandleFunc("/api/clear_log", clearLog)
 	http.HandleFunc("/api/rotate_screen", rotateScreen)
 	http.HandleFunc("/api/update_config", updateConfig)
@@ -797,6 +814,12 @@ func writeOptions(w http.ResponseWriter) {
 		return
 	}
 	delete(fields, "PSK")
+	// Only whether one is set, so the options panel can say so.
+	delete(fields, "loginPassword")
+	optionsLock.Lock()
+	passwordSet := options.LoginPassword != ""
+	optionsLock.Unlock()
+	fields["loginPasswordSet"], _ = json.Marshal(passwordSet)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(fields)
@@ -2113,8 +2136,30 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		keep(fmt.Errorf("could not read the installed image's manifest: %w", err))
 	case strings.TrimSpace(manifest) != "":
-		keep(configureTarget())
+		allowed := manifestSettings(manifest)
+		if options.LoginPassword != "" && !allowed["LOGIN_PASSWORD"] {
+			keep(errNoLoginPassword)
+		}
+		// After prepare, before configure, as the interface says: the user's
+		// choices in Reflash win over restored ones.
+		if options.RestoreBackup != "" {
+			keep(restoreFileBackup(options.RestoreBackup))
+			options.RestoreBackup = ""
+		}
+		if err := configureTarget(allowed); err != nil {
+			keep(err)
+		} else if allowed["LOGIN_PASSWORD"] {
+			// Taken: the next board is set up afresh, not with this one's password.
+			options.LoginPassword = ""
+		}
 	default:
+		if options.LoginPassword != "" {
+			keep(errNoLoginPassword)
+		}
+		if options.RestoreBackup != "" {
+			keep(fmt.Errorf("this image cannot have files restored into it by Reflash, so %s was not restored", options.RestoreBackup))
+			options.RestoreBackup = ""
+		}
 		for _, place := range []string{"CMDLINE", "XORG", "WESTON", "PLYMOUTH"} {
 			keep(cmdRotateScreen(options.ScreenRotation, place))
 		}
@@ -2123,6 +2168,11 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	keep(unmountUsb())
 	sendResponse(w, firstErr)
 }
+
+// Said rather than dropped: an image that does not take LOGIN_PASSWORD keeps
+// its factory password, and the user believes they set another one (#182).
+var errNoLoginPassword = fmt.Errorf("this image cannot have its login password set by Reflash: " +
+	"it keeps its factory password, and asks for a new one at the first login")
 
 func saveLegacySettings() error {
 	settings := "# Settings from Reflash\n" +
@@ -2136,28 +2186,62 @@ func saveLegacySettings() error {
 	return err
 }
 
+// The settings an image without a settings= line applies: the four of
+// interface v1 as it first shipped.
+var baseSettings = []string{"SSH_ENABLED", "SCREEN_ROTATION", "WIFI_SSID", "WIFI_PSK"}
+
+// manifestSettings is the settings= list of target-manifest's output: the keys
+// the image's installer applies. An installer ignores keys it does not know,
+// so a choice it would drop is not sent - and, once the UI asks, not offered.
+func manifestSettings(manifest string) map[string]bool {
+	keys := baseSettings
+	for _, line := range strings.Split(manifest, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "settings="); ok && v != "" {
+			keys = strings.Split(v, ",")
+		}
+	}
+	set := map[string]bool{}
+	for _, k := range keys {
+		set[k] = true
+	}
+	return set
+}
+
 // targetSettings is the user's choices in the interface's settings format:
 // KEY=VALUE lines, the value literal to the end of the line. A newline in a
 // value would end it early and start a line of the user's making, so such a
 // value is refused rather than sent.
-func targetSettings() (string, error) {
-	for name, v := range map[string]string{"Wi-Fi network name": options.WifiSSID, "Wi-Fi passphrase": options.WifiPSK} {
+func targetSettings(allowed map[string]bool) (string, error) {
+	for name, v := range map[string]string{"Wi-Fi network name": options.WifiSSID, "Wi-Fi passphrase": options.WifiPSK, "login password": options.LoginPassword} {
 		if strings.ContainsAny(v, "\r\n") {
 			return "", fmt.Errorf("the %s contains a line break", name)
 		}
 	}
-	return "SETTINGS=1\n" +
-		"SSH_ENABLED=" + strconv.FormatBool(options.EnableSsh) + "\n" +
-		"SCREEN_ROTATION=" + strconv.Itoa(options.ScreenRotation) + "\n" +
-		"WIFI_SSID=" + options.WifiSSID + "\n" +
-		"WIFI_PSK=" + options.WifiPSK + "\n", nil
+	out := "SETTINGS=1\n"
+	for _, kv := range [][2]string{
+		{"SSH_ENABLED", strconv.FormatBool(options.EnableSsh)},
+		{"SCREEN_ROTATION", strconv.Itoa(options.ScreenRotation)},
+		{"WIFI_SSID", options.WifiSSID},
+		{"WIFI_PSK", options.WifiPSK},
+		{"LOGIN_PASSWORD", options.LoginPassword},
+	} {
+		// An empty password is not a password: the key is left out, and the
+		// image keeps its account as it is.
+		if kv[0] == "LOGIN_PASSWORD" && kv[1] == "" {
+			continue
+		}
+		if allowed[kv[0]] {
+			out += kv[0] + "=" + kv[1] + "\n"
+		}
+	}
+	return out, nil
 }
 
 // configureTarget hands the settings to the image's installer. Through a file
 // readable only by root, not an argument: the passphrase must not show up in
 // ps or in the log.
-func configureTarget() error {
-	settings, err := targetSettings()
+func configureTarget(allowed map[string]bool) error {
+	settings, err := targetSettings(allowed)
 	if err != nil {
 		return err
 	}
@@ -2200,6 +2284,212 @@ func preparationFailure(stdout, fallback string) string {
 		return fallback
 	}
 	return reason
+}
+
+// InstalledSettings is what the system on the eMMC lets Reflash change, and its
+// current values - read with the image's own installer, so Reflash does not
+// need to know where it keeps them (#173). Never a secret among the values.
+type InstalledSettings struct {
+	Supported bool              `json:"supported"`
+	Reason    string            `json:"reason,omitempty"`
+	Keys      []string          `json:"keys"`
+	Current   map[string]string `json:"current"`
+}
+
+// Serialises reading and changing the installed system's settings: both mount
+// its root, and two at once would trip over each other's mounts.
+var installedSettingsLock sync.Mutex
+
+func eMMCBusy() string {
+	state.Lock()
+	defer state.Unlock()
+	switch state.State {
+	case IDLE, FINISHED, ERROR, CANCELLED:
+		return ""
+	}
+	return string(state.State)
+}
+
+// installedSettings: GET reads them, POST changes the ones it is given - only
+// those, so changing a forgotten password from a Reflash booted to repair it
+// leaves the Wi-Fi and the rotation alone.
+func installedSettings(w http.ResponseWriter, r *http.Request) {
+	if busy := eMMCBusy(); busy != "" {
+		http.Error(w, "busy: "+busy, http.StatusConflict)
+		return
+	}
+	installedSettingsLock.Lock()
+	defer installedSettingsLock.Unlock()
+
+	manifest, _, err := runCommand2("target-manifest")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(InstalledSettings{Reason: "the installed system's manifest could not be read"})
+		return
+	}
+	if strings.TrimSpace(manifest) == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(InstalledSettings{Reason: "the installed system is too old to have its settings changed from Reflash: reinstall it"})
+		return
+	}
+	allowed := manifestSettings(manifest)
+
+	if r.Method == http.MethodPost {
+		var changes map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&changes); err != nil {
+			http.Error(w, "bad settings: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		sendResponse(w, applyInstalledSettings(allowed, changes))
+		return
+	}
+
+	out := InstalledSettings{Supported: true, Current: map[string]string{}}
+	for k := range allowed {
+		out.Keys = append(out.Keys, k)
+	}
+	sort.Strings(out.Keys)
+	// An image without the settings action can still be changed, only not
+	// shown first: exit 3 is "not supported", and the form starts empty.
+	if current, _, err := runCommand2("target-install", "settings"); err == nil {
+		for _, line := range strings.Split(current, "\n") {
+			if k, v, ok := strings.Cut(line, "="); ok && k != "SETTINGS" && allowed[k] {
+				out.Current[k] = v
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func applyInstalledSettings(allowed map[string]bool, changes map[string]string) error {
+	if len(changes) == 0 {
+		return fmt.Errorf("nothing to change")
+	}
+	keys := make([]string, 0, len(changes))
+	for k, v := range changes {
+		if !allowed[k] {
+			return fmt.Errorf("the installed system cannot change %s", k)
+		}
+		if strings.ContainsAny(v, "\r\n") {
+			return fmt.Errorf("%s contains a line break", k)
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	settings := "SETTINGS=1\n"
+	for _, k := range keys {
+		settings += k + "=" + changes[k] + "\n"
+	}
+	f, err := os.CreateTemp("", "reflash-settings-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(settings); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	out, _, err := runCommand2Timeout(5*time.Minute, "target-install", "configure", f.Name())
+	if err != nil {
+		return fmt.Errorf("%s", preparationFailure(out, err.Error()))
+	}
+	logInfo("Changed the installed system's settings: " + strings.Join(keys, ", "))
+	return nil
+}
+
+// A backup's file name: what fileBackups makes, and nothing that could leave
+// the backups folder.
+var backupName = regexp.MustCompile(`^[A-Za-z0-9._-]+\.tar\.gz$`)
+
+type FileBackup struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// fileBackups: GET lists the backups on the USB drive, POST makes one of the
+// system on the eMMC, through its own installer - which decides what is worth
+// keeping (#175). The whole-eMMC image backup is a separate thing.
+func fileBackups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		entries, _ := filepath.Glob(backups_folder + "/*.tar.gz")
+		list := []FileBackup{}
+		for _, e := range entries {
+			if fi, err := os.Stat(e); err == nil {
+				list = append(list, FileBackup{Name: filepath.Base(e), Size: fi.Size()})
+			}
+		}
+		sort.Slice(list, func(i, j int) bool { return list[i].Name > list[j].Name })
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(list)
+		return
+	}
+	if busy := eMMCBusy(); busy != "" {
+		http.Error(w, "busy: "+busy, http.StatusConflict)
+		return
+	}
+	installedSettingsLock.Lock()
+	defer installedSettingsLock.Unlock()
+
+	// Named after the system it came from, so a list of them says what each is.
+	from := regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(strings.TrimSpace(runCommandReturnString("get-emmc-version")), "-")
+	if from == "" {
+		from = "installed-system"
+	}
+	name := from + "-files-" + time.Now().Format("20060102-150405") + ".tar.gz"
+	if err := mountUsb(MODE_RW); err != nil {
+		sendResponse(w, fmt.Errorf("the USB drive could not be written to: %w", err))
+		return
+	}
+	defer mountUsb(MODE_RO)
+	os.MkdirAll(backups_folder, 0o755)
+	path := backups_folder + "/" + name
+	out, _, err := runCommand2Timeout(10*time.Minute, "target-install", "backup", path)
+	if err != nil {
+		os.Remove(path)
+		if strings.Contains(err.Error(), "exit status 3") {
+			err = fmt.Errorf("the installed system does not support backing up its files from Reflash")
+		} else {
+			err = fmt.Errorf("%s", preparationFailure(out, err.Error()))
+		}
+		sendResponse(w, err)
+		return
+	}
+	logInfo("Backed up the installed system's files to " + name)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "OK", "name": name})
+}
+
+func downloadFileBackup(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if !backupName.MatchString(name) {
+		http.Error(w, "no such backup", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	http.ServeFile(w, r, backups_folder+"/"+name)
+}
+
+func restoreFileBackup(name string) error {
+	if !backupName.MatchString(name) {
+		return fmt.Errorf("no such backup: %s", name)
+	}
+	path := backups_folder + "/" + name
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("the backup %s is not on the USB drive", name)
+	}
+	out, _, err := runCommand2Timeout(10*time.Minute, "target-install", "restore", path)
+	if err != nil {
+		if strings.Contains(err.Error(), "exit status 3") {
+			return fmt.Errorf("this image cannot have files restored into it by Reflash, so %s was not restored", name)
+		}
+		return fmt.Errorf("%s", preparationFailure(out, err.Error()))
+	}
+	logInfo("Restored " + name + " into the installed system")
+	return nil
 }
 
 // shellQuote makes v a single shell word. /etc/rebuild-settings is sourced by
