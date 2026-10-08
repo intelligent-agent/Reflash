@@ -1,7 +1,10 @@
 <template>
   <div v-if="open">
-    <w-drawer absolute width="30%" @close="this.$emit('close')">
-      <w-flex class="pa5 secondary" column>
+    <!-- Fixed to the window, not absolute: the panel outgrew the page, and an
+         absolute drawer as tall as the page cut off what was below its edge
+         with no way to reach it (#186). Its contents scroll instead. -->
+    <w-drawer width="30%" @close="this.$emit('close')">
+      <w-flex class="pa5 secondary options-panel" column>
         <h3>Options</h3>
         <w-switch
           @change="onChange('darkmode', options.darkmode)"
@@ -162,3 +165,10 @@ export default {
   }),
 };
 </script>
+
+<style>
+.options-panel {
+  height: 100%;
+  overflow-y: auto;
+}
+</style>

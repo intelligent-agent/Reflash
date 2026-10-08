@@ -2468,6 +2468,10 @@ func fileBackups(w http.ResponseWriter, r *http.Request) {
 	installedSettingsLock.Lock()
 	defer installedSettingsLock.Unlock()
 
+	if err := installedSupports("backup", "backing up its config files"); err != nil {
+		sendResponse(w, err)
+		return
+	}
 	// Named after the system it came from, so a list of them says what each is.
 	from := regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(strings.TrimSpace(runCommandReturnString("get-emmc-version")), "-")
 	if from == "" {
@@ -2529,6 +2533,33 @@ func downloadImage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, images_folder+"/"+name)
 }
 
+// Whether the system on the eMMC can do one of the optional actions, asked of
+// its manifest before anything runs (#184). An image older than the target
+// interface has no manifest at all; a newer one lists what it supports.
+func installedSupports(action, doing string) error {
+	manifest, _, err := runCommand2("target-manifest")
+	if err != nil {
+		return fmt.Errorf("the installed system's manifest could not be read, so %s is not possible", doing)
+	}
+	system := strings.TrimSpace(runCommandReturnString("get-emmc-version"))
+	if system == "" {
+		system = "the installed system"
+	}
+	if strings.TrimSpace(manifest) == "" {
+		return fmt.Errorf("not supported: %s is too old for %s from Reflash", system, doing)
+	}
+	for _, line := range strings.Split(manifest, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "actions="); ok {
+			for _, a := range strings.Split(v, ",") {
+				if a == action {
+					return nil
+				}
+			}
+		}
+	}
+	return fmt.Errorf("not supported: %s does not support %s from Reflash", system, doing)
+}
+
 // #184: a config put back into the system already on the eMMC, without
 // installing an image first.
 func restoreIntoInstalled(w http.ResponseWriter, r *http.Request) {
@@ -2546,6 +2577,10 @@ func restoreIntoInstalled(w http.ResponseWriter, r *http.Request) {
 	}
 	installedSettingsLock.Lock()
 	defer installedSettingsLock.Unlock()
+	if err := installedSupports("restore", "installing a config"); err != nil {
+		sendResponse(w, err)
+		return
+	}
 	sendResponse(w, restoreFileBackup(req.Name))
 }
 

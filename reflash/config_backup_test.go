@@ -18,6 +18,7 @@ import (
 // name, with one .tar.gz on the end.
 func TestFileBackupTakesTheGivenName(t *testing.T) {
 	dir := setupTest(t)
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=backup,restore\n'`)
 	state = &State{State: IDLE}
 	fakeBin(t, dir, "get-emmc-version", `echo rebuild-fluidd-v1.2.0`)
 	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
@@ -114,6 +115,7 @@ func TestUploadedConfigArchiveGoesWithTheBackups(t *testing.T) {
 // installer, and not while the eMMC is busy.
 func TestRestoreIntoInstalled(t *testing.T) {
 	dir := setupTest(t)
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=backup,restore\n'`)
 	called := filepath.Join(dir, "called")
 	os.MkdirAll(backups_folder, 0o755)
 	os.WriteFile(filepath.Join(backups_folder, "mine.tar.gz"), configArchive(t), 0o644)
@@ -156,5 +158,39 @@ func TestDownloadImage(t *testing.T) {
 	downloadImage(w, httptest.NewRequest("GET", "/api/images/download?name=../options.cfg", nil))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("a name outside the folder answered %d", w.Code)
+	}
+}
+
+// An installed system that cannot do it is told so before anything runs,
+// naming the system: too old for a manifest, or one that does not list it.
+func TestConfigActionsNotSupportedByTheInstalledSystem(t *testing.T) {
+	dir := setupTest(t)
+	ran := filepath.Join(dir, "ran")
+	state = &State{State: IDLE}
+	os.MkdirAll(backups_folder, 0o755)
+	os.WriteFile(filepath.Join(backups_folder, "mine.tar.gz"), configArchive(t), 0o644)
+	fakeBin(t, dir, "get-emmc-version", `echo rebuild-fluidd-v1.0.2`)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	fakeBin(t, dir, "target-install", `touch `+ran)
+
+	for manifest, want := range map[string]string{
+		`exit 0`: "rebuild-fluidd-v1.0.2 is too old",
+		`printf 'interface=1\nactions=settings\n'`: "rebuild-fluidd-v1.0.2 does not support",
+	} {
+		fakeBin(t, dir, "target-manifest", manifest)
+
+		w := httptest.NewRecorder()
+		restoreIntoInstalled(w, httptest.NewRequest("POST", "/api/file_backups/restore", strings.NewReader(`{"name":"mine.tar.gz"}`)))
+		if b := w.Body.String(); !strings.Contains(b, "not supported: "+want) {
+			t.Errorf("install a config, %s: %s", manifest, b)
+		}
+		w = httptest.NewRecorder()
+		fileBackups(w, httptest.NewRequest("POST", "/api/file_backups", nil))
+		if b := w.Body.String(); !strings.Contains(b, "not supported: "+want) {
+			t.Errorf("back up, %s: %s", manifest, b)
+		}
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("the installer ran although the system does not support it")
 	}
 }
