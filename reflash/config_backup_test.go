@@ -194,3 +194,26 @@ func TestConfigActionsNotSupportedByTheInstalledSystem(t *testing.T) {
 		t.Error("the installer ran although the system does not support it")
 	}
 }
+
+// The end of an install unmounts the drive; with the board staying in Reflash,
+// reading the backups or restoring one mounts it again first - read-only, and
+// not while something is using it.
+func TestReadingTheDriveMountsItAgainAfterAnInstall(t *testing.T) {
+	dir := setupTest(t)
+	mounted := filepath.Join(dir, "mounted")
+	fakeBin(t, dir, "mount-unmount-usb", `echo "$1 $2" >> `+mounted)
+	setStorage(STORAGE_READY)
+
+	state = &State{State: FINISHED}
+	fileBackups(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/file_backups", nil))
+	if got, _ := os.ReadFile(mounted); string(got) != "mounted ro\n" {
+		t.Errorf("after an install: %q", got)
+	}
+
+	os.Remove(mounted)
+	state = &State{State: INSTALLING}
+	fileBackups(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/file_backups", nil))
+	if _, err := os.Stat(mounted); err == nil {
+		t.Error("the drive was remounted under an install")
+	}
+}

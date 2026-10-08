@@ -511,6 +511,7 @@ func getInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func getStatus(w http.ResponseWriter, r *http.Request) {
+	ensureUsbMounted()
 	var get_status *GetStatus = &GetStatus{
 		LocalImages:    getLocalImages(),
 		BytesAvailable: getFreeSpace(),
@@ -2445,6 +2446,7 @@ type FileBackup struct {
 // keeping (#175). The whole-eMMC image backup is a separate thing.
 func fileBackups(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		ensureUsbMounted()
 		entries, _ := filepath.Glob(backups_folder + "/*.tar.gz")
 		list := []FileBackup{}
 		when := map[string]time.Time{}
@@ -2516,6 +2518,7 @@ func downloadFileBackup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such backup", http.StatusNotFound)
 		return
 	}
+	ensureUsbMounted()
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 	http.ServeFile(w, r, backups_folder+"/"+name)
 }
@@ -2529,6 +2532,7 @@ func downloadImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such image", http.StatusNotFound)
 		return
 	}
+	ensureUsbMounted()
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 	http.ServeFile(w, r, images_folder+"/"+name)
 }
@@ -2588,6 +2592,7 @@ func restoreFileBackup(name string) error {
 	if !backupName.MatchString(name) {
 		return fmt.Errorf("no such backup: %s", name)
 	}
+	ensureUsbMounted()
 	path := backups_folder + "/" + name
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("the backup %s is not on the USB drive", name)
@@ -3020,6 +3025,21 @@ func killWorkerXz() bool {
 func mountUsb(mode string) error {
 	_, _, err := runCommand2("mount-unmount-usb", "mounted", mode)
 	return err
+}
+
+// ensureUsbMounted puts the drive back, read-only, when nothing is using it and
+// it is not mounted. The end of an install unmounts it - the board may be about
+// to reboot - and with the board staying in Reflash the image list, the config
+// backups and a config restore all found an empty folder (#184).
+func ensureUsbMounted() {
+	if getStorage() != STORAGE_READY || eMMCBusy() != "" {
+		return
+	}
+	mounts, err := os.ReadFile("/proc/self/mounts")
+	if err != nil || strings.Contains(string(mounts), " "+filepath.Dir(images_folder)+" ") {
+		return
+	}
+	mountUsb(MODE_RO)
 }
 
 func unmountUsb() error {
