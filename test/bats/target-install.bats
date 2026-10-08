@@ -196,6 +196,17 @@ EOF
   grep -q "installer failed" "$SANDBOX/target/var/log.hdd/reflash.log"
 }
 
+# A shell error is not an ERROR: line; the last thing the installer said is
+# still a better reason than the exit status alone (Reflash#184, on A5).
+@test "target-install: without an ERROR: line, the installer's last line is the reason" {
+  v1_manifest
+  printf 'restoring\n/usr/lib/reflash/target-installer: line 329: R: parameter null or not set\n\n' > "$SANDBOX/installer.out"
+  echo 1 > "$SANDBOX/installer.rc"
+  run "$PROD_BIN/target-install" prepare a5
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"installer failed (exit 1): /usr/lib/reflash/target-installer: line 329: R: parameter null or not set"* ]]
+}
+
 @test "target-install prepare: a missing installer is a clear failure" {
   v1_manifest
   rm "$SANDBOX/target/usr/lib/reflash/target-installer"
