@@ -19,6 +19,7 @@
       @close="openOptions = false"
       @open-serial-number="openSerialNumber=true"
       @open-wifi="openWifi=true"
+      @open-login-password="openLoginPassword=true"
       @open-installed-settings="openInstalledSettings=true"
     />
     <w-card class="mxa pa3 card secondary">
@@ -285,6 +286,10 @@
           ref="TheWifiSetup"
           @close="openWifi = false; this.checkInternet(); this.getStatus()"
         />
+        <TheLoginPassword
+          :open="openLoginPassword"
+          @close="openLoginPassword = false"
+        />
         <TheInstalledSettings
           :open="openInstalledSettings"
           @close="openInstalledSettings = false"
@@ -304,6 +309,7 @@ import IntegrityChecker from "./components/IntegrityChecker";
 import TheUsbChecker from "./components/TheUsbChecker";
 import TheConfigUpdater from "./components/TheConfigUpdater";
 import TheWifiSetup from "./components/TheWifiSetup";
+import TheLoginPassword from "./components/TheLoginPassword";
 import TheInstalledSettings from "./components/TheInstalledSettings";
 import WaveUI from "wave-ui";
 import { mapGetters, mapActions } from "vuex";
@@ -322,6 +328,7 @@ export default {
     TheUsbChecker,
     TheConfigUpdater,
     TheWifiSetup,
+    TheLoginPassword,
     TheInstalledSettings,
   },
   setup() {
@@ -365,6 +372,7 @@ export default {
     openSerialNumber: false,
     openWifi: false,
     openInstalledSettings: false,
+    openLoginPassword: false,
     availableMethods: [
       { id: 0, label: "Rebuild", value: 0, image: "Cloud" },
       { id: 2, label: "Local storage", value: 2, image: "File" },
