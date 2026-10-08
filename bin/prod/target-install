@@ -181,6 +181,21 @@ prepare_ext4_grow_root() {
     for dev in $BOOT_DEV $ROOT_DEV; do tune2fs -U random "$dev"; done
 }
 
+# The installer, chrooted into the image, with exactly the interface's
+# environment.
+run_chrooted() {
+    env -i \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        REFLASH_INTERFACE=1 \
+        REFLASH_VERSION="$(get-reflash-version 2>/dev/null || true)" \
+        REFLASH_DEVICE="$EMMC" \
+        REFLASH_ROOT_DEV="$ROOT_DEV" \
+        REFLASH_BOOT_DEV="$BOOT_DEV" \
+        REFLASH_REVISION="${REVISION:-}" \
+        REFLASH_SERIAL="${SERIAL:-}" \
+        "$chroot_cmd" "$MNT" "$INSTALLER" "$ACTION" < "$stdin"
+}
+
 # Run the installer inside the image. Its output goes to the log; the last
 # "ERROR: " line it printed is what the user is shown when it fails. With a
 # second argument, its stdout is data and goes there instead, and only its
@@ -198,24 +213,28 @@ run_installer() {
     # Resolved before env -i replaces PATH with the image's.
     local chroot_cmd
     chroot_cmd=$(command -v chroot)
-    env -i \
-        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-        REFLASH_INTERFACE=1 \
-        REFLASH_VERSION="$(get-reflash-version 2>/dev/null || true)" \
-        REFLASH_DEVICE="$EMMC" \
-        REFLASH_ROOT_DEV="$ROOT_DEV" \
-        REFLASH_BOOT_DEV="$BOOT_DEV" \
-        REFLASH_REVISION="${REVISION:-}" \
-        REFLASH_SERIAL="${SERIAL:-}" \
-        "$chroot_cmd" "$MNT" "$INSTALLER" "$ACTION" < "$stdin" > "${data:-$out}" 2>"$out.err" || rc=$?
-    # Without a data destination stdout went to $out too: the order of the two
-    # streams is lost, which a log of an installer's few lines can afford.
-    cat "$out.err" >> "$out"
-    rm -f "$out.err"
-    while IFS= read -r line || [ -n "$line" ]; do
-        info "  installer: $line"
-        case $line in "ERROR: "*) reason=${line#ERROR: } ;; esac
-    done < "$out"
+    # Logged line by line as the installer prints it, not when it exits: when
+    # an install hangs - a8's eMMC stopped completing I/O mid-installer on
+    # 2026-10-07 - the log has to say which step it was in, and the 15-minute
+    # timeout kills this before any collected output would have been logged.
+    # The last "ERROR: " line is kept in $out for the reason, since the loop
+    # runs in a subshell. With a data destination only stderr is logged.
+    log_lines() {
+        local line
+        while IFS= read -r line || [ -n "$line" ]; do
+            info "  installer: $line"
+            case $line in "ERROR: "*) printf '%s\n' "${line#ERROR: }" > "$out" ;; esac
+        done
+    }
+    set +e
+    if [ -n "$data" ]; then
+        run_chrooted 2>&1 > "$data" | log_lines
+    else
+        run_chrooted 2>&1 | log_lines
+    fi
+    rc=${PIPESTATUS[0]}
+    set -e
+    reason=$(cat "$out")
     rm -f "$out"
     sync
     unmount_all

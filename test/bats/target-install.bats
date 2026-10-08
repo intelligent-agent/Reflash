@@ -305,3 +305,22 @@ optional_manifest() {
   run "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
   [ "$status" -eq 3 ]
 }
+
+@test "target-install: the installer's lines reach the log while it runs, not when it ends" {
+  v1_manifest
+  # An installer that says where it is, then hangs until told to go on - as
+  # one did on a8 when its eMMC stopped answering.
+  cat > "$SHIMDIR/chroot" <<SHIM
+#!/usr/bin/env bash
+echo "flashing the STM32"
+for _ in \$(seq 1 100); do [ -e "$SANDBOX/go" ] && exit 0; sleep 0.1; done
+exit 9
+SHIM
+  chmod +x "$SHIMDIR/chroot"
+  "$PROD_BIN/target-install" prepare a5 > "$SANDBOX/out" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 50); do grep -q "installer: flashing the STM32" "$LOG_FILE" && break; sleep 0.1; done
+  grep -q "installer: flashing the STM32" "$LOG_FILE"
+  touch "$SANDBOX/go"
+  wait "$pid"
+}
