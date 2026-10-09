@@ -146,7 +146,7 @@
         </div>
         <div class="xs1 pa1">
           <div v-if="flash.selectedMethod == 1">Backup Filename</div>
-          <div v-if="flash.selectedMethod == 0">{{ emmc_version }}</div>
+          <div v-if="flash.selectedMethod == 0" :title="emmc_version">{{ shortName(emmc_version) }}</div>
         </div>
         <div class="xs1 pa1">
           <w-select
@@ -200,15 +200,35 @@
              hit Delete (#160). Wrapping puts Delete on its own line instead.
              At desktop widths everything still fits on one line, so this
              changes nothing there. -->
-        <w-flex class="xs1 align-self-center flex justify-start wrap">
-          <w-select
-            v-if="this.options.magicmode == false"
-            v-model="selectedLocalImage"
-            :items="localImages"
-            item-label-key="name"
-            placeholder="Please select one"
-          >
-          </w-select>
+        <!-- One line per thing (#188): the image with its integrity mark and
+             Delete, then the download or config choice. It used to be one
+             wrapping row in a column 125 px wide, so the mark and Delete
+             landed wherever the widths ran out - Delete under the config,
+             reading as if it deleted that. spellcheck is inherited: the
+             drop-downs' file names are not words. -->
+        <div class="xs1 align-self-center usb-column" spellcheck="false">
+          <div class="usb-row" v-if="this.options.magicmode == false">
+            <w-select
+              class="usb-grow"
+              v-model="selectedLocalImage"
+              :items="localImageChoices"
+              :title="selectedLocalImage || ''"
+              placeholder="Please select one"
+            >
+            </w-select>
+            <IntegrityChecker
+              ref="integritychecker"
+              @integrity="imageIntegrity = $event" />
+            <w-button
+              text
+              class="ml1"
+              v-if="isDeleteButtonVisible()"
+              :title="'Delete ' + selectedLocalImage + ' from the USB drive'"
+              @click="onDeleteImageClick()"
+            >
+              <span>{{ confirmDelete ? "Delete?" : "Delete" }}</span>
+            </w-button>
+          </div>
           <w-button
             style="margin: auto"
             xl
@@ -218,41 +238,32 @@
           >
             <span> {{ this.computeMagicButtonText() }} </span>
           </w-button>
-          <IntegrityChecker
-            ref="integritychecker"
-            v-if="!options.magicmode"
-            @integrity="imageIntegrity = $event" />
           <!-- What Download takes to this computer: its own choice, so it
                works whether the right-hand side is Install or Backup. -->
-          <div v-if="isDownloadToComputer()" style="width: 100%" class="mt2">
+          <div v-if="isDownloadToComputer()" class="usb-row mt2">
             <w-select
+              class="usb-grow"
               v-model="selectedDownload"
               :items="downloadChoices"
+              :title="selectedDownload || ''"
               placeholder="Choose file to download"
             >
             </w-select>
           </div>
           <!-- The config that goes in after the image, or on its own into the
                system already installed (#184). -->
-          <div v-if="flash.selectedMethod == 0 && !isDownloadToComputer()" style="width: 100%" class="mt2">
+          <div v-if="flash.selectedMethod == 0 && !isDownloadToComputer()" class="usb-row mt2">
             <w-select
+              class="usb-grow"
               v-if="configBackups.length"
               v-model="selectedConfig"
               :items="configChoices"
+              :title="selectedConfig || ''"
             >
             </w-select>
             <span v-else>Default config</span>
           </div>
-          <w-button
-            text
-            class="ml1"
-            v-if="isDeleteButtonVisible()"
-            :title="'Delete ' + selectedLocalImage + ' from the USB drive'"
-            @click="onDeleteImageClick()"
-          >
-            <span>{{ confirmDelete ? "Delete?" : "Delete" }}</span>
-          </w-button>
-        </w-flex>
+        </div>
         <div class="xs1 align-self-center">
           <w-button
             xl
@@ -315,6 +326,16 @@ import WaveUI from "wave-ui";
 import { mapGetters, mapActions } from "vuex";
 import axios from "axios";
 import { selectRebuildImages } from "./rebuildImages";
+
+// A file name that fits one line of a narrow column (#188): the start, and
+// the end where the version, date and extension are, which tell two files
+// apart - rebuild-fluidd-v1.1.0-94-gdf7a98b.img.xz keeps "rebuild-fluid"
+// and "94-gdf7a98b.img.xz". The whole name is in the tooltip.
+export function shortName(name, max = 32) {
+  if (!name || name.length <= max) return name;
+  const tail = Math.floor((max - 1) * 0.6);
+  return name.slice(0, max - 1 - tail) + "\u2026" + name.slice(-tail);
+}
 
 export default {
   name: "App",
@@ -437,14 +458,17 @@ export default {
     // local-file paths (upload, magic, install) - #74.
     // "Default config" first: installing a config is optional.
     // Everything on the USB drive that can go to this computer.
+    localImageChoices() {
+      return this.localImages.map((name) => ({ label: shortName(name), value: name }));
+    },
     downloadChoices() {
       return this.configBackups
-        .map((b) => ({ label: b.name, value: b.name }))
-        .concat(this.localImages.map((name) => ({ label: name, value: name })));
+        .map((b) => ({ label: shortName(b.name), value: b.name }))
+        .concat(this.localImageChoices);
     },
     configChoices() {
       return [{ label: "Default config", value: "" }].concat(
-        this.configBackups.map((b) => ({ label: b.name, value: b.name }))
+        this.configBackups.map((b) => ({ label: shortName(b.name), value: b.name }))
       );
     },
     filteredMethods() {
@@ -545,6 +569,9 @@ export default {
       } catch (err) {
         this.configBackups = [];
       }
+    },
+    shortName(name) {
+      return shortName(name);
     },
     computeSVG(name) {
       return require("./assets/" + name + "-" + this.$waveui.theme + ".svg");
@@ -1378,6 +1405,27 @@ export default {
 </script>
 
 <style>
+/* #188: the USB drive column, one line per thing. */
+.usb-column {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+.usb-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.usb-grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.usb-grow .w-select__selection {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 :root[data-theme="light"] {
   --w-base-bg-color-rgb: #f1f1f1;
   --w-base-color-rgb: 0, 0, 0; /* black */
