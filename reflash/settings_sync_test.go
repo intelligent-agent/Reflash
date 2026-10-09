@@ -306,3 +306,65 @@ func TestAChangeDuringAFlashIsKeptAndNotWrittenToTheOldSystem(t *testing.T) {
 	state.State = FINISHED
 	r.waitFor(t, 1)
 }
+
+func TestANewChangeClearsTheLastFailure(t *testing.T) {
+	newPushRig(t)
+	pushLock.Lock()
+	syncError = "the password is too short"
+	pushLock.Unlock()
+	queuePush(map[string]string{"LOGIN_PASSWORD": "temppwd"})
+	if busy, failure := syncState(); failure != "" || !busy {
+		t.Errorf("busy=%v failure=%q: a stale failure outlived a new attempt", busy, failure)
+	}
+}
+
+func TestARefusedPasswordIsNotKeptForTheNextInstall(t *testing.T) {
+	r := newPushRig(t)
+	r.err = errors.New("the password is too short: at least 6 characters")
+	savedOpts := options
+	options = &Options{LoginPassword: "abc"}
+	defer func() { options = savedOpts }()
+
+	queuePush(map[string]string{"LOGIN_PASSWORD": "abc"})
+	r.waitFor(t, 1)
+	time.Sleep(40 * time.Millisecond)
+	optionsLock.Lock()
+	kept := options.LoginPassword
+	optionsLock.Unlock()
+	if kept != "" {
+		t.Errorf("a refused password was kept: %q", kept)
+	}
+	if _, failure := syncState(); failure == "" {
+		t.Error("the refusal was not reported")
+	}
+}
+
+func TestANonPasswordFailureKeepsThePassword(t *testing.T) {
+	r := newPushRig(t)
+	r.err = errors.New("eMMC error")
+	savedOpts := options
+	options = &Options{LoginPassword: "longenough"}
+	defer func() { options = savedOpts }()
+	queuePush(map[string]string{"SSH_ENABLED": "false"})
+	r.waitFor(t, 1)
+	time.Sleep(40 * time.Millisecond)
+	if options.LoginPassword != "longenough" {
+		t.Errorf("a failure unrelated to the password dropped it")
+	}
+}
+
+func TestSyncStateSaysWhenTheWriteIsDone(t *testing.T) {
+	r := newPushRig(t)
+	if busy, _ := syncState(); busy {
+		t.Fatal("busy with nothing queued")
+	}
+	queuePush(map[string]string{"SSH_ENABLED": "false"})
+	if busy, _ := syncState(); !busy {
+		t.Error("not busy with a change waiting")
+	}
+	r.waitFor(t, 1)
+	time.Sleep(40 * time.Millisecond)
+	if busy, _ := syncState(); busy {
+		t.Error("still busy after the write")
+	}
+}

@@ -39,15 +39,42 @@ describe('TheLoginPassword (#182, #186)', () => {
   })
 
   // The window stays open and says how it went.
-  it('stays open and says the password was set, or cleared', async () => {
+  it('stays open and says the password was set, or set to the default', async () => {
     axios.post.mockResolvedValue({ data: { status: 'OK' } })
     const { wrapper } = mountDialog()
     await wrapper.vm.setPassword('correct horse')
     expect(wrapper.vm.dialog.show).toBe(true)
     expect(wrapper.vm.messageOk).toBe(true)
-    expect(wrapper.vm.message).toContain('Password set')
-    await wrapper.vm.setPassword('')
-    expect(wrapper.vm.message).toContain('Password cleared')
+    expect(wrapper.vm.message).toContain('Password set for debian')
+    await wrapper.vm.setPassword(wrapper.vm.defaultPassword)
+    expect(wrapper.vm.message).toContain('the default again: temppwd')
+  })
+
+  // "Clear" was never a state of the system: the account always has a
+  // password, and the default is the factory one.
+  it('Set default sends temppwd, not an empty password', async () => {
+    axios.post.mockResolvedValue({ data: { status: 'OK' } })
+    const { wrapper } = mountDialog()
+    await wrapper.vm.setPassword(wrapper.vm.defaultPassword)
+    expect(axios.post).toHaveBeenCalledWith('/api/set_options', { loginPassword: 'temppwd' })
+  })
+
+  it('names the user and the default, so nobody has to guess which account', () => {
+    const { wrapper } = mountDialog()
+    expect(wrapper.text()).toContain('debian')
+    expect(wrapper.text()).toContain('temppwd')
+    expect(wrapper.text()).toContain('Set default')
+    expect(wrapper.text()).not.toContain('Clear')
+  })
+
+  // The image's own rules decide: a password it refuses is reported by the
+  // installed system's answer, not by a message that was already on the page.
+  it('says what the installed system refused', async () => {
+    axios.post.mockResolvedValue({ data: { status: 'OK' } })
+    const { wrapper } = mountDialog({ settingsSyncBusy: false, settingsSyncError: 'the password is too short: at least 6 characters' })
+    await wrapper.vm.setPassword('abc')
+    expect(wrapper.vm.messageOk).toBe(false)
+    expect(wrapper.vm.message).toContain('at least 6 characters')
   })
 
   it("shows the server's reason when it fails", async () => {

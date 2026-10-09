@@ -838,9 +838,9 @@ func writeOptions(w http.ResponseWriter) {
 	passwordSet := options.LoginPassword != ""
 	optionsLock.Unlock()
 	fields["loginPasswordSet"], _ = json.Marshal(passwordSet)
-	pushLock.Lock()
-	fields["settingsSyncError"], _ = json.Marshal(syncError)
-	pushLock.Unlock()
+	busy, failure := syncState()
+	fields["settingsSyncError"], _ = json.Marshal(failure)
+	fields["settingsSyncBusy"], _ = json.Marshal(busy)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(fields)

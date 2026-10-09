@@ -97,6 +97,9 @@ var (
 	// panel. Empty when it could. Guarded by pushLock.
 	syncError string
 
+	// A write to the installed system is under way. Guarded by pushLock.
+	pushing bool
+
 	// A short wait gathers the several changes one dialog makes into one
 	// write to the eMMC; a busy eMMC is tried again a few times.
 	pushDelay      = 1500 * time.Millisecond
@@ -115,6 +118,8 @@ func queuePush(changes map[string]string) {
 	for k, v := range changes {
 		pushPending[k] = v
 	}
+	// A new change is a new attempt: the last one's failure says nothing about it.
+	syncError = ""
 	pushTries = 0
 	if pushTimer != nil {
 		pushTimer.Stop()
@@ -153,8 +158,23 @@ func flushPush() {
 		return
 	}
 
-	err := pushToInstalled(changes)
 	pushLock.Lock()
+	pushing = true
+	pushLock.Unlock()
+	err := pushToInstalled(changes)
+	if err != nil {
+		if _, sentPassword := changes[keyPassword]; sentPassword {
+			// Refused - too short, say - so it is not kept for the next install
+			// to be refused again. The reason is shown, and a new one can be set.
+			optionsLock.Lock()
+			if options != nil {
+				options.LoginPassword = ""
+			}
+			optionsLock.Unlock()
+		}
+	}
+	pushLock.Lock()
+	pushing = false
 	if err != nil {
 		syncError = err.Error()
 		logError("The installed system's settings could not be changed: " + err.Error())
@@ -162,6 +182,14 @@ func flushPush() {
 		syncError = ""
 	}
 	pushLock.Unlock()
+}
+
+// syncState is for the page: whether a change is still on its way to the
+// installed system, and why the last one failed, if it did.
+func syncState() (busy bool, failure string) {
+	pushLock.Lock()
+	defer pushLock.Unlock()
+	return pushing || len(pushPending) > 0, syncError
 }
 
 // pushToInstalled is a variable so the tests need no board.

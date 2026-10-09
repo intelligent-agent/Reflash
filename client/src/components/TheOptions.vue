@@ -65,7 +65,7 @@
           </w-button>
         </div>
         <div class="caption ma2">
-          {{ options.loginPasswordSet ? "Set for the installed system and the next install." : "Not set." }}
+          {{ options.loginPasswordSet ? "Password for the user debian: set." : "Password for the user debian: the default." }}
         </div>
         <div class="caption ma2 error" v-if="options.settingsSyncError">
           The installed system was not brought in line: {{ options.settingsSyncError }}

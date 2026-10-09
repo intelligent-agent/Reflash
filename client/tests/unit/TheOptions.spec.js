@@ -145,7 +145,7 @@ describe('TheOptions login password (#182, #186)', () => {
   })
 
   it('says whether one is set, and never shows it', () => {
-    expect(mountWithText({ loginPasswordSet: true }).text()).toContain('Set for the installed system and the next install.')
-    expect(mountWithText({ loginPasswordSet: false }).text()).toContain('Not set.')
+    expect(mountWithText({ loginPasswordSet: true }).text()).toContain('Password for the user debian: set.')
+    expect(mountWithText({ loginPasswordSet: false }).text()).toContain('Password for the user debian: the default.')
   })
 })

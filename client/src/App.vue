@@ -128,8 +128,12 @@
         </div>
 
         <div class="xs1 pa1 therow">
-          <span v-if="!isDownloadToComputer()">
-            Choose image to {{ selectedMethod.id == 2 ? "Upload" : "Download" }}
+          <span>
+            {{
+              isDownloadToComputer()
+                ? "Choose file to download"
+                : "Choose image to " + (selectedMethod.id == 2 ? "Upload" : "Download")
+            }}
           </span>
         </div>
         <div class="xs1 pa1">
@@ -182,6 +186,18 @@
           <div v-if="selectedMethod.id == 2 && !isDownloadToComputer() && uploadKind" class="mt1">
             {{ uploadKind }}
           </div>
+          <!-- What Download takes to this computer, on the computer's side:
+               it used to sit under the USB drive, where the Config chooser
+               for the install on the right is, and read as that one - without
+               Default config, and with the images in it. -->
+          <w-select
+            v-if="isDownloadToComputer()"
+            v-model="selectedDownload"
+            :items="downloadChoices"
+            :title="selectedDownload || ''"
+            placeholder="Please select one"
+          >
+          </w-select>
         </div>
         <div class="xs1 align-self-center justify-space-between">
           <!-- What to take off the USB drive: its own choice, so it works
@@ -272,21 +288,9 @@
               </div>
             </div>
           </w-tooltip>
-          <!-- What Download takes to this computer: its own choice, so it
-               works whether the right-hand side is Install or Backup. -->
-          <div v-if="isDownloadToComputer()" class="usb-row mt2">
-            <w-select
-              class="usb-grow"
-              v-model="selectedDownload"
-              :items="downloadChoices"
-              :title="selectedDownload || ''"
-              placeholder="Choose file to download"
-            >
-            </w-select>
-          </div>
           <!-- The config that goes in after the image, or on its own into the
                system already installed (#184). -->
-          <div v-if="flash.selectedMethod == 0 && !isDownloadToComputer()" class="mt2">
+          <div v-if="flash.selectedMethod == 0" class="mt2">
             <div class="usb-label">Config</div>
             <div class="usb-row">
               <w-select
