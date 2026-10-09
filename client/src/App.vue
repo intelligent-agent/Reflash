@@ -226,15 +226,47 @@
               ref="integritychecker"
               @integrity="imageIntegrity = $event" />
           </div>
-          <w-button
-            style="margin: auto"
-            xl
-            outline
-            @click="onMagicButtonClick()"
-            v-if="isMagicButtonVisible()"
-          >
-            <span> {{ this.computeMagicButtonText() }} </span>
-          </w-button>
+          <!-- What Magic does, before it is pressed: where the image and the
+               config each come from, and that both end up on the eMMC.
+               Config archives are only ever on the USB drive, never online. -->
+          <w-tooltip v-if="isMagicButtonVisible()" bottom tooltip-class="magic-tip">
+            <template #activator="{ on }">
+              <w-button
+                v-on="on"
+                style="margin: auto"
+                xl
+                outline
+                @click="onMagicButtonClick()"
+              >
+                <span> {{ this.computeMagicButtonText() }} </span>
+              </w-button>
+            </template>
+            <div class="magic-plan">
+              <div class="magic-step">
+                <img :src="computeSVG(selectedMethod.image)" />
+                <div>
+                  <div class="magic-what">Image, {{ magicPlan.imageFrom }}</div>
+                  <div class="magic-name">{{ magicPlan.image }}</div>
+                </div>
+                <img :src="computeSVG('Arrow-right')" class="magic-arrow" />
+                <img :src="computeSVG('eMMC')" />
+              </div>
+              <div class="magic-note">Streamed straight to the eMMC; not stored on the USB drive.</div>
+              <div class="magic-step">
+                <img :src="computeSVG('USB')" />
+                <div>
+                  <div class="magic-what">Config, from the USB drive</div>
+                  <div class="magic-name">{{ magicPlan.config }}</div>
+                </div>
+                <img :src="computeSVG('Arrow-right')" class="magic-arrow" />
+                <img :src="computeSVG('eMMC')" />
+              </div>
+              <div class="magic-note">
+                {{ magicPlan.configNote }}
+                Config archives are only ever kept on this USB drive.
+              </div>
+            </div>
+          </w-tooltip>
           <!-- What Download takes to this computer: its own choice, so it
                works whether the right-hand side is Install or Backup. -->
           <div v-if="isDownloadToComputer()" class="usb-row mt2">
@@ -249,16 +281,19 @@
           </div>
           <!-- The config that goes in after the image, or on its own into the
                system already installed (#184). -->
-          <div v-if="flash.selectedMethod == 0 && !isDownloadToComputer()" class="usb-row mt2">
-            <w-select
-              class="usb-grow"
-              v-if="configBackups.length"
-              v-model="selectedConfig"
-              :items="configChoices"
-              :title="selectedConfig || ''"
-            >
-            </w-select>
-            <span v-else>Default config</span>
+          <div v-if="flash.selectedMethod == 0 && !isDownloadToComputer()" class="mt2">
+            <div class="usb-label">Config</div>
+            <div class="usb-row">
+              <w-select
+                class="usb-grow"
+                v-if="configBackups.length"
+                v-model="selectedConfig"
+                :items="configChoices"
+                :title="selectedConfig || ''"
+              >
+              </w-select>
+              <span v-else>Default config</span>
+            </div>
           </div>
         </div>
         <div class="xs1 align-self-center">
@@ -461,6 +496,21 @@ export default {
     // local-file paths (upload, magic, install) - #74.
     // "Default config" first: installing a config is optional.
     // Everything on the USB drive that can go to this computer.
+    // For the Magic button's tooltip: what goes where.
+    magicPlan() {
+      const fromNet = this.selectedMethod.id == 0;
+      const image = fromNet
+        ? (this.selectedRebuildImage && this.selectedRebuildImage.name)
+        : (this.selectedUploadImage && this.selectedUploadImage.file && this.selectedUploadImage.file.name);
+      return {
+        imageFrom: fromNet ? "from the Rebuild server on the internet" : "from this computer",
+        image: shortName(image || "") || "(none chosen)",
+        config: this.selectedConfig ? shortName(this.selectedConfig) : "Default config",
+        configNote: this.selectedConfig
+          ? "Put into the new system after the image is written."
+          : "No archive chosen: the system starts with its default configuration.",
+      };
+    },
     localImageChoices() {
       // local_images are {name, size, id, date}.
       return this.localImages.map((i) => ({ label: shortName(i.name), value: i.name }));
@@ -1390,6 +1440,41 @@ export default {
   cursor: pointer;
   color: inherit;
 }
+/* The Magic button's tooltip. */
+.magic-tip {
+  max-width: 420px;
+  text-align: left;
+}
+.magic-plan .magic-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.magic-plan .magic-step img {
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+.magic-plan .magic-step img.magic-arrow {
+  width: 22px;
+}
+.magic-plan .magic-step > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.magic-plan .magic-what {
+  font-weight: bold;
+}
+.magic-plan .magic-name {
+  word-break: break-all;
+  opacity: 0.85;
+}
+.magic-plan .magic-note {
+  font-size: 0.85em;
+  opacity: 0.75;
+  margin: 2px 0 6px 36px;
+}
 /* #188: the USB drive column, one line per thing. */
 .usb-column {
   display: flex;
@@ -1400,6 +1485,11 @@ export default {
   display: flex;
   align-items: center;
   width: 100%;
+}
+.usb-label {
+  font-size: 0.8em;
+  opacity: 0.7;
+  text-align: left;
 }
 .usb-grow {
   flex: 1 1 auto;
