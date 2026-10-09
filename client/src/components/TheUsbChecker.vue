@@ -1,5 +1,25 @@
 <template>
-  <w-dialog v-if="open" :width="dialog.width" persistent>
+  <!-- Once the user has put the dialog away to make last changes, the same
+       message stays across the top of the page, so the reboot that follows
+       taking the drive out is not a surprise. -->
+  <div v-if="open && dismissed && !rebootPressed" class="finished-callout">
+    <span>Flashing is finished. {{ computeText() }}</span>
+    <w-button
+      v-if="options.rebootWhenDone == false"
+      class="ml3"
+      outline
+      sm
+      @click="clickReboot()"
+      :disabled="isUsbPresent"
+      ><span>Reboot Now</span></w-button
+    >
+  </div>
+  <w-dialog
+    v-if="open && !dismissed"
+    :width="dialog.width"
+    :persistent="rebootPressed"
+    @close="putAway()"
+  >
     <template #title>
       <span class="dialog_title">Installation finished</span>
     </template>
@@ -34,6 +54,13 @@
     <w-button xl outline @click="clickReload()" v-if="serverResponding">
       <span>Reload</span>
     </w-button>
+    <!-- Wi-Fi, SSH and the rest still reach the new image from here (#185);
+         the board stays put until the drive comes out. -->
+    <div v-if="rebootPressed == false" class="mt4">
+      <w-button xl outline class="ma1" @click="putAway()">
+        <span>Make changes first</span>
+      </w-button>
+    </div>
   </w-dialog>
 </template>
 <script>
@@ -55,6 +82,8 @@ export default {
     isUsbPresent: true,
     rebootPressed: false,
     serverResponding: false,
+    // The dialog put away; the callout across the top stands in for it.
+    dismissed: false,
   }),
   computed: mapGetters(["options"]),
   methods: {
@@ -98,6 +127,7 @@ export default {
         //
         // So just watch for the board to go away and come back.
         this.rebootPressed = true;
+        this.dismissed = false;
         this.serverResponding = false;
         setTimeout(this.checkServerResponse, 1000);
       } else if (!this.rebootPressed) {
@@ -119,8 +149,15 @@ export default {
     clickReboot() {
       this.$emit("reboot-board");
       this.rebootPressed = true;
+      this.dismissed = false;
       this.serverResponding = false;
       setTimeout(this.checkServerResponse, 1000);
+    },
+    // Put the dialog away - by its button or a click outside it - to make
+    // last changes; the callout across the top stands in for it. Not once the
+    // reboot has started: then the dialog is what shows the board going.
+    putAway() {
+      if (!this.rebootPressed) this.dismissed = true;
     },
     clickReload() {
       window.location.href =
@@ -143,5 +180,17 @@ export default {
 <style>
 .dialog_title {
   margin: auto;
+}
+.finished-callout {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 900;
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 0.95em;
+  background: #04a3e5;
+  color: #fff;
 }
 </style>

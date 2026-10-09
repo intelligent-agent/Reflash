@@ -165,7 +165,24 @@ For these actions stdout carries data, and only stderr goes to Reflash's log.
 - **`settings`**: print the system's current settings in the `configure`
   format, read from where the system keeps them, so Reflash can show them
   before the user changes anything. Secrets (`WIFI_PSK`, `LOGIN_PASSWORD`)
-  are never printed. Changes nothing.
+  are not printed. Changes nothing.
+
+  With the word `secrets` as its argument (`settings secrets`), the installer
+  may also print `WIFI_PSK`, after `WIFI_SSID`. Reflash asks for that when it
+  starts (#185), so that the installed system's Wi-Fi network - name and
+  passphrase together, a name alone is no network - becomes Reflash's own and
+  goes onto the next image. The passphrase stays in Reflash's options, where a
+  passphrase typed in Reflash lives too; the installer must not print it to
+  stderr, which Reflash logs. An installer that does not know the word ignores
+  it and prints no passphrase, and Reflash then leaves its own network alone.
+  `LOGIN_PASSWORD` cannot be read back and is never printed.
+
+  Reflash keeps `SSH_ENABLED`, `SCREEN_ROTATION` and the Wi-Fi network the same
+  as the installed system's: it reads them when it starts, and applies a change
+  made in Reflash to the installed system, through `configure`, as soon as it
+  is made - only the settings that changed. A change made while an image is
+  being written is kept in Reflash and goes onto the new image when the
+  install finishes.
 - **`backup`**: write the user's own files - configuration, and whatever else
   the image judges worth keeping across a reinstall - to stdout as a
   gzip-compressed tar archive. Reflash stores it as it is; the only look

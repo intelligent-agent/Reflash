@@ -1,15 +1,16 @@
 <template>
   <w-dialog v-model="dialog.show" :width="dialog.width">
     <template #title>
-      <span class="dialog_title">Login password</span>
+      <span class="dialog_title">SSH password</span>
     </template>
     <!-- For the installed system, not for Reflash (#182, #186). Sent to the
          server and nowhere else: it is not kept in the page's store, and the
          server holds it in memory only and never sends it back - this dialog
          learns just whether one is set. -->
     <p>
-      The password for the system you install. Without one it keeps its
-      factory password and asks for a new one at the first login.
+      The password for the user <b>debian</b>, for logging in and over SSH. It
+      goes onto the installed system now and onto the one you install next.
+      The default is <b>temppwd</b>.
     </p>
     <div class="pa5">
       <img style="width: 20%" :src="computeSVG('Password')" /><br />
@@ -35,15 +36,15 @@
         >
           Set password
         </w-button>
-        <w-button v-if="options.loginPasswordSet" @click="setPassword('')">
-          Clear
+        <w-button @click="setPassword(defaultPassword)">
+          Set default
         </w-button>
       </div>
       <div v-if="message" class="mt4" :class="messageOk ? 'success' : 'error'">
         {{ message }}
       </div>
       <div v-else class="caption mt4">
-        {{ options.loginPasswordSet ? "Set: the next system you install gets it." : "Not set." }}
+        {{ options.loginPasswordSet ? "Set for the user debian." : "The user debian has the default password, temppwd." }}
       </div>
     </div>
   </w-dialog>
@@ -63,6 +64,8 @@ export default {
     passwordAgain: "",
     message: "",
     messageOk: true,
+    // What "Set default" sets: the factory password, now not expired.
+    defaultPassword: "temppwd",
   }),
   computed: {
     ...mapGetters(["options"]),
@@ -86,14 +89,30 @@ export default {
       try {
         const res = await axios.post(`/api/set_options`, { loginPassword: value });
         if (res.data && res.data.status === "ERROR") throw new Error(res.data.error);
-        await this.getOptions();
-        this.messageOk = true;
-        this.message = value
-          ? "Password set. The next system you install gets it."
-          : "Password cleared. The next system you install keeps its factory password.";
+        // The installed system is told in the background; say how it went,
+        // not that it was sent - it may refuse a password its rules reject.
+        await this.waitForInstalledSystem();
+        if (this.options.settingsSyncError) {
+          this.messageOk = false;
+          this.message = "The system did not take it: " + this.options.settingsSyncError;
+        } else {
+          this.messageOk = true;
+          this.message =
+            value === this.defaultPassword
+              ? "The password for debian is the default again: " + this.defaultPassword + "."
+              : "Password set for debian.";
+        }
       } catch (err) {
         this.messageOk = false;
         this.message = "Could not set the password: " + (err.response?.data || err.message || err);
+      }
+    },
+    // Until the installed system has answered, a minute at most.
+    async waitForInstalledSystem() {
+      for (let i = 0; i < 60; i++) {
+        await this.getOptions();
+        if (!this.options.settingsSyncBusy) return;
+        await new Promise((r) => setTimeout(r, 1000));
       }
     },
   },

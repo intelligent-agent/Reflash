@@ -20,7 +20,6 @@
       @open-serial-number="openSerialNumber=true"
       @open-wifi="openWifi=true"
       @open-login-password="openLoginPassword=true"
-      @open-installed-settings="openInstalledSettings=true"
     />
     <w-card class="mxa pa3 card secondary">
       <w-flex wrap class="text-center">
@@ -76,10 +75,16 @@
           <span v-else>Download</span>
         </div>
         <div class="xs1 pa1 align-self-center">
-          <span v-if="this.options.magicmode">Magic</span>
-          <!-- #188: the drive's files, in a window of their own. -->
-          <a v-else href="#" class="usb-open" title="Files on the USB drive"
-             @click.prevent="openUsbFiles = true">USB drive</a>
+          <!-- The way the image gets to the eMMC: through the USB drive, or
+               streamed straight to it (Magic). The drive's files are opened
+               from its icon (#188). -->
+          <w-select
+            :model-value="options.magicmode ? 'magic' : 'usb'"
+            @update:model-value="storeSetOption({ magicmode: $event == 'magic' })"
+            :items="storageChoices"
+            no-unselect
+          >
+          </w-select>
         </div>
         <div class="xs1 pa1 align-self-center">
           <FlashSelector ref="flashSelector" />
@@ -123,8 +128,12 @@
         </div>
 
         <div class="xs1 pa1 therow">
-          <span v-if="!isDownloadToComputer()">
-            Choose image to {{ selectedMethod.id == 2 ? "Upload" : "Download" }}
+          <span>
+            {{
+              isDownloadToComputer()
+                ? "Choose file to download"
+                : "Choose image to " + (selectedMethod.id == 2 ? "Upload" : "Download")
+            }}
           </span>
         </div>
         <div class="xs1 pa1">
@@ -177,6 +186,18 @@
           <div v-if="selectedMethod.id == 2 && !isDownloadToComputer() && uploadKind" class="mt1">
             {{ uploadKind }}
           </div>
+          <!-- What Download takes to this computer, on the computer's side:
+               it used to sit under the USB drive, where the Config chooser
+               for the install on the right is, and read as that one - without
+               Default config, and with the images in it. -->
+          <w-select
+            v-if="isDownloadToComputer()"
+            v-model="selectedDownload"
+            :items="downloadChoices"
+            :title="selectedDownload || ''"
+            placeholder="Please select one"
+          >
+          </w-select>
         </div>
         <div class="xs1 align-self-center justify-space-between">
           <!-- What to take off the USB drive: its own choice, so it works
@@ -267,21 +288,9 @@
               </div>
             </div>
           </w-tooltip>
-          <!-- What Download takes to this computer: its own choice, so it
-               works whether the right-hand side is Install or Backup. -->
-          <div v-if="isDownloadToComputer()" class="usb-row mt2">
-            <w-select
-              class="usb-grow"
-              v-model="selectedDownload"
-              :items="downloadChoices"
-              :title="selectedDownload || ''"
-              placeholder="Choose file to download"
-            >
-            </w-select>
-          </div>
           <!-- The config that goes in after the image, or on its own into the
                system already installed (#184). -->
-          <div v-if="flash.selectedMethod == 0 && !isDownloadToComputer()" class="mt2">
+          <div v-if="flash.selectedMethod == 0" class="mt2">
             <div class="usb-label">Config</div>
             <div class="usb-row">
               <w-select
@@ -338,10 +347,6 @@
           :open="openLoginPassword"
           @close="openLoginPassword = false"
         />
-        <TheInstalledSettings
-          :open="openInstalledSettings"
-          @close="openInstalledSettings = false"
-        />
       </w-flex>
     </w-card>
   </w-app>
@@ -359,7 +364,6 @@ import TheConfigUpdater from "./components/TheConfigUpdater";
 import TheWifiSetup from "./components/TheWifiSetup";
 import TheLoginPassword from "./components/TheLoginPassword";
 import TheUsbFiles from "./components/TheUsbFiles";
-import TheInstalledSettings from "./components/TheInstalledSettings";
 import WaveUI from "wave-ui";
 import { mapGetters, mapActions } from "vuex";
 import axios from "axios";
@@ -389,7 +393,6 @@ export default {
     TheWifiSetup,
     TheLoginPassword,
     TheUsbFiles,
-    TheInstalledSettings,
   },
   setup() {
     const waveui = new WaveUI(this, {});
@@ -429,7 +432,6 @@ export default {
     showOverlay: false,
     openSerialNumber: false,
     openWifi: false,
-    openInstalledSettings: false,
     openLoginPassword: false,
     openUsbFiles: false,
     availableMethods: [
@@ -460,6 +462,10 @@ export default {
     configBackupBusy: false,
     configRestoreBusy: false,
     selectedConfig: "",
+    storageChoices: [
+      { label: "USB drive", value: "usb" },
+      { label: "Magic", value: "magic" },
+    ],
     reflash_version: "Unknown",
     emmc_version: "Unknown",
     recore_revision: "Unknown",

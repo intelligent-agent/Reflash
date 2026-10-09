@@ -139,13 +139,13 @@ function mountWithText(options = {}) {
 describe('TheOptions login password (#182, #186)', () => {
   it('opens the password window', async () => {
     const wrapper = mountWithText()
-    const button = wrapper.findAll('w-button-stub').find((b) => b.text().includes('Set login password'))
+    const button = wrapper.findAll('w-button-stub').find((b) => b.text().includes('SSH password'))
     await button.trigger('click')
     expect(wrapper.emitted('open-login-password')).toBeTruthy()
   })
 
   it('says whether one is set, and never shows it', () => {
-    expect(mountWithText({ loginPasswordSet: true }).text()).toContain('Set for the next install.')
-    expect(mountWithText({ loginPasswordSet: false }).text()).toContain('Not set.')
+    expect(mountWithText({ loginPasswordSet: true }).text()).toContain('Password for the user debian: set.')
+    expect(mountWithText({ loginPasswordSet: false }).text()).toContain('Password for the user debian: the default.')
   })
 })

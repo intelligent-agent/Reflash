@@ -386,6 +386,19 @@ func slowInit() {
 	} else {
 		bootPhase("load-options", func() { loadOptions() })
 		setStorage(STORAGE_READY)
+		// The installed system's settings become Reflash's own (#185), before
+		// the Wi-Fi comes up, so Reflash joins the network the system had. This
+		// is already off the page's way: storage is ready, and it mounts the
+		// eMMC, which takes a few seconds. In sequence rather than a goroutine
+		// of its own, so nothing is left running behind a test.
+		bootPhase("sync-installed-settings", func() {
+			if err := syncFromInstalled(); err != nil {
+				logError("Could not read the installed system's settings: " + err.Error())
+				pushLock.Lock()
+				syncError = "could not read the installed system's settings: " + err.Error()
+				pushLock.Unlock()
+			}
+		})
 	}
 
 	startWatchdog()
@@ -744,6 +757,7 @@ func startConnectWifi(w http.ResponseWriter, r *http.Request) {
 		options.WifiPSK = psk
 		isDirty = true
 		optionsLock.Unlock()
+		queuePush(map[string]string{keyWifiName: ssid, keyWifiPSK: psk})
 		logInfo("WiFi Connection successful")
 	}()
 
@@ -827,6 +841,9 @@ func writeOptions(w http.ResponseWriter) {
 	passwordSet := options.LoginPassword != ""
 	optionsLock.Unlock()
 	fields["loginPasswordSet"], _ = json.Marshal(passwordSet)
+	busy, failure := syncState()
+	fields["settingsSyncError"], _ = json.Marshal(failure)
+	fields["settingsSyncBusy"], _ = json.Marshal(busy)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(fields)
@@ -2250,18 +2267,19 @@ func manifestSettings(manifest string) map[string]bool {
 // value would end it early and start a line of the user's making, so such a
 // value is refused rather than sent.
 func targetSettings(allowed map[string]bool) (string, error) {
-	for name, v := range map[string]string{"Wi-Fi network name": options.WifiSSID, "Wi-Fi passphrase": options.WifiPSK, "login password": options.LoginPassword} {
+	opts := *options
+	for name, v := range map[string]string{"Wi-Fi network name": opts.WifiSSID, "Wi-Fi passphrase": opts.WifiPSK, "login password": opts.LoginPassword} {
 		if strings.ContainsAny(v, "\r\n") {
 			return "", fmt.Errorf("the %s contains a line break", name)
 		}
 	}
 	out := "SETTINGS=1\n"
 	for _, kv := range [][2]string{
-		{"SSH_ENABLED", strconv.FormatBool(options.EnableSsh)},
-		{"SCREEN_ROTATION", strconv.Itoa(options.ScreenRotation)},
-		{"WIFI_SSID", options.WifiSSID},
-		{"WIFI_PSK", options.WifiPSK},
-		{"LOGIN_PASSWORD", options.LoginPassword},
+		{"SSH_ENABLED", strconv.FormatBool(opts.EnableSsh)},
+		{"SCREEN_ROTATION", strconv.Itoa(opts.ScreenRotation)},
+		{"WIFI_SSID", opts.WifiSSID},
+		{"WIFI_PSK", opts.WifiPSK},
+		{"LOGIN_PASSWORD", opts.LoginPassword},
 	} {
 		// An empty password is not a password: the key is left out, and the
 		// image keeps its account as it is.
@@ -3106,10 +3124,16 @@ func lockSetOptions(opts []byte) error {
 	optionsLock.Lock()
 	defer optionsLock.Unlock()
 
+	var before Options
+	if options != nil {
+		before = *options
+	}
 	err := json.Unmarshal(opts, &options)
 	if err != nil {
 		return err
 	}
+	// What changed is brought to the installed system as well (#185).
+	queuePush(changedSettings(before, *options))
 
 	isDirty = true
 	logInfo("Options updated in memory and marked dirty")

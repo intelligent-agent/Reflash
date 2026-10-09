@@ -86,4 +86,53 @@ describe('TheUsbChecker', () => {
     w2.vm.isUsbPresent = false;
     expect(w2.vm.computeText()).toMatch(/ready to reboot/i);
   });
+
+  // The dialog can be put away to make last changes (#185); the message then
+  // stays across the top, and a reboot that starts brings the dialog back.
+  describe('putting the dialog away', () => {
+    it('can be put away by its button or a click outside, until the reboot starts', () => {
+      const w = mount({ rebootWhenDone: true });
+      w.vm.putAway();
+      expect(w.vm.dismissed).toBe(true);
+
+      const rebooting = mount({ rebootWhenDone: true });
+      rebooting.vm.rebootPressed = true;
+      rebooting.vm.putAway();
+      expect(rebooting.vm.dismissed).toBe(false);
+    });
+
+    it('starts with the dialog and no callout', () => {
+      const w = mount({ rebootWhenDone: true });
+      expect(w.vm.dismissed).toBe(false);
+    });
+
+    it('keeps watching the drive while it is put away, and says what the dialog said', async () => {
+      axios.get.mockResolvedValue({ data: { result: true } });
+      const w = mount({ rebootWhenDone: true });
+      w.vm.dismissed = true;
+      await w.vm.checkUsbPresent();
+      expect(w.vm.dismissed).toBe(true);
+      expect(w.vm.computeText()).toBe('Please remove USB drive before rebooting');
+      // Still polling: the drive being pulled must be noticed from the callout too.
+      await vi.advanceTimersByTimeAsync(600);
+      expect(axios.get).toHaveBeenCalledTimes(2);
+    });
+
+    it('brings the dialog back when the board starts to reboot', async () => {
+      axios.get.mockResolvedValue({ data: { result: false } });
+      const w = mount({ rebootWhenDone: true });
+      w.vm.dismissed = true;
+      await w.vm.checkUsbPresent();
+      expect(w.vm.rebootPressed).toBe(true);
+      expect(w.vm.dismissed).toBe(false);
+    });
+
+    it('brings the dialog back when Reboot Now is pressed in the callout', () => {
+      const w = mount({ rebootWhenDone: false });
+      w.vm.dismissed = true;
+      w.vm.clickReboot();
+      expect(w.emitted('reboot-board')).toBeTruthy();
+      expect(w.vm.dismissed).toBe(false);
+    });
+  });
 });
