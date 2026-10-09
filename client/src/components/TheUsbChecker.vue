@@ -14,7 +14,12 @@
       ><span>Reboot Now</span></w-button
     >
   </div>
-  <w-dialog v-if="open && !dismissed" :width="dialog.width" persistent>
+  <w-dialog
+    v-if="open && !dismissed"
+    :width="dialog.width"
+    :persistent="rebootPressed"
+    @close="putAway()"
+  >
     <template #title>
       <span class="dialog_title">Installation finished</span>
     </template>
@@ -52,7 +57,7 @@
     <!-- Wi-Fi, SSH and the rest still reach the new image from here (#185);
          the board stays put until the drive comes out. -->
     <div v-if="rebootPressed == false" class="mt4">
-      <w-button class="ma1" text @click="dismissed = true">
+      <w-button xl outline class="ma1" @click="putAway()">
         <span>Make changes first</span>
       </w-button>
     </div>
@@ -147,6 +152,12 @@ export default {
       this.dismissed = false;
       this.serverResponding = false;
       setTimeout(this.checkServerResponse, 1000);
+    },
+    // Put the dialog away - by its button or a click outside it - to make
+    // last changes; the callout across the top stands in for it. Not once the
+    // reboot has started: then the dialog is what shows the board going.
+    putAway() {
+      if (!this.rebootPressed) this.dismissed = true;
     },
     clickReload() {
       window.location.href =

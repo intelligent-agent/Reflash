@@ -90,6 +90,17 @@ describe('TheUsbChecker', () => {
   // The dialog can be put away to make last changes (#185); the message then
   // stays across the top, and a reboot that starts brings the dialog back.
   describe('putting the dialog away', () => {
+    it('can be put away by its button or a click outside, until the reboot starts', () => {
+      const w = mount({ rebootWhenDone: true });
+      w.vm.putAway();
+      expect(w.vm.dismissed).toBe(true);
+
+      const rebooting = mount({ rebootWhenDone: true });
+      rebooting.vm.rebootPressed = true;
+      rebooting.vm.putAway();
+      expect(rebooting.vm.dismissed).toBe(false);
+    });
+
     it('starts with the dialog and no callout', () => {
       const w = mount({ rebootWhenDone: true });
       expect(w.vm.dismissed).toBe(false);
