@@ -4,7 +4,8 @@
 #
 #   target-install prepare <revision>         straight after the write
 #   target-install configure <settings-file>  when the user finishes
-#   target-install settings                   print the installed system's settings
+#   target-install settings [secrets]         print the installed system's settings
+#                                             (secrets: this once, also the Wi-Fi passphrase)
 #   target-install backup <file>              the user's files, into <file>
 #   target-install restore <file>             ...and back, after prepare
 #
@@ -42,6 +43,9 @@ fatal() {
 
 ACTION=${1:-}
 ARG=${2:-}
+# Set only for `settings secrets`; handed to the installer as its second word.
+SECRETS=""
+[ "$ACTION" = settings ] && [ "$ARG" = secrets ] && SECRETS=secrets
 case $ACTION in
     prepare)
         # Same refusal as flash-cleanup, for the same reason (#138): without a
@@ -55,9 +59,14 @@ case $ACTION in
     backup)
         [ -n "$ARG" ] || fatal "no backup file given"
         ;;
-    settings) ;;
+    settings)
+        # "secrets" is passed on to the installer, which may then print the
+        # Wi-Fi passphrase too (#195). Only that word: it ends up on the
+        # installer's command line, in the image.
+        case $ARG in "" | secrets) ;; *) echo "usage: $0 settings [secrets]" >&2; exit 2 ;; esac
+        ;;
     *)
-        echo "usage: $0 prepare <revision> | configure <settings-file> | settings | backup <file> | restore <file>" >&2
+        echo "usage: $0 prepare <revision> | configure <settings-file> | settings [secrets] | backup <file> | restore <file>" >&2
         exit 2
         ;;
 esac
@@ -193,7 +202,7 @@ run_chrooted() {
         REFLASH_BOOT_DEV="$BOOT_DEV" \
         REFLASH_REVISION="${REVISION:-}" \
         REFLASH_SERIAL="${SERIAL:-}" \
-        "$chroot_cmd" "$MNT" "$INSTALLER" "$ACTION" < "$stdin"
+        "$chroot_cmd" "$MNT" "$INSTALLER" "$ACTION" ${SECRETS:+"$SECRETS"} < "$stdin"
 }
 
 # Run the installer inside the image. Its output goes to the log; the last

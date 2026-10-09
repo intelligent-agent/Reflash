@@ -175,6 +175,10 @@ type Options struct {
 	// system, between its prepare and configure (#175). Like the password, a
 	// choice for one installation, so not saved on the drive.
 	RestoreBackup string `json:"restoreBackup" toml:"-"`
+	// Carry the installed system's Wi-Fi, rotation and SSH into the next
+	// install, except what the user chose in this session (#195). On unless
+	// switched off, and not saved: a choice for one installation.
+	KeepSettings bool `json:"keepSettings" toml:"-"`
 }
 
 type Download struct {
@@ -2039,6 +2043,10 @@ func checkFileIntegrity(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// Why the old system's settings could not be read for "Keep my settings",
+// said once in the install's result.
+var carryErr error
+
 func installRefactor(w http.ResponseWriter, r *http.Request) {
 	var data *Download = &Download{}
 	reqBody, _ := io.ReadAll(r.Body)
@@ -2059,6 +2067,9 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusConflict)
 		return
 	}
+	// The system about to be replaced, while it is still there (#195). A
+	// failed read does not stop the install; the user is told at the end.
+	carryErr = captureCarried()
 	resetTransfer()
 	startWorker()
 	state.State = INSTALLING
@@ -2184,7 +2195,13 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 			keep(restoreFileBackup(options.RestoreBackup))
 			options.RestoreBackup = ""
 		}
-		if err := configureTarget(allowed); err != nil {
+		if carryErr != nil {
+			keep(fmt.Errorf("the old system's settings were not kept: %w", carryErr))
+			carryErr = nil
+		}
+		err := configureTarget(allowed)
+		forgetCarried()
+		if err != nil {
 			keep(err)
 		} else if allowed["LOGIN_PASSWORD"] {
 			// Taken: the next board is set up afresh, not with this one's password.
@@ -2250,18 +2267,21 @@ func manifestSettings(manifest string) map[string]bool {
 // value would end it early and start a line of the user's making, so such a
 // value is refused rather than sent.
 func targetSettings(allowed map[string]bool) (string, error) {
-	for name, v := range map[string]string{"Wi-Fi network name": options.WifiSSID, "Wi-Fi passphrase": options.WifiPSK, "login password": options.LoginPassword} {
+	// The user's options, with what the replaced system held filling in what
+	// they did not choose in this session (#195).
+	opts := effectiveOptions()
+	for name, v := range map[string]string{"Wi-Fi network name": opts.WifiSSID, "Wi-Fi passphrase": opts.WifiPSK, "login password": opts.LoginPassword} {
 		if strings.ContainsAny(v, "\r\n") {
 			return "", fmt.Errorf("the %s contains a line break", name)
 		}
 	}
 	out := "SETTINGS=1\n"
 	for _, kv := range [][2]string{
-		{"SSH_ENABLED", strconv.FormatBool(options.EnableSsh)},
-		{"SCREEN_ROTATION", strconv.Itoa(options.ScreenRotation)},
-		{"WIFI_SSID", options.WifiSSID},
-		{"WIFI_PSK", options.WifiPSK},
-		{"LOGIN_PASSWORD", options.LoginPassword},
+		{"SSH_ENABLED", strconv.FormatBool(opts.EnableSsh)},
+		{"SCREEN_ROTATION", strconv.Itoa(opts.ScreenRotation)},
+		{"WIFI_SSID", opts.WifiSSID},
+		{"WIFI_PSK", opts.WifiPSK},
+		{"LOGIN_PASSWORD", opts.LoginPassword},
 	} {
 		// An empty password is not a password: the key is left out, and the
 		// image keeps its account as it is.
@@ -3100,16 +3120,22 @@ func loadOptions() {
 		toml.Unmarshal(content, &options)
 		logInfo("Options loaded from disk successfully")
 	}
+	options.KeepSettings = true
 }
 
 func lockSetOptions(opts []byte) error {
 	optionsLock.Lock()
 	defer optionsLock.Unlock()
 
+	var before Options
+	if options != nil {
+		before = *options
+	}
 	err := json.Unmarshal(opts, &options)
 	if err != nil {
 		return err
 	}
+	noteTouched(before, *options)
 
 	isDirty = true
 	logInfo("Options updated in memory and marked dirty")

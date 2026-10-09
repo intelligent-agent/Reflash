@@ -295,6 +295,20 @@
               <span v-else>Default config</span>
             </div>
           </div>
+          <!-- Wi-Fi, rotation and SSH from the system being replaced go into
+               the new one, except what was chosen in this Reflash session
+               (#195). Offered when an image is chosen and the installed system
+               can say what its settings are. -->
+          <div v-if="keepSettingsOffered" class="usb-row mt2">
+            <w-switch
+              :model-value="options.keepSettings"
+              @update:model-value="storeSetOption({ keepSettings: $event })"
+              :title="keepSettingsSummary"
+            >
+              Keep my settings
+            </w-switch>
+            <span class="caption ml2" v-if="options.keepSettings">{{ keepSettingsSummary }}</span>
+          </div>
         </div>
         <div class="xs1 align-self-center">
           <w-button
@@ -460,6 +474,9 @@ export default {
     configBackupBusy: false,
     configRestoreBusy: false,
     selectedConfig: "",
+    // What the installed system says its settings are (#195), read when an
+    // image is chosen: the answer of /api/installed_settings.
+    installedNow: { supported: false, current: {} },
     reflash_version: "Unknown",
     emmc_version: "Unknown",
     recore_revision: "Unknown",
@@ -494,6 +511,23 @@ export default {
     // Rebuild downloads from GitHub via the board itself (flash-from-url) -
     // without internet that can't work, so hide it and leave only the
     // local-file paths (upload, magic, install) - #74.
+    keepSettingsOffered() {
+      return (
+        this.flash.selectedMethod == 0 &&
+        !!this.selectedLocalImage &&
+        this.installedNow.supported &&
+        Object.keys(this.installedNow.current || {}).length > 0
+      );
+    },
+    // What would be carried, in words. The Wi-Fi passphrase is never shown.
+    keepSettingsSummary() {
+      const c = this.installedNow.current || {};
+      const parts = [];
+      if (c.WIFI_SSID) parts.push(`Wi-Fi ${c.WIFI_SSID}`);
+      if (c.SCREEN_ROTATION !== undefined) parts.push(`rotation ${c.SCREEN_ROTATION}°`);
+      if (c.SSH_ENABLED !== undefined) parts.push(`SSH ${c.SSH_ENABLED == "true" ? "on" : "off"}`);
+      return parts.join(", ");
+    },
     // "Default config" first: installing a config is optional.
     // Everything on the USB drive that can go to this computer.
     // For the Magic button's tooltip: what goes where.
@@ -534,6 +568,16 @@ export default {
   },
   methods: {
     ...mapActions({ storeSetOption: "setOption" }),
+    // The installed system's settings, to show what "Keep my settings" would
+    // carry. Busy, unsupported or unreadable all mean: do not offer it.
+    async loadInstalledNow() {
+      try {
+        const res = await axios.get(`/api/installed_settings`);
+        this.installedNow = res.data && res.data.supported ? res.data : { supported: false, current: {} };
+      } catch (err) {
+        this.installedNow = { supported: false, current: {} };
+      }
+    },
     ...mapActions([
       "setProgress",
       "setBandwidth",
@@ -1396,8 +1440,9 @@ export default {
     // page, and the prop itself received the method's undefined return value.
     // A watcher runs when the selection actually changes, which is also what
     // keeps the Install button's state from flickering while polling redraws.
-    selectedLocalImage() {
+    selectedLocalImage(name) {
       this.onSelectedFileChanged();
+      if (name) this.loadInstalledNow();
     },
     // The config to restore after the image (#184): the server's
     // restoreBackup, which it puts back after prepare and before configure.

@@ -283,6 +283,27 @@ optional_manifest() {
   ! grep -qE '^(e2fsck|parted|tune2fs)' "$CALLS"
 }
 
+@test "target-install settings secrets: the installer is told, and the passphrase stays out of the log" {
+  optional_manifest actions=settings
+  printf 'SETTINGS=1\\nWIFI_SSID=home\\nWIFI_PSK=hunter2\\n' > "$SANDBOX/installer.out"
+  run --separate-stderr "$PROD_BIN/target-install" settings secrets
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WIFI_PSK=hunter2"* ]]
+  assert_called_with "chroot $REFLASH_TARGET_MNT /usr/lib/reflash/target-installer settings secrets"
+  ! grep -q hunter2 "$LOG_FILE"
+}
+
+@test "target-install settings: any word but secrets is refused, and plain settings does not ask for them" {
+  optional_manifest actions=settings
+  run "$PROD_BIN/target-install" settings everything
+  [ "$status" -eq 2 ]
+  ! grep -q '^chroot' "$CALLS"
+  printf 'SETTINGS=1\\n' > "$SANDBOX/installer.out"
+  run "$PROD_BIN/target-install" settings
+  [ "$status" -eq 0 ]
+  assert_called_with "chroot $REFLASH_TARGET_MNT /usr/lib/reflash/target-installer settings"
+}
+
 @test "target-install: an optional action the manifest does not list is not supported (3)" {
   optional_manifest actions=settings
   run "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
