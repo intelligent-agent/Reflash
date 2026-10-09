@@ -175,10 +175,6 @@ type Options struct {
 	// system, between its prepare and configure (#175). Like the password, a
 	// choice for one installation, so not saved on the drive.
 	RestoreBackup string `json:"restoreBackup" toml:"-"`
-	// Carry the installed system's Wi-Fi, rotation and SSH into the next
-	// install, except what the user chose in this session (#195). On unless
-	// switched off, and not saved: a choice for one installation.
-	KeepSettings bool `json:"keepSettings" toml:"-"`
 }
 
 type Download struct {
@@ -390,6 +386,16 @@ func slowInit() {
 	} else {
 		bootPhase("load-options", func() { loadOptions() })
 		setStorage(STORAGE_READY)
+		// The installed system's settings become Reflash's own (#185). Not on
+		// the way to a usable page: it mounts the eMMC.
+		go func() {
+			if err := syncFromInstalled(); err != nil {
+				logError("Could not read the installed system's settings: " + err.Error())
+				pushLock.Lock()
+				syncError = "could not read the installed system's settings: " + err.Error()
+				pushLock.Unlock()
+			}
+		}()
 	}
 
 	startWatchdog()
@@ -748,6 +754,7 @@ func startConnectWifi(w http.ResponseWriter, r *http.Request) {
 		options.WifiPSK = psk
 		isDirty = true
 		optionsLock.Unlock()
+		queuePush(map[string]string{keyWifiName: ssid, keyWifiPSK: psk})
 		logInfo("WiFi Connection successful")
 	}()
 
@@ -831,6 +838,9 @@ func writeOptions(w http.ResponseWriter) {
 	passwordSet := options.LoginPassword != ""
 	optionsLock.Unlock()
 	fields["loginPasswordSet"], _ = json.Marshal(passwordSet)
+	pushLock.Lock()
+	fields["settingsSyncError"], _ = json.Marshal(syncError)
+	pushLock.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(fields)
@@ -1111,8 +1121,6 @@ func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
 
-	// The system about to be replaced, while it is still there (#195).
-	carryErr = captureCarried()
 	state.Filename = data.Filename
 	state.StartTime = data.StartTime
 	state.BytesNow = 0
@@ -1695,8 +1703,6 @@ func startMagic(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusConflict)
 		return
 	}
-	// The system about to be replaced, while it is still there (#195).
-	carryErr = captureCarried()
 	resetTransfer()
 	startWorker()
 	state.State = MAGIC
@@ -2047,10 +2053,6 @@ func checkFileIntegrity(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// Why the old system's settings could not be read for "Keep my settings",
-// said once in the install's result.
-var carryErr error
-
 func installRefactor(w http.ResponseWriter, r *http.Request) {
 	var data *Download = &Download{}
 	reqBody, _ := io.ReadAll(r.Body)
@@ -2071,9 +2073,6 @@ func installRefactor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusConflict)
 		return
 	}
-	// The system about to be replaced, while it is still there (#195). A
-	// failed read does not stop the install; the user is told at the end.
-	carryErr = captureCarried()
 	resetTransfer()
 	startWorker()
 	state.State = INSTALLING
@@ -2199,13 +2198,7 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 			keep(restoreFileBackup(options.RestoreBackup))
 			options.RestoreBackup = ""
 		}
-		if carryErr != nil {
-			keep(fmt.Errorf("the old system's settings were not kept: %w", carryErr))
-			carryErr = nil
-		}
-		err := configureTarget(allowed)
-		forgetCarried()
-		if err != nil {
+		if err := configureTarget(allowed); err != nil {
 			keep(err)
 		} else if allowed["LOGIN_PASSWORD"] {
 			// Taken: the next board is set up afresh, not with this one's password.
@@ -2271,9 +2264,7 @@ func manifestSettings(manifest string) map[string]bool {
 // value would end it early and start a line of the user's making, so such a
 // value is refused rather than sent.
 func targetSettings(allowed map[string]bool) (string, error) {
-	// The user's options, with what the replaced system held filling in what
-	// they did not choose in this session (#195).
-	opts := effectiveOptions()
+	opts := *options
 	for name, v := range map[string]string{"Wi-Fi network name": opts.WifiSSID, "Wi-Fi passphrase": opts.WifiPSK, "login password": opts.LoginPassword} {
 		if strings.ContainsAny(v, "\r\n") {
 			return "", fmt.Errorf("the %s contains a line break", name)
@@ -3124,7 +3115,6 @@ func loadOptions() {
 		toml.Unmarshal(content, &options)
 		logInfo("Options loaded from disk successfully")
 	}
-	options.KeepSettings = true
 }
 
 func lockSetOptions(opts []byte) error {
@@ -3139,7 +3129,8 @@ func lockSetOptions(opts []byte) error {
 	if err != nil {
 		return err
 	}
-	noteTouched(before, *options)
+	// What changed is brought to the installed system as well (#185).
+	queuePush(changedSettings(before, *options))
 
 	isDirty = true
 	logInfo("Options updated in memory and marked dirty")

@@ -24,14 +24,7 @@
           @change="onChange('enableSsh', options.enableSsh)"
           v-model="options.enableSsh"
           class="ma2"
-          label="Enable SSH access on new image"
-        >
-        </w-switch>
-        <w-switch
-          @change="onChange('magicmode', options.magicmode)"
-          v-model="options.magicmode"
-          class="ma2"
-          label="Magicmode"
+          label="Enable SSH access"
         >
         </w-switch>
         <!-- The picker offers released images only; this puts the release
@@ -57,36 +50,30 @@
         >
         </w-radios>
         <w-divider class="my6 mx-3"></w-divider>
-        <h4>Serial number</h4>
-        <div>
-          <w-button xl outline class="ma2" @click="$emit('open-serial-number')">
-            <span>Set Serial Number</span>
-          </w-button>
-        </div>
-        <w-divider class="my6 mx-3"></w-divider>
-        <h4>Wi-Fi credentials</h4>
+        <!-- Wi-Fi, SSH and rotation are the installed system's as well: a
+             change here reaches it at once, and a Reflash that starts takes
+             its values from it (#185). -->
         <div>
           <w-button xl outline class="ma2" @click="$emit('open-wifi')">
-            <span>Set Wi-Fi credentials</span>
+            <span>Wi-Fi</span>
           </w-button>
         </div>
         <w-divider class="my6 mx-3"></w-divider>
-        <h4>Login password</h4>
         <div>
           <w-button xl outline class="ma2" @click="$emit('open-login-password')">
-            <span>Set login password</span>
+            <span>SSH password</span>
           </w-button>
         </div>
         <div class="caption ma2">
-          {{ options.loginPasswordSet ? "Set for the next install." : "Not set." }}
+          {{ options.loginPasswordSet ? "Set for the installed system and the next install." : "Not set." }}
+        </div>
+        <div class="caption ma2 error" v-if="options.settingsSyncError">
+          The installed system was not brought in line: {{ options.settingsSyncError }}
         </div>
         <w-divider class="my6 mx-3"></w-divider>
-        <h4>Installed system</h4>
-        <!-- Change the system already on the eMMC without reinstalling it:
-             a forgotten password, the wrong Wi-Fi (#173). -->
         <div>
-          <w-button xl outline class="ma2" @click="$emit('open-installed-settings')">
-            <span>Change its settings</span>
+          <w-button xl outline class="ma2" @click="$emit('open-serial-number')">
+            <span>Serial number</span>
           </w-button>
         </div>
         <w-divider class="my6 mx-3"></w-divider>
