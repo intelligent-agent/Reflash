@@ -111,6 +111,13 @@ type pushRig struct {
 	err   error
 }
 
+// The push goroutine reads the state under its lock; so does the test.
+func setTestState(v string) {
+	state.Lock()
+	state.State = v
+	state.Unlock()
+}
+
 func newPushRig(t *testing.T) *pushRig {
 	r := &pushRig{}
 	savedPush, savedDelay, savedRetry, savedMax, savedState := pushToInstalled, pushDelay, pushRetryDelay, pushMaxTries, state
@@ -130,6 +137,14 @@ func newPushRig(t *testing.T) *pushRig {
 	pushPending, syncError = map[string]string{}, ""
 	pushLock.Unlock()
 	t.Cleanup(func() {
+		// Nothing of this test may fire once the real functions are back.
+		pushLock.Lock()
+		if pushTimer != nil {
+			pushTimer.Stop()
+		}
+		pushPending, pushing = map[string]string{}, false
+		pushLock.Unlock()
+		time.Sleep(2 * pushDelay)
 		pushToInstalled, pushDelay, pushRetryDelay, pushMaxTries, state = savedPush, savedDelay, savedRetry, savedMax, savedState
 	})
 	return r
@@ -171,7 +186,7 @@ func TestSeveralChangesBecomeOneWrite(t *testing.T) {
 
 func TestAChangeWaitsForABusyEMMCAndThenGoes(t *testing.T) {
 	r := newPushRig(t)
-	state.State = UPLOADING_MAGIC
+	setTestState(UPLOADING_MAGIC)
 	queuePush(map[string]string{"SSH_ENABLED": "false"})
 	time.Sleep(80 * time.Millisecond)
 	r.mu.Lock()
@@ -180,16 +195,16 @@ func TestAChangeWaitsForABusyEMMCAndThenGoes(t *testing.T) {
 	if early != 0 {
 		t.Fatalf("written while the eMMC was being written: %v", r.calls)
 	}
-	state.State = IDLE
+	setTestState(IDLE)
 	r.waitFor(t, 1)
 }
 
 func TestAChangeIsDroppedWhenTheEMMCStaysBusy(t *testing.T) {
 	r := newPushRig(t)
-	state.State = INSTALLING
+	setTestState(INSTALLING)
 	queuePush(map[string]string{"SSH_ENABLED": "false"})
 	time.Sleep(300 * time.Millisecond)
-	state.State = IDLE
+	setTestState(IDLE)
 	time.Sleep(80 * time.Millisecond)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -284,7 +299,7 @@ func TestAChangeDuringAFlashIsKeptAndNotWrittenToTheOldSystem(t *testing.T) {
 	options = &Options{EnableSsh: true, ScreenRotation: 0}
 	defer func() { options = savedOpts }()
 
-	state.State = INSTALLING
+	setTestState(INSTALLING)
 	if err := lockSetOptions([]byte(`{"screenRotation":90}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +318,7 @@ func TestAChangeDuringAFlashIsKeptAndNotWrittenToTheOldSystem(t *testing.T) {
 	if got, err := targetSettings(manifestSettings("")); err != nil || !strings.Contains(got, "SCREEN_ROTATION=90\n") {
 		t.Errorf("the new image would not get the change: %q (%v)", got, err)
 	}
-	state.State = FINISHED
+	setTestState(FINISHED)
 	r.waitFor(t, 1)
 }
 

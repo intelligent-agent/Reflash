@@ -386,16 +386,19 @@ func slowInit() {
 	} else {
 		bootPhase("load-options", func() { loadOptions() })
 		setStorage(STORAGE_READY)
-		// The installed system's settings become Reflash's own (#185). Not on
-		// the way to a usable page: it mounts the eMMC.
-		go func() {
+		// The installed system's settings become Reflash's own (#185), before
+		// the Wi-Fi comes up, so Reflash joins the network the system had. This
+		// is already off the page's way: storage is ready, and it mounts the
+		// eMMC, which takes a few seconds. In sequence rather than a goroutine
+		// of its own, so nothing is left running behind a test.
+		bootPhase("sync-installed-settings", func() {
 			if err := syncFromInstalled(); err != nil {
 				logError("Could not read the installed system's settings: " + err.Error())
 				pushLock.Lock()
 				syncError = "could not read the installed system's settings: " + err.Error()
 				pushLock.Unlock()
 			}
-		}()
+		})
 	}
 
 	startWatchdog()
