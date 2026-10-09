@@ -98,3 +98,25 @@ describe('Local storage, both ways', () => {
     expect(url('a b.img.xz')).toBe('/api/images/download?name=a%20b.img.xz');
   });
 });
+
+import { shortName } from '@/App.vue';
+
+// #188: one line in a narrow column, keeping what tells two files apart.
+describe('shortName', () => {
+  it('leaves a short name alone', () => {
+    expect(shortName('fluidd.img.xz')).toBe('fluidd.img.xz');
+  });
+
+  it('keeps the start, and the end with the version and extension', () => {
+    const s = shortName('rebuild-fluidd-v1.1.0-94-gdf7a98b.img.xz');
+    expect(s.length).toBeLessThanOrEqual(32);
+    expect(s.startsWith('rebuild-fluid')).toBe(true);
+    expect(s.endsWith('94-gdf7a98b.img.xz')).toBe(true);
+  });
+
+  it('tells two backups apart by their time', () => {
+    const a = shortName('recore-0132-barebone-config-2026-10-08-1844.tar.gz');
+    const b = shortName('recore-0132-barebone-config-2026-10-08-2108.tar.gz');
+    expect(a).not.toBe(b);
+  });
+});

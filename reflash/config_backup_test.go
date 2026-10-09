@@ -217,3 +217,54 @@ func TestReadingTheDriveMountsItAgainAfterAnInstall(t *testing.T) {
 		t.Error("the drive was remounted under an install")
 	}
 }
+
+// #188: the files window lists images and config archives with their date,
+// archives with whether they open, and deletes both through delete_image.
+func TestFilesWindowListsAndDeletes(t *testing.T) {
+	dir := setupTest(t)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	os.MkdirAll(backups_folder, 0o755)
+	os.WriteFile(filepath.Join(images_folder, "a.img.xz"), []byte("img"), 0o644)
+	os.WriteFile(filepath.Join(backups_folder, "good.tar.gz"), configArchive(t), 0o644)
+	os.WriteFile(filepath.Join(backups_folder, "bad.tar.gz"), []byte("not gzip"), 0o644)
+
+	if imgs := getLocalImages(); len(imgs) != 1 || imgs[0].Date == 0 {
+		t.Errorf("images %+v", imgs)
+	}
+	w := httptest.NewRecorder()
+	fileBackups(w, httptest.NewRequest("GET", "/api/file_backups", nil))
+	var list []FileBackup
+	json.NewDecoder(w.Body).Decode(&list)
+	ok := map[string]bool{}
+	for _, b := range list {
+		if b.Date == 0 {
+			t.Errorf("%s has no date", b.Name)
+		}
+		ok[b.Name] = b.Ok
+	}
+	if !ok["good.tar.gz"] || ok["bad.tar.gz"] {
+		t.Errorf("integrity %v", ok)
+	}
+
+	del := func(name string) int {
+		state = &State{State: IDLE}
+		w := httptest.NewRecorder()
+		deleteImage(w, httptest.NewRequest("PUT", "/api/delete_image",
+			strings.NewReader(`{"filename":"`+name+`"}`)))
+		return w.Code
+	}
+	if c := del("good.tar.gz"); c != http.StatusOK {
+		t.Errorf("deleting a config archive answered %d", c)
+	}
+	if _, err := os.Stat(filepath.Join(backups_folder, "good.tar.gz")); err == nil {
+		t.Error("the config archive is still there")
+	}
+	for _, name := range []string{"../options.cfg", "options.cfg", ".hidden.tar.gz"} {
+		if c := del(name); c != http.StatusBadRequest {
+			t.Errorf("%q answered %d", name, c)
+		}
+	}
+	if c := del("a.img.xz"); c != http.StatusOK {
+		t.Errorf("deleting an image answered %d", c)
+	}
+}
