@@ -76,7 +76,10 @@
           <span v-else>Download</span>
         </div>
         <div class="xs1 pa1 align-self-center">
-          {{ this.options.magicmode ? "Magic" : "USB drive" }}
+          <span v-if="this.options.magicmode">Magic</span>
+          <!-- #188: the drive's files, in a window of their own. -->
+          <a v-else href="#" class="usb-open" title="Files on the USB drive"
+             @click.prevent="openUsbFiles = true">USB drive</a>
         </div>
         <div class="xs1 pa1 align-self-center">
           <FlashSelector ref="flashSelector" />
@@ -104,6 +107,9 @@
           <img
             style="width: 60%"
             :src="computeSVG(this.options.magicmode ? 'magic' : 'USB')"
+            :class="{ 'usb-open': !options.magicmode }"
+            :title="options.magicmode ? '' : 'Files on the USB drive'"
+            @click="if (!options.magicmode) openUsbFiles = true;"
           />
         </div>
         <div class="xs1 pa1 align-self-center">
@@ -219,15 +225,6 @@
             <IntegrityChecker
               ref="integritychecker"
               @integrity="imageIntegrity = $event" />
-            <w-button
-              text
-              class="ml1"
-              v-if="isDeleteButtonVisible()"
-              :title="'Delete ' + selectedLocalImage + ' from the USB drive'"
-              @click="onDeleteImageClick()"
-            >
-              <span>{{ confirmDelete ? "Delete?" : "Delete" }}</span>
-            </w-button>
           </div>
           <w-button
             style="margin: auto"
@@ -297,6 +294,11 @@
           ref="TheWifiSetup"
           @close="openWifi = false; this.checkInternet(); this.getStatus()"
         />
+        <TheUsbFiles
+          :open="openUsbFiles"
+          @close="openUsbFiles = false"
+          @changed="onUsbFilesChanged"
+        />
         <TheLoginPassword
           :open="openLoginPassword"
           @close="openLoginPassword = false"
@@ -321,6 +323,7 @@ import TheUsbChecker from "./components/TheUsbChecker";
 import TheConfigUpdater from "./components/TheConfigUpdater";
 import TheWifiSetup from "./components/TheWifiSetup";
 import TheLoginPassword from "./components/TheLoginPassword";
+import TheUsbFiles from "./components/TheUsbFiles";
 import TheInstalledSettings from "./components/TheInstalledSettings";
 import WaveUI from "wave-ui";
 import { mapGetters, mapActions } from "vuex";
@@ -350,6 +353,7 @@ export default {
     TheConfigUpdater,
     TheWifiSetup,
     TheLoginPassword,
+    TheUsbFiles,
     TheInstalledSettings,
   },
   setup() {
@@ -365,8 +369,6 @@ export default {
     // null = unknown or still checking, true = passed, false = failed.
     imageIntegrity: null,
     // Delete takes two clicks, the second within a few seconds.
-    confirmDelete: false,
-    confirmDeleteTimer: null,
     state: "IDLE",
     previousState: "IDLE",
     installFinished: false,
@@ -394,6 +396,7 @@ export default {
     openWifi: false,
     openInstalledSettings: false,
     openLoginPassword: false,
+    openUsbFiles: false,
     availableMethods: [
       { id: 0, label: "Rebuild", value: 0, image: "Cloud" },
       { id: 2, label: "Local storage", value: 2, image: "File" },
@@ -459,7 +462,8 @@ export default {
     // "Default config" first: installing a config is optional.
     // Everything on the USB drive that can go to this computer.
     localImageChoices() {
-      return this.localImages.map((name) => ({ label: shortName(name), value: name }));
+      // local_images are {name, size, id, date}.
+      return this.localImages.map((i) => ({ label: shortName(i.name), value: i.name }));
     },
     downloadChoices() {
       return this.configBackups
@@ -568,6 +572,21 @@ export default {
         this.configBackups = (await axios.get(`/api/file_backups`)).data || [];
       } catch (err) {
         this.configBackups = [];
+      }
+    },
+    // Something was deleted in the files window: the lists follow, and a
+    // selection that went with it is cleared.
+    async onUsbFilesChanged() {
+      await this.getStatus();
+      await this.listConfigBackups();
+      if (this.selectedLocalImage && !this.localImages.some((i) => i.name == this.selectedLocalImage)) {
+        this.selectedLocalImage = null;
+      }
+      if (this.selectedConfig && !this.configBackups.some((b) => b.name == this.selectedConfig)) {
+        this.selectedConfig = "";
+      }
+      if (this.selectedDownload && !this.downloadChoices.some((c) => c.value == this.selectedDownload)) {
+        this.selectedDownload = "";
       }
     },
     shortName(name) {
@@ -1126,7 +1145,7 @@ export default {
             this.selectedUploadImage = [];
             await this.getStatus();
             // A config archive goes to the backups (#184), not the images.
-            if (this.localImages.includes(data.filename)) {
+            if (this.localImages.some((i) => i.name == data.filename)) {
               this.selectedLocalImage = data.filename;
             }
           } else if (this.previousState == "MAGIC") {
@@ -1197,42 +1216,6 @@ export default {
           this.apiCall("cancel_backup");
         }
       }
-    },
-    isDeleteButtonVisible() {
-      return (
-        !this.options.magicmode &&
-        this.flash.selectedMethod == 0 &&
-        !!this.selectedLocalImage &&
-        this.state == "IDLE"
-      );
-    },
-    // A truncated image - an abandoned upload, an old cancelled backup - could
-    // only ever fail its integrity check, and there was no way to remove it
-    // (#153). Two clicks rather than confirm(): a native dialog blocks the
-    // page, progress polling included.
-    async onDeleteImageClick() {
-      clearTimeout(this.confirmDeleteTimer);
-      if (!this.confirmDelete) {
-        this.confirmDelete = true;
-        this.confirmDeleteTimer = setTimeout(() => (this.confirmDelete = false), 4000);
-        return;
-      }
-      this.confirmDelete = false;
-      const name = this.selectedLocalImage;
-      try {
-        const res = await axios.put(`/api/delete_image`, { filename: name });
-        if (res.data.status == "ERROR") {
-          this.$waveui.notify(res.data.error, "error", 0);
-        }
-      } catch (err) {
-        this.$waveui.notify(
-          "Could not delete " + name + ": " + (err.response?.data || err),
-          "error",
-          0
-        );
-      }
-      this.selectedLocalImage = null;
-      await this.getStatus();
     },
     async installSelected() {
       let self = this;
@@ -1364,8 +1347,6 @@ export default {
     // A watcher runs when the selection actually changes, which is also what
     // keeps the Install button's state from flickering while polling redraws.
     selectedLocalImage() {
-      // A pending "Delete?" belongs to the image it was clicked for.
-      this.confirmDelete = false;
       this.onSelectedFileChanged();
     },
     // The config to restore after the image (#184): the server's
@@ -1405,6 +1386,10 @@ export default {
 </script>
 
 <style>
+.usb-open {
+  cursor: pointer;
+  color: inherit;
+}
 /* #188: the USB drive column, one line per thing. */
 .usb-column {
   display: flex;

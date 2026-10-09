@@ -33,6 +33,8 @@ type Image struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
 	Id   int    `json:"id"`
+	// Unix seconds it reached the drive, for the files window (#188).
+	Date int64 `json:"date"`
 }
 
 // GetInfo is what does not change while the page is open. Every field below
@@ -1963,6 +1965,7 @@ func getLocalImages() []Image {
 			Name: filepath.Base(name),
 			Size: fi.Size(),
 			Id:   i,
+			Date: fi.ModTime().Unix(),
 		}
 		images = append(images, image)
 	}
@@ -1979,13 +1982,17 @@ func deleteImage(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
 	name := data.Filename
-	// A bare image name and nothing else: this deletes as root.
+	// A bare image or config archive name and nothing else: this deletes as
+	// root. Config archives live in backups/ (#188).
 	if name == "" || filepath.Base(name) != name || strings.HasPrefix(name, ".") ||
-		!strings.HasSuffix(name, ".img.xz") {
-		http.Error(w, "not an image name: "+name, http.StatusBadRequest)
+		!(strings.HasSuffix(name, ".img.xz") || strings.HasSuffix(name, ".tar.gz")) {
+		http.Error(w, "not an image or config archive name: "+name, http.StatusBadRequest)
 		return
 	}
 	path := images_folder + "/" + name
+	if strings.HasSuffix(name, ".tar.gz") {
+		path = backups_folder + "/" + name
+	}
 	if _, err := os.Stat(path); err != nil {
 		http.Error(w, "no such image: "+name, http.StatusNotFound)
 		return
@@ -2439,6 +2446,9 @@ var backupName = regexp.MustCompile(`^[A-Za-z0-9._-]+\.tar\.gz$`)
 type FileBackup struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
+	Date int64  `json:"date"`
+	// A gzip'd tar a restore can open (#188): the archive's integrity check.
+	Ok bool `json:"ok"`
 }
 
 // fileBackups: GET lists the backups on the USB drive, POST makes one of the
@@ -2452,7 +2462,8 @@ func fileBackups(w http.ResponseWriter, r *http.Request) {
 		when := map[string]time.Time{}
 		for _, e := range entries {
 			if fi, err := os.Stat(e); err == nil {
-				list = append(list, FileBackup{Name: filepath.Base(e), Size: fi.Size()})
+				list = append(list, FileBackup{Name: filepath.Base(e), Size: fi.Size(),
+					Date: fi.ModTime().Unix(), Ok: isConfigArchive(e, filepath.Base(e))})
 				when[filepath.Base(e)] = fi.ModTime()
 			}
 		}

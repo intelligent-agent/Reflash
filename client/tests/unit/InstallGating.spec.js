@@ -68,63 +68,6 @@ describe('Install is refused for an image that failed its integrity check', () =
   });
 });
 
-describe('deleting an image (#153)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.useFakeTimers();
-  });
-
-  function stand(over = {}) {
-    return {
-      selectedLocalImage: 'truncated.img.xz',
-      confirmDelete: false,
-      confirmDeleteTimer: null,
-      getStatus: vi.fn(),
-      $waveui: { notify: vi.fn() },
-      ...over,
-    };
-  }
-
-  it('asks first, and deletes on the second click', async () => {
-    axios.put.mockResolvedValue({ data: { status: 'OK' } });
-    const self = stand();
-    await App.methods.onDeleteImageClick.call(self);
-    expect(axios.put).not.toHaveBeenCalled();
-    expect(self.confirmDelete).toBe(true);
-
-    await App.methods.onDeleteImageClick.call(self);
-    expect(axios.put).toHaveBeenCalledWith('/api/delete_image', { filename: 'truncated.img.xz' });
-    expect(self.selectedLocalImage).toBe(null);
-    expect(self.getStatus).toHaveBeenCalled();
-  });
-
-  it('forgets the first click after a few seconds', async () => {
-    const self = stand();
-    await App.methods.onDeleteImageClick.call(self);
-    vi.advanceTimersByTime(5000);
-    expect(self.confirmDelete).toBe(false);
-  });
-
-  it('says why when the server refuses', async () => {
-    axios.put.mockResolvedValue({ data: { status: 'ERROR', error: 'busy: UPLOADING' } });
-    const self = stand({ confirmDelete: true });
-    await App.methods.onDeleteImageClick.call(self);
-    expect(self.$waveui.notify).toHaveBeenCalledWith('busy: UPLOADING', 'error', 0);
-  });
-
-  it('is only offered for an image, while nothing is running', () => {
-    const visible = (over) => App.methods.isDeleteButtonVisible.call({
-      options: { magicmode: false }, flash: { selectedMethod: 0 },
-      selectedLocalImage: 'a.img.xz', state: 'IDLE', ...over,
-    });
-    expect(visible({})).toBe(true);
-    expect(visible({ state: 'UPLOADING' })).toBe(false);
-    expect(visible({ selectedLocalImage: null })).toBe(false);
-    expect(visible({ options: { magicmode: true } })).toBe(false);
-    expect(visible({ flash: { selectedMethod: 1 } })).toBe(false);
-  });
-});
-
 describe('IntegrityChecker reports its verdict', () => {
   beforeEach(() => {
     vi.clearAllMocks();
