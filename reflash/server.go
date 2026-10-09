@@ -1111,6 +1111,8 @@ func uploadMagicStart(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(reqBody, &data)
 
+	// The system about to be replaced, while it is still there (#195).
+	carryErr = captureCarried()
 	state.Filename = data.Filename
 	state.StartTime = data.StartTime
 	state.BytesNow = 0
@@ -1693,6 +1695,8 @@ func startMagic(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusConflict)
 		return
 	}
+	// The system about to be replaced, while it is still there (#195).
+	carryErr = captureCarried()
 	resetTransfer()
 	startWorker()
 	state.State = MAGIC

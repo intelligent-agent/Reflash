@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -130,5 +131,29 @@ func TestTargetSettingsUsesCarriedAndHidesNothingElse(t *testing.T) {
 	out, _ = targetSettings(manifestSettings(""))
 	if !strings.Contains(out, "SCREEN_ROTATION=0\n") || strings.Contains(out, "kraake") {
 		t.Errorf("carried settings outlived forgetCarried: %q", out)
+	}
+}
+
+// Three requests start a write over the installed system: a local image, a
+// download streamed to the eMMC, and an upload streamed to it. Reading the old
+// system's settings has to happen in each, before the write; the first board
+// test found the streamed paths had been missed.
+func TestEveryWriteOverTheSystemCapturesItsSettings(t *testing.T) {
+	src, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fn := range []string{"installRefactor", "startMagic", "uploadMagicStart"} {
+		start := strings.Index(string(src), "\nfunc "+fn+"(")
+		if start < 0 {
+			t.Fatalf("%s not found: has it been renamed? update this test", fn)
+		}
+		body := string(src)[start+1:]
+		if end := strings.Index(body, "\nfunc "); end > 0 {
+			body = body[:end]
+		}
+		if !strings.Contains(body, "captureCarried()") {
+			t.Errorf("%s writes the eMMC without reading the old system's settings (#195)", fn)
+		}
 	}
 }
