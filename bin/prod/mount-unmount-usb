@@ -44,9 +44,17 @@ else
     exit 1
 fi
 
-umount -q "$MOUNT_POINT" || true
-
 if [ "$STATE" == "mounted" ]; then
+    # Already mounted from the drive: change the mode in place. Unmounting
+    # first left $MOUNT_POINT empty for a moment, and anything reading the
+    # drive then found nothing - a config restore failed with "not on the USB
+    # drive" whenever an options save switched the mode under it (#191).
+    if [ "$(findmnt -n -o SOURCE "$MOUNT_POINT" 2>/dev/null)" == "$USB_DEV" ] &&
+       mount -o "remount,${MODE}" "$MOUNT_POINT"; then
+        info "Remounted $USB_DEV on $MOUNT_POINT as ${MODE}"
+        exit 0
+    fi
+    umount -q "$MOUNT_POINT" || true
     info "Mounting $USB_DEV on $MOUNT_POINT as ${MODE}"
     mount "$USB_DEV" "${MODE_STR}" "$MOUNT_POINT"
     exit 0
