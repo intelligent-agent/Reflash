@@ -870,10 +870,19 @@ export default {
   align-items: center;
   gap: 10px;
   cursor: pointer;
+  /* The box the hidden checkbox is placed in. Without it the checkbox sits at
+     the page's own top-left, and focusing it - which a click does - scrolls the
+     page there. */
+  position: relative;
 }
 .setup-wrap .switch input {
   position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   opacity: 0;
+  cursor: pointer;
 }
 .setup-wrap .switch .track {
   width: 38px;

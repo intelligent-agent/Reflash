@@ -140,6 +140,15 @@ describe('Set up printer (#198)', () => {
     expect(mountSetup({ settingsSyncError: 'no space' }).find('.setup-meta').text()).toContain('no space')
   })
 
+  // The hidden checkbox of a switch must sit inside the switch. Positioned
+  // against the page instead, clicking the switch focused it and scrolled the
+  // page to the page's own top-left corner.
+  it('keeps the hidden checkbox of a switch inside the switch', () => {
+    const rule = (sel) => source.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' \\{([^}]*)\\}'))[1]
+    expect(rule('.setup-wrap .switch')).toMatch(/position:\s*relative/)
+    expect(rule('.setup-wrap .switch input')).toMatch(/position:\s*absolute/)
+  })
+
   it('has no Default box on the Wi-Fi network, which it cannot take back', () => {
     expect(source).not.toMatch(/keep\('network'/)
   })
