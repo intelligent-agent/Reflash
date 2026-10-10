@@ -491,6 +491,14 @@ export default {
 .dialog_title {
   margin: auto;
 }
+.wifi-inline h3 {
+  font-size: 1.05rem;
+  margin: 0 0 8px;
+}
+.wifi-inline .w-select,
+.wifi-inline .w-input {
+  width: 100% !important;
+}
 .reconnect-hint {
   opacity: 0.8;
   font-size: 0.9em;
