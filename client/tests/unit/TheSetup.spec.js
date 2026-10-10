@@ -141,13 +141,20 @@ describe('Set up printer (#198)', () => {
     expect(mountSetup({ settingsSyncError: 'no space' }).find('.setup-meta').text()).toContain('no space')
   })
 
-  // The hidden checkbox of a switch must sit inside the switch. Positioned
-  // against the page instead, clicking the switch focused it and scrolled the
-  // page to the page's own top-left corner.
-  it('keeps the hidden checkbox of a switch inside the switch', () => {
-    const rule = (sel) => source.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' \\{([^}]*)\\}'))[1]
-    expect(rule('.setup-wrap .switch')).toMatch(/position:\s*relative/)
-    expect(rule('.setup-wrap .switch input')).toMatch(/position:\s*absolute/)
+  // The switches are the same Wave switches as in the Options panel, not a
+  // look-alike of ours: ours placed its hidden checkbox against the page, and
+  // clicking it scrolled the page (#198).
+  it('uses the Wave switch, as the Options panel does', () => {
+    expect(source).toContain('<w-switch')
+    expect(source).not.toMatch(/class="switch"/)
+    expect(source).not.toMatch(/\.setup-wrap \.switch/)
+  })
+
+  // The part that matters for scrolling: the hidden checkbox Wave puts in a
+  // switch is placed against the nearest positioned ancestor.
+  it('makes each switch the box its hidden checkbox is placed in', () => {
+    const rule = source.match(/\.setup-wrap \.w-switch \{([^}]*)\}/)
+    expect(rule && rule[1]).toMatch(/position:\s*relative/)
   })
 
   // One of the three is always chosen, so the page never reads as having no mode.

@@ -131,7 +131,7 @@
               <span class="lab">SSH access</span>
               <label class="keep"><input type="checkbox" :checked="isDef('ssh')" @change="keep('ssh', $event.target.checked)" /> Default</label>
             </div>
-            <label class="switch"><input type="checkbox" :checked="options.enableSsh" @change="edit('ssh', { enableSsh: $event.target.checked })" /><span class="track"></span><span>Enable SSH access</span></label>
+            <w-switch :model-value="!!options.enableSsh" @update:model-value="edit('ssh', { enableSsh: $event })" label="Enable SSH access"></w-switch>
             <span class="help">Turns itself off after a while if the password is still the default. <b>Default:</b> off.</span>
           </div>
         </section>
@@ -229,7 +229,7 @@
           <h4>Optional software</h4>
           <div v-for="s in software" :key="s.name" class="field">
             <div class="top"><span class="lab">{{ title(s.name) }}</span></div>
-            <label class="switch"><input type="checkbox" :checked="softwareOn[s.name]" @change="toggleSoftware(s.name, $event.target.checked)" /><span class="track"></span><span>Install <code>{{ s.name }}</code></span></label>
+            <w-switch :model-value="!!softwareOn[s.name]" @update:model-value="toggleSoftware(s.name, $event)">Install&nbsp;<code>{{ s.name }}</code></w-switch>
             <span class="help">{{ s.info }}. Like the other settings, it reaches the installed system at once and goes onto the next image after a flash. Off by default.</span>
             <span class="help">Installed on this printer now: <b>{{ s.installed ? "yes" : "no" }}</b></span>
           </div>
@@ -875,54 +875,12 @@ export default {
   accent-color: gray;
   opacity: 0.4;
 }
-.setup-wrap .switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  /* The box the hidden checkbox is placed in. Without it the checkbox sits at
-     the page's own top-left, and focusing it - which a click does - scrolls the
-     page there. */
+/* Wave hides a switch's checkbox with position: absolute and positions nothing
+   around it, so on a page that scrolls the checkbox lands far from the switch
+   and focusing it - which a click does - scrolls the page there. The Options
+   drawer is a fixed overlay and never showed it. */
+.setup-wrap .w-switch {
   position: relative;
-}
-.setup-wrap .switch input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-.setup-wrap .switch .track {
-  width: 38px;
-  height: 20px;
-  border-radius: 99px;
-  background: rgba(var(--w-base-color-rgb), 0.3);
-  position: relative;
-  flex: none;
-  transition: background 0.15s;
-}
-.setup-wrap .switch .track::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--w-base-bg-color-rgb);
-  transition: left 0.15s;
-}
-.setup-wrap .switch input:checked + .track {
-  background: #04a3e5;
-}
-.setup-wrap .switch input:checked + .track::after {
-  left: 20px;
-}
-.setup-wrap .switch input:focus-visible + .track {
-  outline: 1px solid #04a3e5;
-  outline-offset: 2px;
 }
 .setup-wrap .disc {
   align-self: flex-start;
