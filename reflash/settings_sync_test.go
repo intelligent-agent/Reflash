@@ -589,3 +589,17 @@ func TestHostnameSyncAndValidation(t *testing.T) {
 		t.Fatal("unsupported image silently ignored hostname")
 	}
 }
+
+func TestLegacyImageDoesNotSilentlyIgnoreHostname(t *testing.T) {
+	dir := setupTest(t)
+	options = &Options{Hostname: "a5-printer"}
+	fakeBin(t, dir, "target-manifest", `exit 0`)
+	fakeBin(t, dir, "rotate-screen", `exit 0`)
+	fakeBin(t, dir, "save-settings", `exit 0`)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	w := httptest.NewRecorder()
+	runInstallFinishedCommands(w, httptest.NewRequest("GET", "/api/run_install_finished_commands", nil))
+	if !strings.Contains(w.Body.String(), "custom hostname") || !strings.Contains(w.Body.String(), "ERROR") {
+		t.Fatal(w.Body.String())
+	}
+}

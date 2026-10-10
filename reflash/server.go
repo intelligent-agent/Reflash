@@ -2247,6 +2247,9 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	default:
+		if options.Hostname != "" {
+			keep(errNoHostname)
+		}
 		if options.LoginPassword != "" {
 			keep(errNoLoginPassword)
 		}
@@ -2262,6 +2265,8 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 	keep(unmountUsb())
 	sendResponse(w, firstErr)
 }
+
+var errNoHostname = fmt.Errorf("this image does not support a custom hostname; update Rebuild or choose Default")
 
 // Said rather than dropped: an image that does not take LOGIN_PASSWORD keeps
 // its factory password, and the user believes they set another one (#182).
@@ -2318,7 +2323,7 @@ func targetSettings(allowed map[string]bool) (string, error) {
 		return "", err
 	}
 	if opts.Hostname != "" && !allowed[keyHostname] {
-		return "", fmt.Errorf("this image does not support a custom hostname; update Rebuild or choose Default")
+		return "", errNoHostname
 	}
 	out := "SETTINGS=1\n"
 	for _, kv := range [][2]string{
