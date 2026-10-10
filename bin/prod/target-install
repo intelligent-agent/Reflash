@@ -236,6 +236,7 @@ mount_target() {
 # failed preparation leaves its log too - without changing the exit status.
 persist_log() {
     local rc=$?
+    if declare -F disable_dns >/dev/null; then disable_dns; fi
     unmount_all
     if [ "$ACTION" = prepare ] && [ -n "$TARGET_LOG" ] && mount "$ROOT_DEV" "$MNT" 2>/dev/null; then
         MOUNTED+=("$MNT")
@@ -310,7 +311,7 @@ run_chrooted() {
 # /run, which does not exist in a chroot. Reflash's own is put there for the
 # length of the run and the image's put back after.
 RESOLV_HOST=${REFLASH_RESOLV:-/etc/resolv.conf}
-RESOLV_LINK="" RESOLV_SAVED=""
+RESOLV_LINK="" RESOLV_SAVED="" RESOLV_ENABLED=""
 enable_dns() {
     local f="$MNT/etc/resolv.conf"
     [ -s "$RESOLV_HOST" ] || return 0
@@ -321,14 +322,15 @@ enable_dns() {
         RESOLV_SAVED="$f.reflash-saved"
         mv "$f" "$RESOLV_SAVED"
     fi
-    cp "$RESOLV_HOST" "$f" 2>/dev/null || true
+    RESOLV_ENABLED=1
+    cp "$RESOLV_HOST" "$f" || fatal "could not supply DNS to the image"
 }
 disable_dns() {
     local f="$MNT/etc/resolv.conf"
-    [ -n "$RESOLV_LINK$RESOLV_SAVED" ] || { [ -z "${RESOLV_ENABLED:-}" ] || rm -f "$f"; return 0; }
+    [ -n "$RESOLV_ENABLED" ] || return 0
     rm -f "$f"
-    if [ -n "$RESOLV_LINK" ]; then ln -s "$RESOLV_LINK" "$f"; else mv "$RESOLV_SAVED" "$f"; fi
-    RESOLV_LINK="" RESOLV_SAVED=""
+    if [ -n "$RESOLV_LINK" ]; then ln -s "$RESOLV_LINK" "$f"; elif [ -n "$RESOLV_SAVED" ]; then mv "$RESOLV_SAVED" "$f"; fi
+    RESOLV_LINK="" RESOLV_SAVED="" RESOLV_ENABLED=""
 }
 
 # Run the installer inside the image. Its output goes to the log; the last
@@ -344,7 +346,7 @@ run_installer() {
         MOUNTED+=("$MNT/$d")
     done
 
-    [ "$ACTION" != configure ] || { enable_dns; RESOLV_ENABLED=1; }
+    [ "$ACTION" != configure ] || enable_dns
 
     out=$(mktemp)
     # Resolved before env -i replaces PATH with the image's.

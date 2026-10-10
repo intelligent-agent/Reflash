@@ -14,6 +14,9 @@ setup() {
   export REFLASH_MANIFEST_MNT="$SANDBOX/p1"
   export REFLASH_TARGET_MNT="$SANDBOX/target"
   mkdir -p "$SANDBOX/dev" "$SANDBOX/p1/reflash" "$SANDBOX/target/usr/lib/reflash"
+  mkdir -p "$SANDBOX/target/etc"
+  export REFLASH_RESOLV="$SANDBOX/host-resolv"
+  echo "nameserver 192.0.2.53" > "$REFLASH_RESOLV"
   : > "${REFLASH_EMMC}p1"
   : > "${REFLASH_EMMC}p2"
   printf '#!/bin/sh\n' > "$SANDBOX/target/usr/lib/reflash/target-installer"
@@ -575,4 +578,30 @@ legacy_system() {
   echo "nameserver 10.0.0.1" > "$REFLASH_TARGET_MNT/etc/resolv.conf"
   run "$PROD_BIN/target-install" settings
   [ "$(cat "$SANDBOX/resolv.seen")" = "nameserver 10.0.0.1" ]
+}
+
+@test "target-install configure: unavailable host DNS leaves target resolver untouched" {
+  v1_manifest
+  export REFLASH_RESOLV="$SANDBOX/missing-resolv"
+  mkdir -p "$REFLASH_TARGET_MNT/etc"
+  echo "nameserver 10.0.0.1" > "$REFLASH_TARGET_MNT/etc/resolv.conf"
+  printf 'SETTINGS=1\n' > "$SANDBOX/s"
+  run "$PROD_BIN/target-install" configure "$SANDBOX/s"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$REFLASH_TARGET_MNT/etc/resolv.conf")" = "nameserver 10.0.0.1" ]
+}
+
+@test "target-install configure: a DNS copy failure restores the target resolver" {
+  v1_manifest
+  echo 'nameserver 192.0.2.53' > "$SANDBOX/host-resolv"
+  export REFLASH_RESOLV="$SANDBOX/host-resolv"
+  mkdir -p "$REFLASH_TARGET_MNT/etc"
+  echo 'nameserver 10.0.0.1' > "$REFLASH_TARGET_MNT/etc/resolv.conf"
+  printf 'SETTINGS=1\n' > "$SANDBOX/s"
+  stub_silent cp 1
+  run "$PROD_BIN/target-install" configure "$SANDBOX/s"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'could not supply DNS'* ]]
+  [ "$(cat "$REFLASH_TARGET_MNT/etc/resolv.conf")" = 'nameserver 10.0.0.1' ]
+  [ ! -e "$REFLASH_TARGET_MNT/etc/resolv.conf.reflash-saved" ]
 }

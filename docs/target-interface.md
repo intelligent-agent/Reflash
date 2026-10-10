@@ -205,6 +205,12 @@ For these actions stdout carries data, and only stderr goes to Reflash's log.
   `SOFTWARE_a_INFO=` a line for people. Nothing is listed when there is
   nothing to offer, and Reflash then shows no section. Installing is
   `configure` with `SOFTWARE_a=on`, and may need the network (see below).
+  LED effects are cloned into the printer user's `~/klipper-led_effect` and
+  registered with Moonraker's updater. Off removes the module link and updater
+  section, leaving the checkout for reuse. Existing standalone module files
+  are left alone; the info line identifies software installed separately.
+  Restoring config files that reference an unavailable `led_effect` module
+  emits a warning. It does not download software as part of restore.
 
   Reflash keeps `SSH_ENABLED`, `SCREEN_ROTATION` and the Wi-Fi network the same
   as the installed system's: it reads them when it starts, and applies a change
