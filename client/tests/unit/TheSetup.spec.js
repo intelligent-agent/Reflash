@@ -280,7 +280,8 @@ describe('Config archives in the panel', () => {
 
   it('chooses the config to install and what of it, for the next install', async () => {
     const w = await open()
-    await w.find('#config-install').setValue('voron.tar.gz')
+    w.findComponent({ name: 'w-select' }).vm.$emit('update:modelValue', 'voron.tar.gz')
+    await flushPromises()
     expect(sent()).toContainEqual({ restoreBackup: 'voron.tar.gz', restoreInclude: '' })
     expect(w.vm.isDef('config')).toBe(false)
     await w.findAll('.disc')[1].trigger('click')
@@ -325,4 +326,62 @@ describe('Config archives in the panel', () => {
     expect(axios.put).toHaveBeenCalledWith('/api/upload_cancel')
     expect(w.vm.problem.archives).toContain('upload failed')
   }, 20000)
+})
+
+
+describe('setup feedback and Wi-Fi modes', () => {
+  it('shows both network and hotspot in Automatic and preserves input across modes', async () => {
+    const w = mountSetup({ hotspotSSID: 'Voron AP' })
+    document.body.appendChild(w.element)
+    await w.find('.setup-toggle').trigger('click')
+    w.vm.hotspotPsk = 'pending password'
+    const network = () => w.findComponent({ name: 'TheWifiSetup' })
+    const hotspot = () => w.find('#hotspot-name')
+    expect(network().isVisible()).toBe(true)
+    expect(hotspot().isVisible()).toBe(true)
+    await w.find('input[name=wifiMode][value=client]').setValue(true)
+    expect(network().isVisible()).toBe(true)
+    expect(hotspot().isVisible()).toBe(false)
+    await w.find('input[name=wifiMode][value=ap]').setValue(true)
+    expect(network().isVisible()).toBe(false)
+    expect(hotspot().isVisible()).toBe(true)
+    await w.find('input[name=wifiMode][value=""]').setValue(true)
+    expect(network().isVisible()).toBe(true)
+    expect(hotspot().isVisible()).toBe(true)
+    expect(w.vm.hotspotPsk).toBe('pending password')
+    expect(w.vm.hotspotName).toBe('Voron AP')
+    w.unmount()
+  })
+
+  it('notifies success for the archive that was actually requested', async () => {
+    const w = mountSetup({ restoreBackup: 'voron.tar.gz' })
+    let resolve
+    axios.post.mockImplementation(() => new Promise(r => { resolve = r }))
+    const request = w.vm.installNow()
+    expect(w.vm.busy.install).toBe(true)
+    options.restoreBackup = 'other.tar.gz'
+    resolve({ data: { status: 'OK' } })
+    await request
+    expect(w.vm.message.install).toBe('Installed voron.')
+    expect(w.vm.$waveui.notify).toHaveBeenCalledWith('Installed voron.', 'success', 6000)
+    expect(w.vm.busy.install).toBe(false)
+  })
+
+  it('notifies request errors and always clears the busy state', async () => {
+    const w = mountSetup({ restoreBackup: 'voron.tar.gz' })
+    axios.post.mockRejectedValue({ response: { data: 'busy: INSTALLING' } })
+    await w.vm.installNow()
+    expect(w.vm.problem.install).toBe('busy: INSTALLING')
+    expect(w.vm.$waveui.notify).toHaveBeenCalledWith('busy: INSTALLING', 'error', 6000)
+    expect(w.vm.busy.install).toBe(false)
+  })
+
+  it('reports errors in preparing the file selection before sending any request', async () => {
+    const w = mountSetup({ restoreBackup: 'voron.tar.gz' })
+    w.vm.includeOf = () => { throw new Error('Cannot prepare file selection') }
+    await w.vm.installNow()
+    expect(w.vm.problem.install).toBe('Cannot prepare file selection')
+    expect(w.vm.busy.install).toBe(false)
+    expect(axios.post).not.toHaveBeenCalled()
+  })
 })

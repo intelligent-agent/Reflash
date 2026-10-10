@@ -2675,24 +2675,38 @@ func restoreIntoInstalled(w http.ResponseWriter, r *http.Request) {
 		Name    string   `json:"name"`
 		Include []string `json:"include"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logError("Install config now: invalid request: " + err.Error())
+		http.Error(w, "invalid restore request", http.StatusBadRequest)
+		return
+	}
+	logInfo("Install config now requested: " + req.Name)
+	respond := func(err error) {
+		if err != nil {
+			logError("Install config now failed: " + err.Error())
+		} else {
+			logInfo("Install config now completed: " + req.Name)
+		}
+		sendResponse(w, err)
+	}
 	if busy := eMMCBusy(); busy != "" {
+		logError("Install config now rejected: busy: " + busy)
 		http.Error(w, "busy: "+busy, http.StatusConflict)
 		return
 	}
 	installedSettingsLock.Lock()
 	defer installedSettingsLock.Unlock()
 	if err := installedSupports("restore", "installing a config"); err != nil {
-		sendResponse(w, err)
+		respond(err)
 		return
 	}
 	if len(req.Include) > 0 {
 		if err := installedSupports("list", "installing only some of the files"); err != nil {
-			sendResponse(w, err)
+			respond(err)
 			return
 		}
 	}
-	sendResponse(w, restoreFileBackup(req.Name, req.Include))
+	respond(restoreFileBackup(req.Name, req.Include))
 }
 
 func restoreFileBackup(name string, include []string) error {

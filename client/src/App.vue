@@ -245,9 +245,7 @@
               ref="integritychecker"
               @integrity="imageIntegrity = $event" />
           </div>
-          <!-- What Magic does, before it is pressed: where the image and the
-               config each come from, and that both end up on the eMMC.
-               Config archives are only ever on the USB drive, never online. -->
+          <!-- What Magic does: stream the chosen image straight to the eMMC. -->
           <w-tooltip v-if="isMagicButtonVisible()" bottom tooltip-class="magic-tip">
             <template #activator="{ on }">
               <w-button
@@ -271,19 +269,7 @@
                 <img :src="computeSVG('eMMC')" />
               </div>
               <div class="magic-note">Streamed straight to the eMMC; not stored on the USB drive.</div>
-              <div class="magic-step">
-                <img :src="computeSVG('USB')" />
-                <div>
-                  <div class="magic-what">Config, from the USB drive</div>
-                  <div class="magic-name">{{ magicPlan.config }}</div>
-                </div>
-                <img :src="computeSVG('Arrow-right')" class="magic-arrow" />
-                <img :src="computeSVG('eMMC')" />
-              </div>
-              <div class="magic-note">
-                {{ magicPlan.configNote }}
-                Config archives are only ever kept on this USB drive.
-              </div>
+
             </div>
           </w-tooltip>
           <!-- The config to install is chosen under Set up printer (#198). -->
@@ -467,10 +453,6 @@ export default {
       return {
         imageFrom: fromNet ? "from the Rebuild server on the internet" : "from this computer",
         image: shortName(image || "") || "(none chosen)",
-        config: this.selectedConfig ? shortName(this.selectedConfig) : "Default config",
-        configNote: this.selectedConfig
-          ? "Put into the new system after the image is written."
-          : "No archive chosen: the system starts with its default configuration.",
       };
     },
     localImageChoices() {

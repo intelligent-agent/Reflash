@@ -54,7 +54,7 @@
             <span class="help"><b>Default:</b> no network set. The passphrase stays on the printer and never goes into a config archive.</span>
           </div>
 
-          <div v-show="effectiveMode === 'ap'" class="field" :class="{ 'is-default': isDef('hotspot') }">
+          <div v-show="effectiveMode !== 'client'" class="field" :class="{ 'is-default': isDef('hotspot') }">
             <div class="top">
               <span class="lab">Hotspot</span>
               <label class="keep"><input type="checkbox" :checked="isDef('hotspot')" @change="keep('hotspot', $event.target.checked)" /> Default</label>
@@ -203,10 +203,7 @@
               <label class="lab" for="config-install">Config to install</label>
               <label class="keep"><input type="checkbox" :checked="isDef('config')" @change="keep('config', $event.target.checked)" /> Default</label>
             </div>
-            <select id="config-install" class="input" :value="options.restoreBackup || ''" @change="chooseConfig($event.target.value)">
-              <option value="" disabled>Choose an archive</option>
-              <option v-for="a in archives" :key="a.name" :value="a.name">{{ shortName(a.name) }}</option>
-            </select>
+            <w-select id="config-install" :model-value="options.restoreBackup || ''" :items="archiveChoices" placeholder="Choose an archive" no-unselect @update:model-value="chooseConfig($event)" />
             <div v-if="options.restoreBackup">
               <button type="button" class="disc" :aria-expanded="String(tree.install.open)" aria-controls="tree-install" @click="toggleTree('install')">
                 <span class="chev" aria-hidden="true"></span>Choose files <span class="tally">{{ tally('install') }}</span>
@@ -326,6 +323,9 @@ export default {
       ];
       if (this.software.length) s.push({ id: "setup-software", title: "Optional software" });
       return s;
+    },
+    archiveChoices() {
+      return this.archives.map((archive) => ({ label: shortName(archive.name), value: archive.name }));
     },
     effectiveMode() {
       return this.options.wifiMode || "auto";
@@ -580,22 +580,26 @@ export default {
       this.setOption({ restoreInclude: Array.isArray(include) ? include.join("\n") : "" });
     },
     async installNow() {
+      if (this.busy.install) return;
       this.problem = { ...this.problem, install: "" };
       this.message = { ...this.message, install: "" };
-      const include = this.includeOf("install");
-      if (include === null) {
-        this.problem = { ...this.problem, install: "No files are chosen." };
-        return;
-      }
       this.busy.install = true;
+      const name = this.options.restoreBackup;
       try {
-        const res = await axios.post(`/api/file_backups/restore`, { name: this.options.restoreBackup, include });
-        if (res.data.status === "OK") this.message = { ...this.message, install: `Installed ${shortName(this.options.restoreBackup)}.` };
-        else this.problem = { ...this.problem, install: res.data.error || "Installing the config failed" };
+        const include = this.includeOf("install");
+        if (include === null) throw new Error("No files are chosen.");
+        const res = await axios.post(`/api/file_backups/restore`, { name, include });
+        if (res.data.status !== "OK") throw new Error(res.data.error || "Installing the config failed");
+        const message = `Installed ${shortName(name)}.`;
+        this.message = { ...this.message, install: message };
+        this.notify(message);
       } catch (err) {
-        this.problem = { ...this.problem, install: this.errorOf(err) };
+        const message = err instanceof Error && !err.response ? err.message : String(this.errorOf(err));
+        this.problem = { ...this.problem, install: message };
+        this.notify(message, "error");
+      } finally {
+        this.busy.install = false;
       }
-      this.busy.install = false;
     },
     // ---- The sidebar ----
     goTo(id) {
