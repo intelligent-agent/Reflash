@@ -323,6 +323,17 @@ func flushPush() {
 			if _, sent := changes[keyHotspotPSK]; sent {
 				options.HotspotPSK = ""
 			}
+			// Software that could not be installed - no connection to GitHub,
+			// say - is not left switched on in Reflash for the next image to
+			// fail on too (#205). The reason is shown with the error.
+			if on := softwareOn(options.Software); len(on) > 0 {
+				for k, v := range changes {
+					if n, ok := strings.CutPrefix(k, softwarePrefix); ok && v == "on" {
+						delete(on, n)
+					}
+				}
+				options.Software = softwareString(on)
+			}
 		}
 		optionsLock.Unlock()
 	}

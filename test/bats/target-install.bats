@@ -14,6 +14,9 @@ setup() {
   export REFLASH_MANIFEST_MNT="$SANDBOX/p1"
   export REFLASH_TARGET_MNT="$SANDBOX/target"
   mkdir -p "$SANDBOX/dev" "$SANDBOX/p1/reflash" "$SANDBOX/target/usr/lib/reflash"
+  mkdir -p "$SANDBOX/target/etc"
+  export REFLASH_RESOLV="$SANDBOX/host-resolv"
+  echo "nameserver 192.0.2.53" > "$REFLASH_RESOLV"
   : > "${REFLASH_EMMC}p1"
   : > "${REFLASH_EMMC}p2"
   printf '#!/bin/sh\n' > "$SANDBOX/target/usr/lib/reflash/target-installer"
@@ -31,6 +34,7 @@ setup() {
   cat > "$SHIMDIR/chroot" <<EOF
 #!/usr/bin/env bash
 echo "chroot \$*" >> "$CALLS"
+[ -f "\$1/etc/resolv.conf" ] && cat "\$1/etc/resolv.conf" > "$SANDBOX/resolv.seen" || true
 env | grep '^REFLASH_\|^PATH=' | sort > "$SANDBOX/installer.env"
 cat > "$SANDBOX/installer.stdin"
 printf '%b' "\$(cat "$SANDBOX/installer.out" 2>/dev/null)"
@@ -535,4 +539,69 @@ legacy_system() {
   grep -q 'target-installer restore --merge$' "$CALLS"
   run "$PROD_BIN/target-install" backup "$SANDBOX/out.tgz" --merge
   [ "$status" -ne 0 ]
+}
+
+@test "target-install configure: the installer sees Reflash's name server, and the image's own comes back" {
+  v1_manifest
+  echo "nameserver 192.0.2.53" > "$SANDBOX/host-resolv"
+  export REFLASH_RESOLV="$SANDBOX/host-resolv"
+  mkdir -p "$REFLASH_TARGET_MNT/etc"
+  ln -s ../run/systemd/resolve/stub-resolv.conf "$REFLASH_TARGET_MNT/etc/resolv.conf"
+  printf 'SETTINGS=1\n' > "$SANDBOX/s"
+  run "$PROD_BIN/target-install" configure "$SANDBOX/s"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SANDBOX/resolv.seen")" = "nameserver 192.0.2.53" ]
+  [ -L "$REFLASH_TARGET_MNT/etc/resolv.conf" ]
+  [ "$(readlink "$REFLASH_TARGET_MNT/etc/resolv.conf")" = ../run/systemd/resolve/stub-resolv.conf ]
+}
+
+@test "target-install configure: a plain resolv.conf in the image is put back as it was, even when the installer fails" {
+  v1_manifest
+  echo "nameserver 192.0.2.53" > "$SANDBOX/host-resolv"
+  export REFLASH_RESOLV="$SANDBOX/host-resolv"
+  mkdir -p "$REFLASH_TARGET_MNT/etc"
+  echo "nameserver 10.0.0.1" > "$REFLASH_TARGET_MNT/etc/resolv.conf"
+  echo 1 > "$SANDBOX/installer.rc"
+  printf 'SETTINGS=1\n' > "$SANDBOX/s"
+  run "$PROD_BIN/target-install" configure "$SANDBOX/s"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$REFLASH_TARGET_MNT/etc/resolv.conf")" = "nameserver 10.0.0.1" ]
+  [ ! -e "$REFLASH_TARGET_MNT/etc/resolv.conf.reflash-saved" ]
+}
+
+@test "target-install: only configure touches the image's resolv.conf" {
+  v1_manifest
+  printf 'actions=settings\n' >> "$SANDBOX/p1/reflash/manifest"
+  echo "nameserver 192.0.2.53" > "$SANDBOX/host-resolv"
+  export REFLASH_RESOLV="$SANDBOX/host-resolv"
+  mkdir -p "$REFLASH_TARGET_MNT/etc"
+  echo "nameserver 10.0.0.1" > "$REFLASH_TARGET_MNT/etc/resolv.conf"
+  run "$PROD_BIN/target-install" settings
+  [ "$(cat "$SANDBOX/resolv.seen")" = "nameserver 10.0.0.1" ]
+}
+
+@test "target-install configure: unavailable host DNS leaves target resolver untouched" {
+  v1_manifest
+  export REFLASH_RESOLV="$SANDBOX/missing-resolv"
+  mkdir -p "$REFLASH_TARGET_MNT/etc"
+  echo "nameserver 10.0.0.1" > "$REFLASH_TARGET_MNT/etc/resolv.conf"
+  printf 'SETTINGS=1\n' > "$SANDBOX/s"
+  run "$PROD_BIN/target-install" configure "$SANDBOX/s"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$REFLASH_TARGET_MNT/etc/resolv.conf")" = "nameserver 10.0.0.1" ]
+}
+
+@test "target-install configure: a DNS copy failure restores the target resolver" {
+  v1_manifest
+  echo 'nameserver 192.0.2.53' > "$SANDBOX/host-resolv"
+  export REFLASH_RESOLV="$SANDBOX/host-resolv"
+  mkdir -p "$REFLASH_TARGET_MNT/etc"
+  echo 'nameserver 10.0.0.1' > "$REFLASH_TARGET_MNT/etc/resolv.conf"
+  printf 'SETTINGS=1\n' > "$SANDBOX/s"
+  stub_silent cp 1
+  run "$PROD_BIN/target-install" configure "$SANDBOX/s"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'could not supply DNS'* ]]
+  [ "$(cat "$REFLASH_TARGET_MNT/etc/resolv.conf")" = 'nameserver 10.0.0.1' ]
+  [ ! -e "$REFLASH_TARGET_MNT/etc/resolv.conf.reflash-saved" ]
 }

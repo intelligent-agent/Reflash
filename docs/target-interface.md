@@ -204,9 +204,13 @@ For these actions stdout carries data, and only stderr goes to Reflash's log.
   case letters, digits and `_`), and for each `SOFTWARE_a=on|off` and
   `SOFTWARE_a_INFO=` a line for people. Nothing is listed when there is
   nothing to offer, and Reflash then shows no section. Installing is
-  `configure` with `SOFTWARE_a=on`, and must work without a network: the
-  component ships in the image, and "installing" it puts it where the system
-  looks.
+  `configure` with `SOFTWARE_a=on`, and may need the network (see below).
+  LED effects are cloned into the printer user's `~/klipper-led_effect` and
+  registered with Moonraker's updater. Off removes the module link and updater
+  section, leaving the checkout for reuse. Existing standalone module files
+  are left alone; the info line identifies software installed separately.
+  Restoring config files that reference an unavailable `led_effect` module
+  emits a warning. It does not download software as part of restore.
 
   Reflash keeps `SSH_ENABLED`, `SCREEN_ROTATION` and the Wi-Fi network the same
   as the installed system's: it reads them when it starts, and applies a change
@@ -270,9 +274,16 @@ reason meant for the user, and the last one is shown when the installer fails.
 
 ### What the installer may not do
 
-Use the network, install packages, start services, or take more than a few
-minutes. It runs on a board that may be in hotspot mode with no internet, and
-the user is waiting.
+Install packages, start services, or take more than a few minutes. It runs on
+a board that may be in hotspot mode with no internet, and the user is waiting.
+It does not use the network either, with one exception: **optional software**
+that is fetched (`SOFTWARE_<name>=on`, #205), which is cloned with git. Reflash
+puts its own `/etc/resolv.conf` in the image for the length of a `configure`
+(the image's is usually a link into `/run`, which a chroot does not have) and
+puts the image's back after. The installer must check that it can reach the
+source before it changes anything, and without a connection must change nothing
+and fail with an `ERROR: ` line saying so. Reflash does not offer the choice
+without internet, and applies every other setting first.
 
 ## 4. Repeating a step
 
