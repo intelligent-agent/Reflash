@@ -245,6 +245,13 @@ For these actions stdout carries data, and only stderr goes to Reflash's log.
   `--include` it replaces, as before. A path the system does not hold is
   refused. Without `list` in `actions=`, Reflash always saves and restores
   everything.
+
+  `restore --merge` puts back everything the archive holds, laid over what is
+  there, and removes nothing. Reflash asks for it whenever the installer lists
+  `list` and no files were chosen, because its page promises that the rest of
+  the config stays: an archive of three files put into a system with eight must
+  not take the other five away (it did, with plain `restore`, which replaces
+  each folder it holds).
 - **`restore`**: read an archive made by `backup` on stdin and put its files
   back. Reflash runs it in two places: after `prepare` and before
   `configure` on a freshly written image, so the user's choices in Reflash

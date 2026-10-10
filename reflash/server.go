@@ -2708,6 +2708,15 @@ func restoreFileBackup(name string, include []string) error {
 	if err != nil {
 		return err
 	}
+	// The page promises that only the files chosen are written and the rest of
+	// the config stays. A restore with no list replaces the whole config folder,
+	// which is right for a Reflash that cannot ask for more - and wrong for an
+	// archive of three files put into a system with eight: it removed
+	// moonraker.conf and KlipperScreen.conf. An installer that can list files
+	// is asked to merge instead.
+	if len(args) == 0 && installedSupports("list", "merging a config") == nil {
+		args = []string{"--merge"}
+	}
 	out, _, err := runCommand2Timeout(10*time.Minute, append([]string{"target-install", "restore", path}, args...)...)
 	if err != nil {
 		if strings.Contains(err.Error(), "exit status 3") {

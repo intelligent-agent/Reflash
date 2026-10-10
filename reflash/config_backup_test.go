@@ -413,3 +413,39 @@ func TestListBackupFilesAsksTheInstalledSystemOrAnArchive(t *testing.T) {
 		t.Errorf("unsupported: %v", got)
 	}
 }
+
+// The demo's bug: an archive of three files put into a system with eight took
+// the other five with it, because "all of the archive chosen" was no list and no
+// list replaces the config folder. With an installer that can list, a restore
+// always asks to merge.
+func TestRestoreMergesWhenTheInstallerCanList(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	fakeBin(t, dir, "get-emmc-version", `echo rebuild-fluidd-v1.2.0`)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	argsFile := filepath.Join(dir, "args")
+	fakeBin(t, dir, "target-install", `echo "$@" >> `+argsFile+`; exit 0`)
+	os.MkdirAll(backups_folder, 0o755)
+	os.WriteFile(filepath.Join(backups_folder, "x.tar.gz"), configArchive(t), 0o644)
+
+	run := func(manifest string, include []string) string {
+		os.Remove(argsFile)
+		fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=`+manifest+`\n'`)
+		if err := restoreFileBackup("x.tar.gz", include); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(argsFile)
+		return strings.TrimSpace(string(got))
+	}
+	if got := run("restore,list,list-archive", nil); !strings.HasSuffix(got, "--merge") {
+		t.Errorf("an installer that can list was asked to replace: %q", got)
+	}
+	// A chosen list is merged by the installer already.
+	if got := run("restore,list,list-archive", []string{"home/printer/printer_data/config"}); strings.Contains(got, "--merge") || !strings.Contains(got, "--include home/printer/printer_data/config") {
+		t.Errorf("a list was sent as %q", got)
+	}
+	// One that cannot is asked for what it always did.
+	if got := run("restore", nil); strings.Contains(got, "--merge") || strings.Contains(got, "--include") {
+		t.Errorf("an older installer was sent %q", got)
+	}
+}

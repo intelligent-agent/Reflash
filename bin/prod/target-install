@@ -10,7 +10,8 @@
 #                                             (a Rebuild v1.0/v1.1 release, with no
 #                                             installer, is backed up by Reflash itself)
 #   target-install restore <file>             ...and back, after prepare
-#   backup and restore take --include PATH, any number of times, for only some files
+#   backup and restore take --include PATH, any number of times, for only some files;
+#   restore also takes --merge: all of the archive, nothing removed
 #   target-install list                       the files a backup could hold, one per line
 #   target-install list-archive <file>        the files in a backup
 #
@@ -85,8 +86,13 @@ case $ACTION in
     backup | restore)
         i=0
         while [ $i -lt ${#EXTRA[@]} ]; do
-            [ "${EXTRA[$i]}" = --include ] && [ $((i + 1)) -lt ${#EXTRA[@]} ] || fatal "unknown argument '${EXTRA[$i]}'"
-            i=$((i + 2))
+            if [ "${EXTRA[$i]}" = --merge ] && [ "$ACTION" = restore ]; then
+                i=$((i + 1))
+            elif [ "${EXTRA[$i]}" = --include ] && [ $((i + 1)) -lt ${#EXTRA[@]} ]; then
+                i=$((i + 2))
+            else
+                fatal "unknown argument '${EXTRA[$i]}'"
+            fi
         done
         ;;
     *) [ ${#EXTRA[@]} -eq 0 ] || fatal "unexpected argument '${EXTRA[0]}'" ;;

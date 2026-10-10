@@ -525,3 +525,14 @@ legacy_system() {
   [[ "$output" == *"actions=settings,list,list-archive"* ]]
   [[ "$output" == *"unknown action 'bogus'"* ]]
 }
+
+@test "target-install restore: --merge reaches the installer, and only on restore" {
+  v1_manifest
+  printf 'actions=settings,backup,restore,list,list-archive\n' >> "$SANDBOX/p1/reflash/manifest"
+  : > "$SANDBOX/in.tgz"
+  run "$PROD_BIN/target-install" restore "$SANDBOX/in.tgz" --merge
+  [ "$status" -eq 0 ]
+  grep -q 'target-installer restore --merge$' "$CALLS"
+  run "$PROD_BIN/target-install" backup "$SANDBOX/out.tgz" --merge
+  [ "$status" -ne 0 ]
+}
