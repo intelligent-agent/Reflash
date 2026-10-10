@@ -356,3 +356,115 @@ SHIM
   touch "$SANDBOX/go"
   wait "$pid"
 }
+
+# --- Rebuild v1.0/v1.1: backed up by Reflash itself (#187) -----------------
+
+# A release with no manifest, laid out as the real ones are: v1.0.x keeps
+# everything under debian's home (checked against the v1.0.2 image), v1.1.0
+# under a printer user.
+legacy_system() {
+  local user=$1 version=$2 t="$SANDBOX/target"
+  echo "$version" > "$t/etc-rebuild-version.tmp"
+  mkdir -p "$t/etc" "$t/home/$user/printer_data/config" "$t/home/$user/printer_data/database" "$t/home/$user/printer_data/logs"
+  mv "$t/etc-rebuild-version.tmp" "$t/etc/rebuild-version"
+  echo recore > "$t/etc/hostname"
+  echo "[printer]" > "$t/home/$user/printer_data/config/printer.cfg"
+  echo "[server]" > "$t/home/$user/printer_data/config/moonraker.conf"
+  echo "bkp" > "$t/home/$user/printer_data/config/.moonraker.conf.bkp"
+  echo "db" > "$t/home/$user/printer_data/database/moonraker-sql.db"
+  echo "log" > "$t/home/$user/printer_data/logs/klippy.log"
+}
+
+@test "legacy backup: v1.0.2 keeps everything under debian; the archive is renamed to what a current system restores" {
+  legacy_system debian rebuild-fluidd-v1.0.2
+  run "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
+  [ "$status" -eq 0 ]
+  list=$(tar tzf "$SANDBOX/b.tgz")
+  # The manifest first, as the installer writes it.
+  [ "$(echo "$list" | head -1)" = rebuild-backup.manifest ]
+  [[ "$list" == *"home/printer/printer_data/config/printer.cfg"* ]]
+  [[ "$list" == *"home/printer/printer_data/config/moonraker.conf"* ]]
+  [[ "$list" == *"home/printer/printer_data/database/moonraker-sql.db"* ]]
+  # Nothing under the old user's name, or the new image's restore finds nothing.
+  [[ "$list" != *"home/debian"* ]]
+  # Not logs, and not Moonraker's own copy of its config.
+  [[ "$list" != *klippy.log* ]]
+  [[ "$list" != *".moonraker.conf.bkp"* ]]
+  # Owned by printer by name, which is how a restore gives them to the new user.
+  tar tvzf "$SANDBOX/b.tgz" | grep -q "printer/printer .*printer_data/config/printer.cfg"
+}
+
+@test "legacy backup: the manifest says where the files came from, as the installer's does" {
+  legacy_system debian rebuild-fluidd-v1.0.2
+  "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
+  m=$(tar xzOf "$SANDBOX/b.tgz" rebuild-backup.manifest)
+  [[ "$m" == *"format=1"* ]]
+  [[ "$m" == *"rebuild_version=rebuild-fluidd-v1.0.2"* ]]
+  [[ "$m" == *"hostname=recore"* ]]
+  [[ "$m" == *"board_revision=a5"* ]]
+  [[ "$m" == *"board_serial=0256"* ]]
+  [[ "$m" == *"reflash_version=v1.2.0"* ]]
+  [[ "$m" == *"klipper_version="$'\n'* ]]
+  # The paths as the new image will see them.
+  [[ "$m" == *"paths=home/printer/printer_data/config home/printer/printer_data/database"* ]]
+  [[ "$m" != *"home/debian"* ]]
+}
+
+@test "legacy backup: v1.1.0 keeps its printer user's names" {
+  legacy_system printer rebuild-fluidd-v1.1.0
+  run "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
+  [ "$status" -eq 0 ]
+  list=$(tar tzf "$SANDBOX/b.tgz")
+  [[ "$list" == *"home/printer/printer_data/config/printer.cfg"* ]]
+  tar tvzf "$SANDBOX/b.tgz" | grep -q "printer/printer .*printer_data/config/moonraker.conf"
+}
+
+@test "legacy backup: OctoPrint's settings, users and data, without its timelapses" {
+  legacy_system debian rebuild-octoprint-v1.0.2
+  o="$SANDBOX/target/home/debian/.octoprint"
+  mkdir -p "$o/data/timelapse" "$o/data/gcodeEditor"
+  echo c > "$o/config.yaml"; echo u > "$o/users.yaml"
+  echo s > "$o/data/gcodeEditor/settings.yaml"; echo t > "$o/data/timelapse/frame.jpg"
+  run "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
+  [ "$status" -eq 0 ]
+  list=$(tar tzf "$SANDBOX/b.tgz")
+  [[ "$list" == *"home/printer/.octoprint/config.yaml"* ]]
+  [[ "$list" == *"home/printer/.octoprint/users.yaml"* ]]
+  [[ "$list" == *"home/printer/.octoprint/data/gcodeEditor/settings.yaml"* ]]
+  [[ "$list" != *timelapse/frame.jpg* ]]
+}
+
+@test "legacy backup: a system with none of the files still makes a backup - the manifest alone" {
+  mkdir -p "$SANDBOX/target/etc"
+  echo rebuild-barebone-v1.1.0 > "$SANDBOX/target/etc/rebuild-version"
+  run "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
+  [ "$status" -eq 0 ]
+  [ "$(tar tzf "$SANDBOX/b.tgz")" = rebuild-backup.manifest ]
+}
+
+@test "legacy backup: the system is read, never written - mounted read-only and unmounted after" {
+  legacy_system debian rebuild-fluidd-v1.0.2
+  "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
+  grep -q "^mount -o ro ${REFLASH_EMMC}p2 " "$CALLS"
+  [ "$(call_line umount)" -gt "$(call_line mount)" ]
+  ! grep -qE '^(e2fsck|parted|tune2fs|resize2fs|chroot)' "$CALLS"
+}
+
+@test "legacy backup: a release Reflash does not know is not supported (3), and nothing is written" {
+  for v in rebuild-fluidd-v1.9.9 rebuild-fluidd-v2.0.0 "Unknown version" "refactor-v0.9" ""; do
+    legacy_system debian "$v"
+    rm -f "$SANDBOX/b.tgz"
+    run "$PROD_BIN/target-install" backup "$SANDBOX/b.tgz"
+    [ "$status" -eq 3 ]
+    [ ! -e "$SANDBOX/b.tgz" ]
+  done
+}
+
+@test "legacy backup: only backup - restore, settings and configure on such a system are unchanged" {
+  legacy_system debian rebuild-fluidd-v1.0.2
+  echo x > "$SANDBOX/in.tgz"
+  run "$PROD_BIN/target-install" restore "$SANDBOX/in.tgz"
+  [ "$status" -eq 3 ]
+  run "$PROD_BIN/target-install" settings
+  [ "$status" -eq 3 ]
+}

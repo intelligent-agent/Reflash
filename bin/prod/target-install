@@ -7,6 +7,8 @@
 #   target-install settings [secrets]         print the installed system's settings
 #                                             (secrets: this once, also the Wi-Fi passphrase)
 #   target-install backup <file>              the user's files, into <file>
+#                                             (a Rebuild v1.0/v1.1 release, with no
+#                                             installer, is backed up by Reflash itself)
 #   target-install restore <file>             ...and back, after prepare
 #
 # The last three are optional: an image that does not list one in its
@@ -76,13 +78,86 @@ unsupported() {
     exit 3
 }
 
+# A Rebuild v1.0 or v1.1 release has no manifest and no installer, so no backup
+# action either (#187). Those releases will never change, so Reflash knows what
+# they keep and backs them up itself, in the archive the new image's own
+# `restore` reads: the same files, under the names a current system uses. A
+# release before v1.1 has no `printer` user - it all lives in debian's home -
+# so the paths are renamed to home/printer, owned by printer, or the new
+# image's restore would find nothing it knows.
+#
+# Never for anything else: an image with a manifest does its own backup, and a
+# system Reflash does not recognise is "not supported", as before.
+LEGACY_RELEASE='^rebuild-(barebone|fluidd|mainsail|octoprint)-v1\.[01]\.[0-9]+(-RC[0-9]+)?$'
+LEGACY_PRINTER_UID=1001
+
+legacy_backup() {
+    local out=$1 dev="${EMMC}p2" version user="" u p have=() paths=""
+    mkdir -p "$MNT"
+    # Read only: the system is not Reflash's to change, and a journal replay on
+    # a read-write mount would write to it.
+    mount -o ro "$dev" "$MNT" || fatal "could not read the installed system ($dev)"
+    # Global: the trap runs when the script exits, long after this function.
+    LEGACY_TMP=$(mktemp -d)
+    trap 'umount -q "$MNT" 2>/dev/null || umount -l "$MNT" 2>/dev/null || true; rm -rf "$LEGACY_TMP"' EXIT
+
+    version=$(cat "$MNT/etc/rebuild-version" 2>/dev/null || true)
+    [[ $version =~ $LEGACY_RELEASE ]] ||
+        unsupported "${version:-no version} is not a Rebuild release Reflash can back up"
+
+    for u in printer debian; do
+        [ -d "$MNT/home/$u/printer_data" ] && { user=$u; break; }
+    done
+    if [ -n "$user" ]; then
+        for p in printer_data/config printer_data/database \
+                 .octoprint/config.yaml .octoprint/users.yaml .octoprint/data; do
+            [ -e "$MNT/home/$user/$p" ] && have+=("home/$user/$p")
+        done
+    fi
+    for p in "${have[@]+${have[@]}}"; do paths+="${paths:+ }home/printer/${p#home/$user/}"; done
+    info "Backing up $version (${user:-no printer user}): ${paths:-only the manifest - this system has none of the files}"
+
+    # What the installer's manifest says. The Klipper and Moonraker versions
+    # need the image's own git, so they are left blank.
+    {
+        printf 'format=1\n'
+        printf 'created=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'rebuild_version=%s\n' "$version"
+        printf 'hostname=%s\n' "$(cat "$MNT/etc/hostname" 2>/dev/null || true)"
+        printf 'board_revision=%s\n' "$(get-recore-revision 2>/dev/null || true)"
+        printf 'board_serial=%s\n' "$(get-recore-serial-number 2>/dev/null || true)"
+        printf 'reflash_version=%s\n' "$(get-reflash-version 2>/dev/null || true)"
+        printf 'klipper_version=\nmoonraker_version=\n'
+        printf 'paths=%s\n' "$paths"
+    } > "$LEGACY_TMP/rebuild-backup.manifest"
+
+    # The same excludes as the installer's: logs and timelapses are not
+    # configuration, and Moonraker's own copy of moonraker.conf is not a
+    # printer's. -C only with files after it: a trailing one is an error to tar.
+    tar -czf "$out" \
+        --exclude='*.log' --exclude='*.log.*' \
+        "--exclude=home/$user/.octoprint/data/timelapse" \
+        "--exclude=home/$user/printer_data/config/.moonraker.conf.bkp" \
+        --transform="s,^home/$user/,home/printer/," \
+        --owner="printer:$LEGACY_PRINTER_UID" --group="printer:$LEGACY_PRINTER_UID" \
+        -C "$LEGACY_TMP" rebuild-backup.manifest ${have[@]+-C "$MNT" "${have[@]}"}
+}
+
 MANIFEST=$(target-manifest 2>&1) || fatal "the image cannot be installed by this Reflash: ${MANIFEST##*target manifest: }"
 if [ -z "$MANIFEST" ]; then
     if [ "$ACTION" = prepare ]; then
         info "No target manifest: preparing the image as Rebuild v1.0/v1.1"
         exec flash-cleanup "$ARG"
     fi
-    case $ACTION in configure) ;; *) unsupported "no target manifest" ;; esac
+    case $ACTION in
+        configure) ;;
+        backup)
+            legacy_backup "$ARG"
+            info "Backup written: $(stat -c %s "$ARG") bytes"
+            exit 0
+            ;;
+        *) unsupported "no target manifest" ;;
+    esac
     fatal "the image has no target manifest, so it has no installer to configure it"
 fi
 

@@ -188,6 +188,19 @@ For these actions stdout carries data, and only stderr goes to Reflash's log.
   gzip-compressed tar archive. Reflash stores it as it is; the only look
   inside is at an uploaded file's first tar header, to tell a backup from an
   image. Changes nothing.
+  A Rebuild release before this interface (v1.0.x, v1.1.0) has no manifest and
+  no installer, so it has no `backup` action; Reflash backs those up itself
+  (#187), because they will never change and the image they move to has
+  `restore`. It reads the system's second partition read-only, takes the same
+  files an installer would (`printer_data/config`, `printer_data/database`,
+  OctoPrint's settings, users and data, minus logs and timelapses) and writes
+  them in the archive format above under the names a current system uses: a
+  release before v1.1 has no `printer` user and keeps everything under
+  `debian`'s home, so the paths are renamed to `home/printer/...` and owned by
+  `printer`. Only for a release it recognises by `/etc/rebuild-version`; any
+  other system without a manifest is "not supported", as before. Checked
+  against the v1.0.2 and v1.1.0 fluidd and octoprint images.
+
 - **`restore`**: read an archive made by `backup` on stdin and put its files
   back. Reflash runs it in two places: after `prepare` and before
   `configure` on a freshly written image, so the user's choices in Reflash
