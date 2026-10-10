@@ -185,6 +185,7 @@ type Options struct {
 	RootPassword string `json:"rootPassword" toml:"-"`
 	WifiCountry  string `json:"wifiCountry"`
 	Timezone     string `json:"timezone"`
+	Hostname     string `json:"hostname"`
 	// "", "client" or "ap": the usual behaviour, only the network, only the hotspot.
 	WifiMode    string `json:"wifiMode"`
 	HotspotSSID string `json:"hotspotSSID"`
@@ -884,7 +885,10 @@ func getOptions(w http.ResponseWriter, r *http.Request) {
 
 func setOptions(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
-	lockSetOptions(reqBody)
+	if err := lockSetOptions(reqBody); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	writeOptions(w)
 }
 
@@ -2305,10 +2309,16 @@ func targetSettings(allowed map[string]bool) (string, error) {
 	opts := *options
 	for name, v := range map[string]string{"Wi-Fi network name": opts.WifiSSID, "Wi-Fi passphrase": opts.WifiPSK, "login password": opts.LoginPassword,
 		"root password": opts.RootPassword, "hotspot name": opts.HotspotSSID, "hotspot password": opts.HotspotPSK,
-		"country": opts.WifiCountry, "timezone": opts.Timezone, "software": opts.Software} {
+		"country": opts.WifiCountry, "timezone": opts.Timezone, "hostname": opts.Hostname, "software": opts.Software} {
 		if strings.ContainsAny(v, "\r\n") {
 			return "", fmt.Errorf("the %s contains a line break", name)
 		}
+	}
+	if err := validateHostname(opts.Hostname); err != nil {
+		return "", err
+	}
+	if opts.Hostname != "" && !allowed[keyHostname] {
+		return "", fmt.Errorf("this image does not support a custom hostname; update Rebuild or choose Default")
 	}
 	out := "SETTINGS=1\n"
 	for _, kv := range [][2]string{
@@ -2320,6 +2330,7 @@ func targetSettings(allowed map[string]bool) (string, error) {
 		{keyRootPassword, opts.RootPassword},
 		{keyCountry, opts.WifiCountry},
 		{keyTimezone, opts.Timezone},
+		{keyHostname, opts.Hostname},
 		{keyWifiMode, opts.WifiMode},
 		{keyHotspotSSID, opts.HotspotSSID},
 		{keyHotspotPSK, opts.HotspotPSK},
@@ -2328,7 +2339,7 @@ func targetSettings(allowed map[string]bool) (string, error) {
 		// image keeps its account as it is. The same for what #198 added: empty
 		// is Default, and a fresh image already is.
 		switch kv[0] {
-		case "LOGIN_PASSWORD", keyRootPassword, keyCountry, keyTimezone, keyWifiMode, keyHotspotSSID, keyHotspotPSK:
+		case "LOGIN_PASSWORD", keyRootPassword, keyCountry, keyTimezone, keyHostname, keyWifiMode, keyHotspotSSID, keyHotspotPSK:
 			if kv[1] == "" {
 				continue
 			}
@@ -3298,6 +3309,13 @@ func loadOptions() {
 	}
 }
 
+func validateHostname(name string) error {
+	if name != "" && (len(name) > 63 || !regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$`).MatchString(name)) {
+		return fmt.Errorf("hostname must be 1 to 63 letters, digits or hyphens, with a letter or digit at each end (without .local)")
+	}
+	return nil
+}
+
 func lockSetOptions(opts []byte) error {
 	optionsLock.Lock()
 	defer optionsLock.Unlock()
@@ -3306,10 +3324,15 @@ func lockSetOptions(opts []byte) error {
 	if options != nil {
 		before = *options
 	}
-	err := json.Unmarshal(opts, &options)
-	if err != nil {
+	after := before
+	if err := json.Unmarshal(opts, &after); err != nil {
 		return err
 	}
+	after.Hostname = strings.ToLower(strings.TrimSpace(after.Hostname))
+	if err := validateHostname(after.Hostname); err != nil {
+		return err
+	}
+	options = &after
 	// What changed is brought to the installed system as well (#185).
 	queuePush(changedSettings(before, *options))
 

@@ -555,3 +555,37 @@ func TestSwitchingSoftwareOffIsNotUndoneByAFailure(t *testing.T) {
 		t.Errorf("software list changed by a failed off: %q", kept)
 	}
 }
+
+func TestHostnameSyncAndValidation(t *testing.T) {
+	setupTest(t)
+	options = &Options{Hostname: "original", WifiSSID: "keep"}
+	for _, name := range []string{"bad.local", "-bad", "bad-", "two words", strings.Repeat("a", 64)} {
+		w := httptest.NewRecorder()
+		setOptions(w, httptest.NewRequest("POST", "/api/set_options", strings.NewReader(`{"hostname":"`+name+`","SSID":"lost"}`)))
+		if w.Code != 400 || options.Hostname != "original" || options.WifiSSID != "keep" {
+			t.Fatalf("invalid name %q changed options or was accepted", name)
+		}
+	}
+	if err := lockSetOptions([]byte(`{"hostname":"A5-Printer"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if options.Hostname != "a5-printer" {
+		t.Fatal(options.Hostname)
+	}
+	if got := changedSettings(Options{Hostname: "a5-printer"}, Options{}); got[keyHostname] != "" || len(got) != 1 {
+		t.Fatal(got)
+	}
+	if got := mergeInstalled(Options{}, map[string]string{keyHostname: "voron"}); got.Hostname != "voron" {
+		t.Fatal(got)
+	}
+	if got := mergeInstalled(Options{Hostname: "voron"}, map[string]string{keyHostname: "recore"}); got.Hostname != "" {
+		t.Fatal(got)
+	}
+	body, err := targetSettings(map[string]bool{keyHostname: true})
+	if err != nil || !strings.Contains(body, "HOSTNAME=a5-printer\n") {
+		t.Fatalf("%q, %v", body, err)
+	}
+	if _, err := targetSettings(map[string]bool{}); err == nil {
+		t.Fatal("unsupported image silently ignored hostname")
+	}
+}

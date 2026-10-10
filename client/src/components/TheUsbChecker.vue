@@ -85,7 +85,12 @@ export default {
     // The dialog put away; the callout across the top stands in for it.
     dismissed: false,
   }),
-  computed: mapGetters(["options"]),
+  computed: {
+    ...mapGetters(["options"]),
+    targetOrigin() {
+      return this.options.hostname ? `http://${this.options.hostname}.local` : window.location.origin;
+    },
+  },
   methods: {
     computeSVG(name) {
       var color;
@@ -135,16 +140,21 @@ export default {
       }
     },
     async checkServerResponse() {
-      await axios
-        .get("/robots.txt?r=" + Math.random(), { timeout: 3000 })
-        .then(() => {
-          this.serverResponding = true;
-          setTimeout(this.checkServerResponse, 1000);
-        })
-        .catch(() => {
-          this.serverResponding = false;
-          setTimeout(this.checkServerResponse, 1000);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      try {
+        // The new hostname is a different origin. Rebuild does not expose
+        // CORS on its web UI, so probe reachability without reading its body.
+        const response = await fetch(this.targetOrigin + "/robots.txt?r=" + Math.random(), {
+          mode: "no-cors", cache: "no-store", signal: controller.signal,
         });
+        this.serverResponding = response.type === "opaque" || response.ok;
+      } catch (err) {
+        this.serverResponding = false;
+      } finally {
+        clearTimeout(timeout);
+        setTimeout(this.checkServerResponse, 1000);
+      }
     },
     clickReboot() {
       this.$emit("reboot-board");
@@ -161,7 +171,7 @@ export default {
     },
     clickReload() {
       window.location.href =
-        "http://" + window.location.hostname + ":" + location.port+"?r=" + Math.random();
+        this.targetOrigin + "?r=" + Math.random();
     },
   },
   watch: {

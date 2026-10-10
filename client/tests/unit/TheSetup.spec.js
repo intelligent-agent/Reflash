@@ -385,3 +385,23 @@ describe('setup feedback and Wi-Fi modes', () => {
     expect(axios.post).not.toHaveBeenCalled()
   })
 })
+
+describe('hostname', () => {
+  it('shows the saved name, normalizes edits and resets to Default', async () => {
+    const w = mountSetup({ hostname: 'voron' });
+    await w.find('.setup-toggle').trigger('click');
+    expect(w.find('#hostname').element.value).toBe('voron');
+    await w.find('#hostname').setValue('A5-Printer');
+    expect(sent()).toContainEqual({ hostname: 'a5-printer' });
+    w.vm.keep('hostname', true);
+    expect(sent()).toContainEqual({ hostname: '' });
+  });
+  it('refuses names that cannot become a local hostname', async () => {
+    const w = mountSetup();
+    for (const name of ['-printer', 'printer-', 'printer.local', 'two words', 'a'.repeat(64)]) {
+      await w.vm.setHostname(name);
+      expect(w.vm.problem.hostname).toContain('1 to 63');
+    }
+    expect(sent()).toEqual([]);
+  });
+});

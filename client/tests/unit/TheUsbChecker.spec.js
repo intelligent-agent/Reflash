@@ -21,9 +21,33 @@ describe('TheUsbChecker', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ type: "opaque" }));
   });
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('polls and reconnects using the configured hostname from an IP-based Reflash page', async () => {
+    const w = mount({ hostname: 'voron' });
+    expect(w.vm.targetOrigin).toBe('http://voron.local');
+    await w.vm.checkServerResponse();
+    expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/voron.local\/robots.txt\?r=/), expect.objectContaining({ mode: 'no-cors' }));
+    expect(w.vm.serverResponding).toBe(true);
+  });
+
+  it('keeps the current address for the default hostname', () => {
+    expect(mount({ hostname: '' }).vm.targetOrigin).toBe(window.location.origin);
+  });
+
+  it('keeps waiting after network failures and HTTP errors', async () => {
+    const w = mount({ hostname: 'a5-test' });
+    fetch.mockRejectedValueOnce(new Error('not booted'));
+    await w.vm.checkServerResponse();
+    expect(w.vm.serverResponding).toBe(false);
+    fetch.mockResolvedValueOnce({ type: 'basic', ok: false });
+    await w.vm.checkServerResponse();
+    expect(w.vm.serverResponding).toBe(false);
   });
 
   it('does NOT reboot when the drive is removed - the server does that', async () => {

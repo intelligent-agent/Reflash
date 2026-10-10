@@ -33,6 +33,7 @@ const (
 	keyRootPassword = "ROOT_PASSWORD"
 	keyCountry      = "WIFI_COUNTRY"
 	keyTimezone     = "TIMEZONE"
+	keyHostname     = "HOSTNAME"
 	keyWifiMode     = "WIFI_MODE"
 	keyHotspotSSID  = "HOTSPOT_SSID"
 	keyHotspotPSK   = "HOTSPOT_PSK"
@@ -123,6 +124,12 @@ func mergeInstalled(opts Options, from map[string]string) Options {
 	}
 	// An installer that does not know a key does not print it, and the value
 	// Reflash holds stays.
+	if v, ok := from[keyHostname]; ok && validateHostname(v) == nil {
+		if v == "recore" {
+			v = ""
+		}
+		opts.Hostname = strings.ToLower(v)
+	}
 	if v, ok := from[keyCountry]; ok {
 		opts.WifiCountry = v
 	}
@@ -200,6 +207,9 @@ func changedSettings(before, after Options) map[string]string {
 	// back to Default puts the installed system back too.
 	if before.WifiCountry != after.WifiCountry {
 		changes[keyCountry] = after.WifiCountry
+	}
+	if before.Hostname != after.Hostname {
+		changes[keyHostname] = after.Hostname
 	}
 	if before.Timezone != after.Timezone {
 		changes[keyTimezone] = after.Timezone
