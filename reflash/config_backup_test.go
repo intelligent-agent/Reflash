@@ -268,3 +268,77 @@ func TestFilesWindowListsAndDeletes(t *testing.T) {
 		t.Errorf("deleting an image answered %d", c)
 	}
 }
+
+// #198: only some of the files, as the tree picks them. The paths reach the
+// installer as --include arguments, and only when it can list files.
+func TestFileBackupAndRestoreCarryAnIncludeList(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	fakeBin(t, dir, "get-emmc-version", `echo rebuild-fluidd-v1.2.0`)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	argsFile := filepath.Join(dir, "args")
+	fakeBin(t, dir, "target-install", `echo "$@" >> `+argsFile+`; [ "$1" = backup ] && printf ARCHIVE > "$2"; exit 0`)
+
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=backup,restore\n'`)
+	body, _ := json.Marshal(map[string]any{"name": "x", "include": []string{"home/printer/printer_data/config/printer.cfg"}})
+	w := httptest.NewRecorder()
+	fileBackups(w, httptest.NewRequest("POST", "/api/file_backups", bytes.NewReader(body)))
+	if !strings.Contains(w.Body.String(), "does not support") {
+		t.Errorf("an installer that cannot list was handed a list: %s", w.Body.String())
+	}
+
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=backup,restore,list,list-archive\n'`)
+	w = httptest.NewRecorder()
+	fileBackups(w, httptest.NewRequest("POST", "/api/file_backups", bytes.NewReader(body)))
+	got, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(got), "--include home/printer/printer_data/config/printer.cfg") {
+		t.Errorf("the installer was run as %q (%s)", got, w.Body.String())
+	}
+
+	os.MkdirAll(backups_folder, 0o755)
+	os.WriteFile(filepath.Join(backups_folder, "x.tar.gz"), configArchive(t), 0o644)
+	os.Remove(argsFile)
+	body, _ = json.Marshal(map[string]any{"name": "x.tar.gz", "include": []string{"home/printer/printer_data/config"}})
+	w = httptest.NewRecorder()
+	restoreIntoInstalled(w, httptest.NewRequest("POST", "/api/file_backups/restore", bytes.NewReader(body)))
+	got, _ = os.ReadFile(argsFile)
+	if !strings.Contains(string(got), "restore") || !strings.Contains(string(got), "--include home/printer/printer_data/config") {
+		t.Errorf("restore was run as %q (%s)", got, w.Body.String())
+	}
+}
+
+func TestListBackupFilesAsksTheInstalledSystemOrAnArchive(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	fakeBin(t, dir, "get-emmc-version", `echo rebuild-fluidd-v1.2.0`)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=list,list-archive\n'`)
+	fakeBin(t, dir, "target-install", `case $1 in list) printf 'a/one.cfg\na/two.cfg\n';; list-archive) printf 'b/only.cfg\n';; esac`)
+	os.MkdirAll(backups_folder, 0o755)
+	os.WriteFile(filepath.Join(backups_folder, "x.tar.gz"), configArchive(t), 0o644)
+
+	ask := func(q string) map[string]any {
+		w := httptest.NewRecorder()
+		listBackupFiles(w, httptest.NewRequest("GET", "/api/file_backups/files"+q, nil))
+		var out map[string]any
+		json.NewDecoder(w.Body).Decode(&out)
+		return out
+	}
+	if got := ask(""); got["supported"] != true || len(got["files"].([]any)) != 2 {
+		t.Errorf("installed: %v", got)
+	}
+	if got := ask("?name=x.tar.gz"); got["supported"] != true || got["files"].([]any)[0] != "b/only.cfg" {
+		t.Errorf("archive: %v", got)
+	}
+	// Not a name that can leave the folder.
+	w := httptest.NewRecorder()
+	listBackupFiles(w, httptest.NewRequest("GET", "/api/file_backups/files?name=../../etc/passwd", nil))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("a path was taken as a name: %d", w.Code)
+	}
+	// An image that cannot list says so, and the whole archive is the only choice.
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=backup\n'`)
+	if got := ask(""); got["supported"] != false || got["reason"] == "" {
+		t.Errorf("unsupported: %v", got)
+	}
+}

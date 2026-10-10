@@ -356,3 +356,60 @@ SHIM
   touch "$SANDBOX/go"
   wait "$pid"
 }
+
+# ---- #198: include lists and listing ----
+
+@test "target-install backup and restore: --include paths reach the installer as arguments" {
+  v1_manifest
+  printf 'actions=settings,backup,restore,list,list-archive\n' >> "$SANDBOX/p1/reflash/manifest"
+  printf 'ARCHIVE' > "$SANDBOX/installer.out"
+  run "$PROD_BIN/target-install" backup "$SANDBOX/out.tgz" --include home/printer/printer_data/config/printer.cfg --include "home/printer/printer_data/config/my files"
+  [ "$status" -eq 0 ]
+  grep -q 'target-installer backup --include home/printer/printer_data/config/printer.cfg --include home/printer/printer_data/config/my files$' "$CALLS"
+  : > "$SANDBOX/in.tgz"
+  run "$PROD_BIN/target-install" restore "$SANDBOX/in.tgz" --include home/printer/printer_data/config
+  [ "$status" -eq 0 ]
+  grep -q 'target-installer restore --include home/printer/printer_data/config$' "$CALLS"
+}
+
+@test "target-install: a stray argument is refused, not passed on" {
+  v1_manifest
+  printf 'actions=backup,restore,list\n' >> "$SANDBOX/p1/reflash/manifest"
+  run "$PROD_BIN/target-install" backup "$SANDBOX/out.tgz" --exec /bin/sh
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown argument"* ]]
+  run "$PROD_BIN/target-install" backup "$SANDBOX/out.tgz" --include
+  [ "$status" -ne 0 ]
+  run "$PROD_BIN/target-install" list --include x
+  [ "$status" -ne 0 ]
+}
+
+@test "target-install list and list-archive: the paths alone on stdout, no log lines among them" {
+  v1_manifest
+  printf 'actions=list,list-archive\n' >> "$SANDBOX/p1/reflash/manifest"
+  printf 'a/one.cfg\na/two.cfg\n' > "$SANDBOX/installer.out"
+  run --separate-stderr "$PROD_BIN/target-install" list
+  [ "$status" -eq 0 ]
+  [ "$output" = $'a/one.cfg\na/two.cfg' ]
+  : > "$SANDBOX/in.tgz"
+  run --separate-stderr "$PROD_BIN/target-install" list-archive "$SANDBOX/in.tgz"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'a/one.cfg\na/two.cfg' ]
+  [ "$(cat "$SANDBOX/installer.stdin" | wc -c)" -eq 0 ]
+}
+
+@test "target-install list: an image that does not list it exits 3" {
+  v1_manifest
+  printf 'actions=settings,backup\n' >> "$SANDBOX/p1/reflash/manifest"
+  run "$PROD_BIN/target-install" list
+  [ "$status" -eq 3 ]
+  run "$PROD_BIN/target-install" list-archive "$SANDBOX/in.tgz"
+  [ "$status" -ne 0 ]
+}
+
+@test "target-manifest: the list actions are known" {
+  manifest interface=1 root=2 prepare=none installer=/i actions=settings,list,list-archive,bogus
+  run "$PROD_BIN/target-manifest"
+  [[ "$output" == *"actions=settings,list,list-archive"* ]]
+  [[ "$output" == *"unknown action 'bogus'"* ]]
+}

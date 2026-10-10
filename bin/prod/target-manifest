@@ -74,7 +74,7 @@ if [ -n "${m[actions]:-}" ]; then
     known=()
     for a in "${acts[@]}"; do
         case $a in
-            settings | backup | restore) known+=("$a") ;;
+            settings | backup | restore | list | list-archive) known+=("$a") ;;
             *) echo "target manifest: ignoring unknown action '$a'" >&2 ;;
         esac
     done

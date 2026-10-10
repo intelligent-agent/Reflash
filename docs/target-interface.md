@@ -48,7 +48,7 @@ ignored. The file is parsed, never sourced or executed.
 | `installer` | yes | absolute path of the installer inside the root filesystem. Letters, digits, `.`, `_`, `-` and `/` only; no `..`. |
 | `log` | no | absolute path inside the root where Reflash copies its own log after preparing. Same characters as `installer`. |
 | `settings` | no | the settings keys `configure` applies (section 3), comma separated. Reflash offers the user only these. Without it: `SSH_ENABLED,SCREEN_ROTATION,WIFI_SSID,WIFI_PSK`. |
-| `actions` | no | the optional actions the installer supports (section 3), comma separated: any of `settings`, `backup`, `restore`. Without it: none. |
+| `actions` | no | the optional actions the installer supports (section 3), comma separated: any of `settings`, `backup`, `restore`, `list`, `list-archive`. Without it: none. |
 
 Unknown keys are logged and ignored, so a later image can add optional keys
 without breaking this Reflash. A key whose absence would make this Reflash do
@@ -138,6 +138,13 @@ ignores keys it does not know, and must never write `WIFI_PSK` or
 | `WIFI_SSID` | network name, may be empty |
 | `WIFI_PSK` | passphrase, may be empty |
 | `LOGIN_PASSWORD` | a new password for the system's login account, or empty to leave the account as it is |
+| `ROOT_PASSWORD` | a new password for root, or empty to leave it as it is |
+| `WIFI_COUNTRY` | two capital letters, the Wi-Fi regulatory domain; empty puts it back to none |
+| `TIMEZONE` | a name like `Europe/Oslo`; empty puts it back to UTC |
+| `WIFI_MODE` | `auto` (join the network, hotspot when it is not found), `client` (never the hotspot) or `ap` (always the hotspot); empty is `auto` |
+| `HOTSPOT_SSID` | the hotspot's name; empty is the image's own |
+| `HOTSPOT_PSK` | the hotspot's password, 8 to 63 characters; empty is the image's own |
+| `SOFTWARE_<name>` | `on` or `off`: optional software the image offers (below). Listed in `settings=` as `SOFTWARE`. |
 
 Settings are sent only when the manifest lists them (`settings=`), because an
 installer ignores keys it does not know: a choice the image would silently
@@ -148,6 +155,16 @@ password is good enough by the image's own rules. A password it refuses fails
 `configure` with an `ERROR: ` line saying why. Once set, the system does not ask
 for a new password at its first login. Like `WIFI_PSK`, it is never logged and
 never printed back by the `settings` action.
+
+An empty value for `WIFI_COUNTRY`, `TIMEZONE`, `WIFI_MODE`, `HOTSPOT_SSID` and
+`HOTSPOT_PSK` means "the image's own": Reflash's Default box (#198). It is sent
+when a setting goes back to Default after a change, and a key that was never
+changed is not sent at all, so an image left alone behaves exactly as it did.
+`ROOT_PASSWORD` cannot be read back, so Reflash puts the factory password
+back by sending it. An installer that applies `ROOT_PASSWORD`, `WIFI_COUNTRY`
+or `TIMEZONE` may also skip a first-login setup of its own that asks for the
+same things, but must not take away what a person debugging the board over
+its serial console relies on.
 
 `configure` applies the keys it is given and leaves every other setting as it
 is, so changing one choice later (for example from a Reflash booted to repair a
@@ -175,7 +192,21 @@ For these actions stdout carries data, and only stderr goes to Reflash's log.
   passphrase typed in Reflash lives too; the installer must not print it to
   stderr, which Reflash logs. An installer that does not know the word ignores
   it and prints no passphrase, and Reflash then leaves its own network alone.
-  `LOGIN_PASSWORD` cannot be read back and is never printed.
+  `LOGIN_PASSWORD` and `ROOT_PASSWORD` cannot be read back and are never
+  printed. `HOTSPOT_PSK`, when it is not the default, is printed with the
+  same word, for the same reason.
+
+  `settings` also prints `WIFI_COUNTRY`, `TIMEZONE`, `WIFI_MODE` and
+  `HOTSPOT_SSID`. A timezone of `Etc/UTC` and a mode of `auto` are the
+  defaults and Reflash shows them as that.
+
+  **Optional software** is listed too: `SOFTWARE_LIST=a b` (the names, lower
+  case letters, digits and `_`), and for each `SOFTWARE_a=on|off` and
+  `SOFTWARE_a_INFO=` a line for people. Nothing is listed when there is
+  nothing to offer, and Reflash then shows no section. Installing is
+  `configure` with `SOFTWARE_a=on`, and must work without a network: the
+  component ships in the image, and "installing" it puts it where the system
+  looks.
 
   Reflash keeps `SSH_ENABLED`, `SCREEN_ROTATION` and the Wi-Fi network the same
   as the installed system's: it reads them when it starts, and applies a change
@@ -188,6 +219,19 @@ For these actions stdout carries data, and only stderr goes to Reflash's log.
   gzip-compressed tar archive. Reflash stores it as it is; the only look
   inside is at an uploaded file's first tar header, to tell a backup from an
   image. Changes nothing.
+- **`list`**: print the files a `backup` would hold, one path per line, as
+  `backup` stores them (excluding what it excludes). For the tree in which the
+  user picks what to save. Changes nothing.
+- **`list-archive`**: the same for an archive given on stdin: only the files a
+  `restore` would take, not the manifest. Changes nothing.
+
+  With `list` in `actions=`, `backup` and `restore` also take any number of
+  `--include PATH` arguments, paths as `list` prints them (a folder includes
+  what is in it). `backup` then holds only those. `restore` puts back only
+  those, laid over what is there and leaving everything else as it is; without
+  `--include` it replaces, as before. A path the system does not hold is
+  refused. Without `list` in `actions=`, Reflash always saves and restores
+  everything.
 - **`restore`**: read an archive made by `backup` on stdin and put its files
   back. Reflash runs it in two places: after `prepare` and before
   `configure` on a freshly written image, so the user's choices in Reflash
