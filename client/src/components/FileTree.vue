@@ -2,7 +2,7 @@
   <div class="file-tree">
     <div class="presets">
       <button type="button" class="link" @click="all()">Everything</button>
-      <button type="button" class="link" @click="klipper()">Klipper files only</button>
+      <button type="button" class="link" @click="configOnly()">Config only</button>
       <button type="button" class="link" @click="none()">Nothing</button>
     </div>
     <p v-if="!files.length" class="empty">No files.</p>
@@ -19,7 +19,7 @@
 </template>
 
 <script>
-import { buildTree, visibleRoots, isKlipperFile } from "../fileTree";
+import { buildTree, visibleRoots, isConfigFile } from "../fileTree";
 import FileTreeNode from "./FileTreeNode.vue";
 
 export default {
@@ -47,8 +47,8 @@ export default {
     none() {
       this.$emit("update:modelValue", []);
     },
-    klipper() {
-      this.$emit("update:modelValue", this.files.filter(isKlipperFile));
+    configOnly() {
+      this.$emit("update:modelValue", this.files.filter(isConfigFile));
     },
     // A folder or a file, on or off: its files, all together.
     toggle(node, on) {

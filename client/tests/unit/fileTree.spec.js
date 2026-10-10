@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildTree, visibleRoots, includeFor, isKlipperFile } from '../../src/fileTree'
+import { buildTree, visibleRoots, includeFor, isConfigFile } from '../../src/fileTree'
 
 const P = 'home/printer/printer_data/'
 const files = [
@@ -53,14 +53,18 @@ describe('what is handed to the installer', () => {
   })
 })
 
-describe('the Klipper preset', () => {
-  it('is the config and the firmware options, not Moonraker, the UI or the database', () => {
-    const klipper = files.filter(isKlipperFile)
-    expect(klipper).toEqual([
+describe('the config preset', () => {
+  it('is all of config/ - Klipper, Moonraker, KlipperScreen, the UI, firmware options, a folder the user made - and not the database', () => {
+    expect(files.filter(isConfigFile)).toEqual([
       P + 'config/printer.cfg',
+      P + 'config/moonraker.conf',
+      P + 'config/fluidd.cfg',
       P + 'config/firmware/stm32.config',
       P + 'config/peripherals/probe.cfg',
       P + 'config/peripherals/sensors/chamber.cfg',
     ])
+    expect(isConfigFile(P + 'config/KlipperScreen.conf')).toBe(true)
+    expect(isConfigFile(P + 'database/moonraker-sql.db')).toBe(false)
+    expect(isConfigFile('home/printer/.octoprint/config.yaml')).toBe(false)
   })
 })

@@ -34,13 +34,13 @@ describe('FileTree', () => {
     expect(w2.emitted('update:modelValue')[0][0]).toEqual([P + 'database/db'])
   })
 
-  it('has presets for everything, the Klipper files and nothing', async () => {
+  it('has presets for everything, the config and nothing', async () => {
     const w = make([])
     const buttons = w.findAll('.presets button')
     await buttons[0].trigger('click')
     expect(w.emitted('update:modelValue').pop()[0]).toHaveLength(4)
     await buttons[1].trigger('click')
-    expect(w.emitted('update:modelValue').pop()[0].sort()).toEqual([P + 'config/peripherals/probe.cfg', P + 'config/printer.cfg'].sort())
+    expect(w.emitted('update:modelValue').pop()[0].sort()).toEqual([P + 'config/moonraker.conf', P + 'config/peripherals/probe.cfg', P + 'config/printer.cfg'].sort())
     await buttons[2].trigger('click')
     expect(w.emitted('update:modelValue').pop()[0]).toEqual([])
   })

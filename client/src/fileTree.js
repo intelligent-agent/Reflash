@@ -60,13 +60,11 @@ export function includeFor(files, selected) {
   return out;
 }
 
-// What the Klipper preset ticks: the files Klipper itself reads, which is the
-// printer's config and the firmware options, not Moonraker or the UI.
-export function isKlipperFile(path) {
-  const p = path.replace(/^home\/printer\/printer_data\//, "");
-  if (!p.startsWith("config/")) return false;
-  const name = p.split("/").pop();
-  if (/^(moonraker\.conf|KlipperScreen\.conf|\.moonraker\.conf\.bkp)$/.test(name)) return false;
-  if (/^(fluidd|mainsail)\.cfg$/.test(name)) return false;
-  return /\.(cfg|config)$/.test(name);
+// What the config preset ticks: everything in the printer's config folder -
+// printer.cfg, Moonraker's, KlipperScreen's and the UI's files, the firmware
+// options and any folder the user made - and not the database, which is
+// history rather than configuration. This is what moving a printer to another
+// image needs.
+export function isConfigFile(path) {
+  return /^(home\/printer\/printer_data\/)?config\//.test(path);
 }
