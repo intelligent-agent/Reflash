@@ -2644,6 +2644,12 @@ func installedSupports(action, doing string) error {
 		system = "the installed system"
 	}
 	if strings.TrimSpace(manifest) == "" {
+		// A Rebuild release before the target interface has no backup action,
+		// but Reflash backs it up itself (#187): target-install says whether it
+		// knows the release, and exits 3 when it does not.
+		if action == "backup" && strings.HasPrefix(system, "rebuild-") {
+			return nil
+		}
 		return fmt.Errorf("not supported: %s is too old for %s from Reflash", system, doing)
 	}
 	for _, line := range strings.Split(manifest, "\n") {

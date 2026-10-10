@@ -184,6 +184,12 @@ func TestConfigActionsNotSupportedByTheInstalledSystem(t *testing.T) {
 		if b := w.Body.String(); !strings.Contains(b, "not supported: "+want) {
 			t.Errorf("install a config, %s: %s", manifest, b)
 		}
+		// A release with no manifest at all is backed up by Reflash itself
+		// (#187), which is the next test; one that has a manifest and does
+		// not list backup is not.
+		if manifest == `exit 0` {
+			continue
+		}
 		w = httptest.NewRecorder()
 		fileBackups(w, httptest.NewRequest("POST", "/api/file_backups", nil))
 		if b := w.Body.String(); !strings.Contains(b, "not supported: "+want) {
@@ -192,6 +198,71 @@ func TestConfigActionsNotSupportedByTheInstalledSystem(t *testing.T) {
 	}
 	if _, err := os.Stat(ran); err == nil {
 		t.Error("the installer ran although the system does not support it")
+	}
+}
+
+// #187: a Rebuild release before the target interface has no manifest and no
+// backup action, and is backed up by target-install itself. Reflash lets a
+// "rebuild-" system with no manifest through to it; target-install says no (3)
+// for a release it does not know, and anything that is not Rebuild is refused
+// before it runs.
+func TestAnOlderRebuildReleaseIsBackedUpByTargetInstall(t *testing.T) {
+	dir := setupTest(t)
+	args := filepath.Join(dir, "args")
+	state = &State{State: IDLE}
+	setStorage(STORAGE_READY)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	fakeBin(t, dir, "target-manifest", `exit 0`)
+	fakeBin(t, dir, "target-install", `echo "$@" > `+args+`; printf archive > "$2"`)
+
+	for _, release := range []string{"rebuild-fluidd-v1.0.2", "rebuild-octoprint-v1.1.0", "rebuild-barebone-v1.0.0"} {
+		os.Remove(args)
+		fakeBin(t, dir, "get-emmc-version", `echo `+release)
+		w := httptest.NewRecorder()
+		fileBackups(w, httptest.NewRequest("POST", "/api/file_backups", nil))
+		if b := w.Body.String(); !strings.Contains(b, `"status":"OK"`) || !strings.Contains(b, release+"-files-") {
+			t.Errorf("%s: %s", release, b)
+		}
+		if got, _ := os.ReadFile(args); !strings.HasPrefix(string(got), "backup ") {
+			t.Errorf("%s: target-install was run with %q", release, got)
+		}
+	}
+}
+
+func TestOnlyARebuildWithoutAManifestIsHandedToTargetInstall(t *testing.T) {
+	dir := setupTest(t)
+	ran := filepath.Join(dir, "ran")
+	state = &State{State: IDLE}
+	setStorage(STORAGE_READY)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	fakeBin(t, dir, "target-manifest", `exit 0`)
+	fakeBin(t, dir, "target-install", `touch `+ran)
+
+	for _, system := range []string{"Unknown version", "refactor-v0.9", ""} {
+		fakeBin(t, dir, "get-emmc-version", `echo "`+system+`"`)
+		w := httptest.NewRecorder()
+		fileBackups(w, httptest.NewRequest("POST", "/api/file_backups", nil))
+		if b := w.Body.String(); !strings.Contains(b, "not supported") {
+			t.Errorf("%q: %s", system, b)
+		}
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("target-install ran for a system that is not a Rebuild")
+	}
+}
+
+func TestAReleaseTargetInstallDoesNotKnowIsNotSupported(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	setStorage(STORAGE_READY)
+	fakeBin(t, dir, "mount-unmount-usb", `exit 0`)
+	fakeBin(t, dir, "target-manifest", `exit 0`)
+	fakeBin(t, dir, "get-emmc-version", `echo rebuild-fluidd-v1.9.9`)
+	fakeBin(t, dir, "target-install", `exit 3`)
+	w := httptest.NewRecorder()
+	fileBackups(w, httptest.NewRequest("POST", "/api/file_backups", nil))
+	if b := w.Body.String(); !strings.Contains(b, "does not support backing up") {
+		t.Errorf("a release target-install turns down: %s", b)
 	}
 }
 
