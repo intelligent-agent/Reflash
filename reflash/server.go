@@ -3,8 +3,8 @@ package main
 import (
 	"archive/tar"
 	"bufio"
-	"compress/gzip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -175,6 +175,22 @@ type Options struct {
 	// system, between its prepare and configure (#175). Like the password, a
 	// choice for one installation, so not saved on the drive.
 	RestoreBackup string `json:"restoreBackup" toml:"-"`
+	// Only these files of it, one path per line; empty is all of it (#198).
+	RestoreInclude string `json:"restoreInclude" toml:"-"`
+
+	// #198: what Armbian's first-login setup used to ask on the console, and
+	// more. Empty means "Default": nothing is sent and the image behaves as it
+	// always has. Same rules as the other settings: they reach the installed
+	// system at once and go onto the next image after a flash.
+	RootPassword string `json:"rootPassword" toml:"-"`
+	WifiCountry  string `json:"wifiCountry"`
+	Timezone     string `json:"timezone"`
+	// "", "client" or "ap": the usual behaviour, only the network, only the hotspot.
+	WifiMode    string `json:"wifiMode"`
+	HotspotSSID string `json:"hotspotSSID"`
+	HotspotPSK  string `json:"hotspotPSK" toml:"-"`
+	// Optional software that is on, comma separated.
+	Software string `json:"software"`
 }
 
 type Download struct {
@@ -495,6 +511,7 @@ func ServerInit() {
 	http.HandleFunc("/api/file_backups", fileBackups)
 	http.HandleFunc("/api/file_backups/download", downloadFileBackup)
 	http.HandleFunc("/api/file_backups/restore", restoreIntoInstalled)
+	http.HandleFunc("/api/file_backups/files", listBackupFiles)
 	http.HandleFunc("/api/images/download", downloadImage)
 	http.HandleFunc("/api/clear_log", clearLog)
 	http.HandleFunc("/api/rotate_screen", rotateScreen)
@@ -837,10 +854,22 @@ func writeOptions(w http.ResponseWriter) {
 	delete(fields, "PSK")
 	// Only whether one is set, so the options panel can say so.
 	delete(fields, "loginPassword")
+	delete(fields, "rootPassword")
+	delete(fields, "hotspotPSK")
 	optionsLock.Lock()
 	passwordSet := options.LoginPassword != ""
+	rootSet := options.RootPassword != ""
+	hotspotSet := options.HotspotPSK != ""
+	wifiSet := options.WifiPSK != ""
 	optionsLock.Unlock()
 	fields["loginPasswordSet"], _ = json.Marshal(passwordSet)
+	fields["rootPasswordSet"], _ = json.Marshal(rootSet)
+	fields["hotspotPSKSet"], _ = json.Marshal(hotspotSet)
+	fields["wifiPSKSet"], _ = json.Marshal(wifiSet)
+	softwareLock.Lock()
+	catalog := append([]SoftwareItem{}, softwareCatalog...)
+	softwareLock.Unlock()
+	fields["softwareAvailable"], _ = json.Marshal(catalog)
 	busy, failure := syncState()
 	fields["settingsSyncError"], _ = json.Marshal(failure)
 	fields["settingsSyncBusy"], _ = json.Marshal(busy)
@@ -2198,14 +2227,20 @@ func runInstallFinishedCommands(w http.ResponseWriter, r *http.Request) {
 		// After prepare, before configure, as the interface says: the user's
 		// choices in Reflash win over restored ones.
 		if options.RestoreBackup != "" {
-			keep(restoreFileBackup(options.RestoreBackup))
+			keep(restoreFileBackup(options.RestoreBackup, splitLines(options.RestoreInclude)))
 			options.RestoreBackup = ""
+			options.RestoreInclude = ""
 		}
 		if err := configureTarget(allowed); err != nil {
 			keep(err)
-		} else if allowed["LOGIN_PASSWORD"] {
-			// Taken: the next board is set up afresh, not with this one's password.
-			options.LoginPassword = ""
+		} else {
+			// Taken: the next board is set up afresh, not with this one's passwords.
+			if allowed["LOGIN_PASSWORD"] {
+				options.LoginPassword = ""
+			}
+			if allowed[keyRootPassword] {
+				options.RootPassword = ""
+			}
 		}
 	default:
 		if options.LoginPassword != "" {
@@ -2268,7 +2303,9 @@ func manifestSettings(manifest string) map[string]bool {
 // value is refused rather than sent.
 func targetSettings(allowed map[string]bool) (string, error) {
 	opts := *options
-	for name, v := range map[string]string{"Wi-Fi network name": opts.WifiSSID, "Wi-Fi passphrase": opts.WifiPSK, "login password": opts.LoginPassword} {
+	for name, v := range map[string]string{"Wi-Fi network name": opts.WifiSSID, "Wi-Fi passphrase": opts.WifiPSK, "login password": opts.LoginPassword,
+		"root password": opts.RootPassword, "hotspot name": opts.HotspotSSID, "hotspot password": opts.HotspotPSK,
+		"country": opts.WifiCountry, "timezone": opts.Timezone, "software": opts.Software} {
 		if strings.ContainsAny(v, "\r\n") {
 			return "", fmt.Errorf("the %s contains a line break", name)
 		}
@@ -2280,14 +2317,29 @@ func targetSettings(allowed map[string]bool) (string, error) {
 		{"WIFI_SSID", opts.WifiSSID},
 		{"WIFI_PSK", opts.WifiPSK},
 		{"LOGIN_PASSWORD", opts.LoginPassword},
+		{keyRootPassword, opts.RootPassword},
+		{keyCountry, opts.WifiCountry},
+		{keyTimezone, opts.Timezone},
+		{keyWifiMode, opts.WifiMode},
+		{keyHotspotSSID, opts.HotspotSSID},
+		{keyHotspotPSK, opts.HotspotPSK},
 	} {
 		// An empty password is not a password: the key is left out, and the
-		// image keeps its account as it is.
-		if kv[0] == "LOGIN_PASSWORD" && kv[1] == "" {
-			continue
+		// image keeps its account as it is. The same for what #198 added: empty
+		// is Default, and a fresh image already is.
+		switch kv[0] {
+		case "LOGIN_PASSWORD", keyRootPassword, keyCountry, keyTimezone, keyWifiMode, keyHotspotSSID, keyHotspotPSK:
+			if kv[1] == "" {
+				continue
+			}
 		}
 		if allowed[kv[0]] {
 			out += kv[0] + "=" + kv[1] + "\n"
+		}
+	}
+	if allowed[keySoftware] {
+		for n := range softwareOn(opts.Software) {
+			out += softwarePrefix + n + "=on\n"
 		}
 	}
 	return out, nil
@@ -2424,7 +2476,7 @@ func applyInstalledSettings(allowed map[string]bool, changes map[string]string) 
 	}
 	keys := make([]string, 0, len(changes))
 	for k, v := range changes {
-		if !allowed[k] {
+		if !keyAllowed(allowed, k) {
 			return fmt.Errorf("the installed system cannot change %s", k)
 		}
 		if strings.ContainsAny(v, "\r\n") {
@@ -2512,6 +2564,8 @@ func fileBackups(w http.ResponseWriter, r *http.Request) {
 	// #184: the name the user kept or typed, when one is given.
 	var req struct {
 		Name string `json:"name"`
+		// Only these files, as /api/file_backups/files lists them (#198).
+		Include []string `json:"include"`
 	}
 	if json.NewDecoder(r.Body).Decode(&req) == nil {
 		if n := regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(strings.TrimSpace(req.Name), "-"); strings.Trim(n, ".-") != "" {
@@ -2525,7 +2579,18 @@ func fileBackups(w http.ResponseWriter, r *http.Request) {
 	defer mountUsb(MODE_RO)
 	os.MkdirAll(backups_folder, 0o755)
 	path := backups_folder + "/" + name
-	out, _, err := runCommand2Timeout(10*time.Minute, "target-install", "backup", path)
+	args, err := includeArgs(req.Include)
+	if err != nil {
+		sendResponse(w, err)
+		return
+	}
+	if len(args) > 0 {
+		if err := installedSupports("list", "saving only some of the files"); err != nil {
+			sendResponse(w, err)
+			return
+		}
+	}
+	out, _, err := runCommand2Timeout(10*time.Minute, append([]string{"target-install", "backup", path}, args...)...)
 	if err != nil {
 		os.Remove(path)
 		if strings.Contains(err.Error(), "exit status 3") {
@@ -2607,7 +2672,8 @@ func restoreIntoInstalled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name    string   `json:"name"`
+		Include []string `json:"include"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	if busy := eMMCBusy(); busy != "" {
@@ -2620,10 +2686,16 @@ func restoreIntoInstalled(w http.ResponseWriter, r *http.Request) {
 		sendResponse(w, err)
 		return
 	}
-	sendResponse(w, restoreFileBackup(req.Name))
+	if len(req.Include) > 0 {
+		if err := installedSupports("list", "installing only some of the files"); err != nil {
+			sendResponse(w, err)
+			return
+		}
+	}
+	sendResponse(w, restoreFileBackup(req.Name, req.Include))
 }
 
-func restoreFileBackup(name string) error {
+func restoreFileBackup(name string, include []string) error {
 	if !backupName.MatchString(name) {
 		return fmt.Errorf("no such backup: %s", name)
 	}
@@ -2632,7 +2704,20 @@ func restoreFileBackup(name string) error {
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("the backup %s is not on the USB drive", name)
 	}
-	out, _, err := runCommand2Timeout(10*time.Minute, "target-install", "restore", path)
+	args, err := includeArgs(include)
+	if err != nil {
+		return err
+	}
+	// The page promises that only the files chosen are written and the rest of
+	// the config stays. A restore with no list replaces the whole config folder,
+	// which is right for a Reflash that cannot ask for more - and wrong for an
+	// archive of three files put into a system with eight: it removed
+	// moonraker.conf and KlipperScreen.conf. An installer that can list files
+	// is asked to merge instead.
+	if len(args) == 0 && installedSupports("list", "merging a config") == nil {
+		args = []string{"--merge"}
+	}
+	out, _, err := runCommand2Timeout(10*time.Minute, append([]string{"target-install", "restore", path}, args...)...)
 	if err != nil {
 		if strings.Contains(err.Error(), "exit status 3") {
 			return fmt.Errorf("this image cannot have files restored into it by Reflash, so %s was not restored", name)
@@ -2641,6 +2726,79 @@ func restoreFileBackup(name string) error {
 	}
 	logInfo("Restored " + name + " into the installed system")
 	return nil
+}
+
+func splitLines(s string) []string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// includeArgs is a list of paths as the installer's --include arguments. The
+// installer checks them against what a backup holds; this keeps out what could
+// not be a path at all.
+func includeArgs(paths []string) ([]string, error) {
+	var args []string
+	for _, p := range paths {
+		if p == "" || len(p) > 1024 || strings.ContainsAny(p, "\r\n\x00") || strings.Contains(p, "..") {
+			return nil, fmt.Errorf("not a file path: %q", p)
+		}
+		args = append(args, "--include", p)
+	}
+	return args, nil
+}
+
+// What can go into a backup of the system on the eMMC, or is in one on the
+// drive, for the tree the user picks from (#198): GET ?installed=1 for the
+// system, ?name=<archive> for an archive. Both are asked of the installed
+// system's own installer; one that cannot says so, and the whole backup is the
+// only choice.
+func listBackupFiles(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	reply := func(files []string, supported bool, reason string) {
+		if files == nil {
+			files = []string{}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"files": files, "supported": supported, "reason": reason})
+	}
+	name := r.URL.Query().Get("name")
+	action, doing := "list", "listing its files"
+	if name != "" {
+		if !backupName.MatchString(name) {
+			http.Error(w, "no such backup", http.StatusNotFound)
+			return
+		}
+		action = "list-archive"
+	}
+	if busy := eMMCBusy(); busy != "" {
+		http.Error(w, "busy: "+busy, http.StatusConflict)
+		return
+	}
+	installedSettingsLock.Lock()
+	defer installedSettingsLock.Unlock()
+	if err := installedSupports(action, doing); err != nil {
+		reply(nil, false, err.Error())
+		return
+	}
+	args := []string{"target-install", action}
+	if name != "" {
+		ensureUsbMounted()
+		args = append(args, backups_folder+"/"+name)
+	}
+	out, _, err := runCommand2Timeout(2*time.Minute, args...)
+	if err != nil {
+		if strings.Contains(err.Error(), "exit status 3") {
+			reply(nil, false, "the installed system cannot list files")
+			return
+		}
+		reply(nil, false, preparationFailure(out, err.Error()))
+		return
+	}
+	reply(splitLines(out), true, "")
 }
 
 // shellQuote makes v a single shell word. /etc/rebuild-settings is sourced by

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,14 +28,72 @@ const (
 	keyWifiName = "WIFI_SSID"
 	keyWifiPSK  = "WIFI_PSK"
 	keyPassword = "LOGIN_PASSWORD"
+
+	// Reflash#198
+	keyRootPassword = "ROOT_PASSWORD"
+	keyCountry      = "WIFI_COUNTRY"
+	keyTimezone     = "TIMEZONE"
+	keyWifiMode     = "WIFI_MODE"
+	keyHotspotSSID  = "HOTSPOT_SSID"
+	keyHotspotPSK   = "HOTSPOT_PSK"
+	// Optional software is SOFTWARE_<name>=on|off, one key per component the
+	// installed system offers, so the manifest lists the family as SOFTWARE.
+	keySoftware     = "SOFTWARE"
+	softwarePrefix  = "SOFTWARE_"
+	softwareList    = "SOFTWARE_LIST"
+	factoryPassword = "temppwd"
 )
+
+// A setting the image's installer takes. SOFTWARE_<name> keys are one family.
+func keyAllowed(allowed map[string]bool, k string) bool {
+	if allowed[k] {
+		return true
+	}
+	return strings.HasPrefix(k, softwarePrefix) && k != softwareList && !strings.HasSuffix(k, "_INFO") && allowed[keySoftware]
+}
+
+// SoftwareItem is one optional component the installed system offers.
+type SoftwareItem struct {
+	Name string `json:"name"`
+	Info string `json:"info"`
+	// Installed on the system on the eMMC now, as of the last time it was read.
+	Installed bool `json:"installed"`
+}
+
+var (
+	softwareLock    sync.Mutex
+	softwareCatalog []SoftwareItem
+)
+
+// softwareOn is the components named in options.Software, which is a comma
+// separated list so Options stays something that can be compared.
+func softwareOn(list string) map[string]bool {
+	on := map[string]bool{}
+	for _, n := range strings.Split(list, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			on[n] = true
+		}
+	}
+	return on
+}
+
+func softwareString(on map[string]bool) string {
+	names := make([]string, 0, len(on))
+	for n, v := range on {
+		if v {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
+}
 
 // parseSettings reads the interface's KEY=VALUE lines, the value literal to the
 // end of the line, keeping only the keys the image lists.
 func parseSettings(out string, allowed map[string]bool) map[string]string {
 	got := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
-		if k, v, ok := strings.Cut(line, "="); ok && k != "SETTINGS" && allowed[k] {
+		if k, v, ok := strings.Cut(line, "="); ok && k != "SETTINGS" && (keyAllowed(allowed, k) || (allowed[keySoftware] && (k == softwareList || strings.HasPrefix(k, softwarePrefix)))) {
 			got[k] = v
 		}
 	}
@@ -62,7 +121,47 @@ func mergeInstalled(opts Options, from map[string]string) Options {
 			opts.WifiPSK = psk
 		}
 	}
+	// An installer that does not know a key does not print it, and the value
+	// Reflash holds stays.
+	if v, ok := from[keyCountry]; ok {
+		opts.WifiCountry = v
+	}
+	if v, ok := from[keyTimezone]; ok {
+		// What the image ships is the default, and shows as one.
+		if v == "Etc/UTC" || v == "UTC" {
+			v = ""
+		}
+		opts.Timezone = v
+	}
+	if v, ok := from[keyWifiMode]; ok {
+		if v == "client" || v == "ap" {
+			opts.WifiMode = v
+		} else {
+			opts.WifiMode = ""
+		}
+	}
+	if name, ok := from[keyHotspotSSID]; ok {
+		opts.HotspotSSID = name
+		// The password is printed only when it is not the default.
+		opts.HotspotPSK = from[keyHotspotPSK]
+	}
+	if list, ok := from[softwareList]; ok {
+		on := map[string]bool{}
+		for _, n := range strings.Fields(list) {
+			on[n] = from[softwarePrefix+n] == "on"
+		}
+		opts.Software = softwareString(on)
+	}
 	return opts
+}
+
+// softwareFrom is the catalog the installed system printed.
+func softwareFrom(from map[string]string) []SoftwareItem {
+	var items []SoftwareItem
+	for _, n := range strings.Fields(from[softwareList]) {
+		items = append(items, SoftwareItem{Name: n, Info: from[softwarePrefix+n+"_INFO"], Installed: from[softwarePrefix+n] == "on"})
+	}
+	return items
 }
 
 // changedSettings is what changing before into after means for the installed
@@ -81,8 +180,55 @@ func changedSettings(before, after Options) map[string]string {
 		changes[keyWifiName] = after.WifiSSID
 		changes[keyWifiPSK] = after.WifiPSK
 	}
-	if before.LoginPassword != after.LoginPassword && after.LoginPassword != "" {
-		changes[keyPassword] = after.LoginPassword
+	// A password cannot be read back, so "Default" is the factory password put
+	// back explicitly, not a key left out.
+	if before.LoginPassword != after.LoginPassword {
+		if after.LoginPassword != "" {
+			changes[keyPassword] = after.LoginPassword
+		} else if before.LoginPassword != "" {
+			changes[keyPassword] = factoryPassword
+		}
+	}
+	if before.RootPassword != after.RootPassword {
+		if after.RootPassword != "" {
+			changes[keyRootPassword] = after.RootPassword
+		} else if before.RootPassword != "" {
+			changes[keyRootPassword] = factoryPassword
+		}
+	}
+	// The rest: an empty value is the image's own, and is sent, so changing
+	// back to Default puts the installed system back too.
+	if before.WifiCountry != after.WifiCountry {
+		changes[keyCountry] = after.WifiCountry
+	}
+	if before.Timezone != after.Timezone {
+		changes[keyTimezone] = after.Timezone
+	}
+	if before.WifiMode != after.WifiMode {
+		mode := after.WifiMode
+		if mode == "" {
+			mode = "auto"
+		}
+		changes[keyWifiMode] = mode
+	}
+	if before.HotspotSSID != after.HotspotSSID {
+		changes[keyHotspotSSID] = after.HotspotSSID
+	}
+	if before.HotspotPSK != after.HotspotPSK {
+		changes[keyHotspotPSK] = after.HotspotPSK
+	}
+	if before.Software != after.Software {
+		was, now := softwareOn(before.Software), softwareOn(after.Software)
+		for n := range now {
+			if !was[n] {
+				changes[softwarePrefix+n] = "on"
+			}
+		}
+		for n := range was {
+			if !now[n] {
+				changes[softwarePrefix+n] = "off"
+			}
+		}
 	}
 	return changes
 }
@@ -163,15 +309,22 @@ func flushPush() {
 	pushLock.Unlock()
 	err := pushToInstalled(changes)
 	if err != nil {
-		if _, sentPassword := changes[keyPassword]; sentPassword {
-			// Refused - too short, say - so it is not kept for the next install
-			// to be refused again. The reason is shown, and a new one can be set.
-			optionsLock.Lock()
-			if options != nil {
+		// A password refused - too short, say - is not kept for the next
+		// install to be refused again. The reason is shown, and a new one can
+		// be set.
+		optionsLock.Lock()
+		if options != nil {
+			if _, sent := changes[keyPassword]; sent {
 				options.LoginPassword = ""
 			}
-			optionsLock.Unlock()
+			if _, sent := changes[keyRootPassword]; sent {
+				options.RootPassword = ""
+			}
+			if _, sent := changes[keyHotspotPSK]; sent {
+				options.HotspotPSK = ""
+			}
 		}
+		optionsLock.Unlock()
 	}
 	pushLock.Lock()
 	pushing = false
@@ -209,7 +362,7 @@ func pushToInstalledSystem(changes map[string]string) error {
 	allowed := manifestSettings(manifest)
 	use := map[string]string{}
 	for k, v := range changes {
-		if allowed[k] {
+		if keyAllowed(allowed, k) {
 			use[k] = v
 		}
 	}
@@ -239,6 +392,10 @@ func syncFromInstalled() error {
 		return err
 	}
 	got := parseSettings(out, manifestSettings(manifest))
+
+	softwareLock.Lock()
+	softwareCatalog = softwareFrom(got)
+	softwareLock.Unlock()
 
 	optionsLock.Lock()
 	defer optionsLock.Unlock()

@@ -1,5 +1,6 @@
 <template>
-  <w-dialog v-model="dialog.show" :width="dialog.width">
+  <div class="wifi-root">
+  <w-dialog v-if="!inline" v-model="dialog.show" :width="dialog.width">
     <template #title>
       <span class="dialog_title">Wi-Fi configuration</span>
     </template>
@@ -66,6 +67,59 @@
       </div>
     </div>
   </w-dialog>
+  <!-- The same form without the dialog around it, for the setup panel (#198). -->
+  <div v-else class="wifi-inline">
+    <div>
+      <w-progress v-if="progressVisible" class="ma1" circle></w-progress>
+      <div v-if="isWifiPresent">
+        <h3>{{ wifiSummary }}</h3>
+        
+        <w-select
+          style="width: 50%; margin: auto"
+          v-model="selected"
+          :items="availableAPs"
+          item-label-key="label"
+          return-object
+          placeholder="Select an access point">
+          SSID
+        </w-select>
+
+        <w-input
+          class="mt4"
+          style="width: 50%; margin: auto"
+          v-model="inputPassword"
+          type="password">
+          Password
+        </w-input>
+
+        <div class="mt4">
+          <w-button @click="startWifiScan" :disabled="busy" class="mr2">
+            Scan for Networks
+          </w-button>
+          <w-button @click="startWifiConnect" :disabled="busy || !selected">
+            Connect
+          </w-button>
+        </div>
+      </div>
+
+      <!-- Only once the server has actually answered: before the first reply
+           "not present" is just "not asked yet", and claiming the dongle is
+           missing on the way in is how this warning came to flash spuriously. -->
+      <div v-else-if="wifiStatusKnown" class="pa4 text-center mt4 color-error border-error-all">
+        <p>⚠️ No WiFi dongle detected. Please plug in a USB WiFi adapter.</p>
+      </div>
+
+      <div v-if="statusMessage" class="pa2 mt4 text-center">
+        <p>{{ statusMessage }}</p>
+        <!-- Only while the board is genuinely unreachable. Telling someone to
+             reconnect when the page is still talking to the board is noise. -->
+        <p v-if="reconnecting && !boardReachable" class="reconnect-hint">
+          Reconnect this computer to the same network.
+        </p>
+      </div>
+    </div>
+  </div>
+  </div>
 </template>
 <script>
 import axios from "axios";
@@ -88,6 +142,8 @@ export default {
   props: {
     open: Boolean,
     showOverlay: Boolean,
+    // Drawn in the page, not in a dialog.
+    inline: Boolean,
   },
   data: () => ({
     dialog: {
@@ -426,6 +482,14 @@ export default {
 <style>
 .dialog_title {
   margin: auto;
+}
+.wifi-inline h3 {
+  font-size: 1.05rem;
+  margin: 0 0 8px;
+}
+.wifi-inline .w-select,
+.wifi-inline .w-input {
+  width: 100% !important;
 }
 .reconnect-hint {
   opacity: 0.8;

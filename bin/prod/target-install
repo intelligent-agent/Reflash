@@ -10,6 +10,10 @@
 #                                             (a Rebuild v1.0/v1.1 release, with no
 #                                             installer, is backed up by Reflash itself)
 #   target-install restore <file>             ...and back, after prepare
+#   backup and restore take --include PATH, any number of times, for only some files;
+#   restore also takes --merge: all of the archive, nothing removed
+#   target-install list                       the files a backup could hold, one per line
+#   target-install list-archive <file>        the files in a backup
 #
 # The last three are optional: an image that does not list one in its
 # manifest's actions= - or has no manifest at all - gets exit status 3, "not
@@ -35,7 +39,7 @@ NODE_TEST="${REFLASH_NODE_TEST:--b}"
 # messages go to stderr.
 info() {
     echo "[info] $1" >> "$LOG_FILE"
-    if [ "${1:-}" ] && [ "${ACTION:-}" = settings ]; then echo "$1" >&2; else echo "$1"; fi
+    case ${ACTION:-} in settings | list | list-archive) echo "$1" >&2 ;; *) echo "$1" ;; esac
 }
 
 fatal() {
@@ -45,6 +49,10 @@ fatal() {
 
 ACTION=${1:-}
 ARG=${2:-}
+# After the file, backup and restore take --include PATH pairs (#198): only
+# those files. Handed to the installer as they are; it decides what is allowed.
+EXTRA=()
+if [ $# -gt 2 ]; then EXTRA=("${@:3}"); fi
 # Set only for `settings secrets`; handed to the installer as its second word.
 SECRETS=""
 [ "$ACTION" = settings ] && [ "$ARG" = secrets ] && SECRETS=secrets
@@ -55,12 +63,13 @@ case $ACTION in
         # generic tree with its DRAM under voltage.
         [ -n "$ARG" ] || fatal "no hardware revision given - refusing to prepare the image. Nothing has been changed."
         ;;
-    configure | restore)
+    configure | restore | list-archive)
         [ -f "$ARG" ] || fatal "no $ACTION file given"
         ;;
     backup)
         [ -n "$ARG" ] || fatal "no backup file given"
         ;;
+    list) ;;
     settings)
         # "secrets" is passed on to the installer, which may then print the
         # Wi-Fi passphrase too (#195). Only that word: it ends up on the
@@ -68,9 +77,25 @@ case $ACTION in
         case $ARG in "" | secrets) ;; *) echo "usage: $0 settings [secrets]" >&2; exit 2 ;; esac
         ;;
     *)
-        echo "usage: $0 prepare <revision> | configure <settings-file> | settings [secrets] | backup <file> | restore <file>" >&2
+        echo "usage: $0 prepare <revision> | configure <settings-file> | settings [secrets] | backup <file> [--include PATH]... | restore <file> [--include PATH]... | list | list-archive <file>" >&2
         exit 2
         ;;
+esac
+
+case $ACTION in
+    backup | restore)
+        i=0
+        while [ $i -lt ${#EXTRA[@]} ]; do
+            if [ "${EXTRA[$i]}" = --merge ] && [ "$ACTION" = restore ]; then
+                i=$((i + 1))
+            elif [ "${EXTRA[$i]}" = --include ] && [ $((i + 1)) -lt ${#EXTRA[@]} ]; then
+                i=$((i + 2))
+            else
+                fatal "unknown argument '${EXTRA[$i]}'"
+            fi
+        done
+        ;;
+    *) [ ${#EXTRA[@]} -eq 0 ] || fatal "unexpected argument '${EXTRA[0]}'" ;;
 esac
 
 unsupported() {
@@ -174,7 +199,7 @@ while IFS='=' read -r key val; do
     esac
 done <<< "$(grep -v '^target manifest:' <<< "$MANIFEST" || true)"
 case $ACTION in
-    settings | backup | restore)
+    settings | backup | restore | list | list-archive)
         [[ ",$ACTIONS," == *",$ACTION,"* ]] || unsupported "not in the manifest's actions"
         ;;
 esac
@@ -277,7 +302,7 @@ run_chrooted() {
         REFLASH_BOOT_DEV="$BOOT_DEV" \
         REFLASH_REVISION="${REVISION:-}" \
         REFLASH_SERIAL="${SERIAL:-}" \
-        "$chroot_cmd" "$MNT" "$INSTALLER" "$ACTION" ${SECRETS:+"$SECRETS"} < "$stdin"
+        "$chroot_cmd" "$MNT" "$INSTALLER" "$ACTION" ${SECRETS:+"$SECRETS"} ${EXTRA[@]+"${EXTRA[@]}"} < "$stdin"
 }
 
 # Run the installer inside the image. Its output goes to the log; the last
@@ -357,6 +382,13 @@ case $ACTION in
         # Into a file first, printed only once the installer succeeded.
         current=$(mktemp)
         run_installer /dev/null "$current"
+        cat "$current"
+        rm -f "$current"
+        ;;
+    list | list-archive)
+        # What a tree is drawn from: the files, one per line, on stdout.
+        current=$(mktemp)
+        run_installer "${ARG:-/dev/null}" "$current"
         cat "$current"
         rm -f "$current"
         ;;

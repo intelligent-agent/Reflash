@@ -2,12 +2,15 @@ package main
 
 import (
 	"errors"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 func TestParseSettingsKeepsOnlyListedKeys(t *testing.T) {
@@ -94,12 +97,137 @@ func TestChangedSettingsSendsTheWifiPairAndNeverAnEmptyName(t *testing.T) {
 	}
 }
 
-func TestChangedSettingsSendsANewPasswordNotAClearedOne(t *testing.T) {
+func TestChangedSettingsSendsANewPasswordAndTheFactoryOneForDefault(t *testing.T) {
 	if got := changedSettings(Options{}, Options{LoginPassword: "pw"}); !reflect.DeepEqual(got, map[string]string{"LOGIN_PASSWORD": "pw"}) {
 		t.Errorf("new password: %v", got)
 	}
-	if got := changedSettings(Options{LoginPassword: "pw"}, Options{}); len(got) != 0 {
-		t.Errorf("a password dropped after an install was sent: %v", got)
+	// Default after a password was set puts the factory one back (#198): a
+	// password cannot be read back, so it is sent, not left out.
+	if got := changedSettings(Options{LoginPassword: "pw"}, Options{}); !reflect.DeepEqual(got, map[string]string{"LOGIN_PASSWORD": "temppwd"}) {
+		t.Errorf("default after a password: %v", got)
+	}
+	// Never set and still not: nothing to say.
+	if got := changedSettings(Options{}, Options{}); len(got) != 0 {
+		t.Errorf("nothing changed, sent %v", got)
+	}
+	if got := changedSettings(Options{RootPassword: "pw"}, Options{}); !reflect.DeepEqual(got, map[string]string{"ROOT_PASSWORD": "temppwd"}) {
+		t.Errorf("root default: %v", got)
+	}
+}
+
+// #198: what Armbian's first login asked, and more. An empty value is Default
+// and is sent, so going back to Default puts the installed system back too.
+func TestChangedSettingsLocationNetworkModeAndSoftware(t *testing.T) {
+	got := changedSettings(Options{}, Options{WifiCountry: "NO", Timezone: "Europe/Oslo", WifiMode: "client", HotspotSSID: "Shop", HotspotPSK: "hemmelig1", RootPassword: "rootpw1"})
+	want := map[string]string{"WIFI_COUNTRY": "NO", "TIMEZONE": "Europe/Oslo", "WIFI_MODE": "client", "HOTSPOT_SSID": "Shop", "HOTSPOT_PSK": "hemmelig1", "ROOT_PASSWORD": "rootpw1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("set: %v", got)
+	}
+	back := changedSettings(Options{WifiCountry: "NO", Timezone: "Europe/Oslo", WifiMode: "ap", HotspotSSID: "Shop", HotspotPSK: "hemmelig1"}, Options{})
+	want = map[string]string{"WIFI_COUNTRY": "", "TIMEZONE": "", "WIFI_MODE": "auto", "HOTSPOT_SSID": "", "HOTSPOT_PSK": ""}
+	if !reflect.DeepEqual(back, want) {
+		t.Errorf("back to default: %v", back)
+	}
+	sw := changedSettings(Options{Software: "a,b"}, Options{Software: "b,led_effect"})
+	if !reflect.DeepEqual(sw, map[string]string{"SOFTWARE_led_effect": "on", "SOFTWARE_a": "off"}) {
+		t.Errorf("software: %v", sw)
+	}
+}
+
+func TestMergeInstalledTakesTheNewKeysAndShowsDefaultsAsDefault(t *testing.T) {
+	from := map[string]string{
+		"WIFI_COUNTRY": "SE", "TIMEZONE": "Etc/UTC", "WIFI_MODE": "auto", "HOTSPOT_SSID": "", "HOTSPOT_PSK": "",
+		"SOFTWARE_LIST": "led_effect other", "SOFTWARE_led_effect": "on", "SOFTWARE_other": "off",
+	}
+	got := mergeInstalled(Options{WifiCountry: "NO", Timezone: "Europe/Oslo", WifiMode: "ap", HotspotSSID: "old", HotspotPSK: "oldpsk123"}, from)
+	want := Options{WifiCountry: "SE", Software: "led_effect"}
+	if got != want {
+		t.Errorf("merged %+v, want %+v", got, want)
+	}
+	got = mergeInstalled(Options{}, map[string]string{"TIMEZONE": "Europe/Oslo", "WIFI_MODE": "client", "HOTSPOT_SSID": "Shop", "HOTSPOT_PSK": "hemmelig1"})
+	if got.Timezone != "Europe/Oslo" || got.WifiMode != "client" || got.HotspotSSID != "Shop" || got.HotspotPSK != "hemmelig1" {
+		t.Errorf("custom values: %+v", got)
+	}
+	// An installer that prints none of them leaves Reflash's own.
+	keep := Options{WifiCountry: "NO", Timezone: "Europe/Oslo", HotspotPSK: "hemmelig1", Software: "led_effect"}
+	if got := mergeInstalled(keep, map[string]string{"SSH_ENABLED": "true"}); got.WifiCountry != "NO" || got.Timezone != "Europe/Oslo" || got.HotspotPSK != "hemmelig1" || got.Software != "led_effect" {
+		t.Errorf("an old installer wiped them: %+v", got)
+	}
+}
+
+func TestSoftwareKeysAreOneFamilyTheManifestListsAsSOFTWARE(t *testing.T) {
+	allowed := manifestSettings("interface=1\nsettings=SSH_ENABLED,SOFTWARE\n")
+	got := parseSettings("SETTINGS=1\nSSH_ENABLED=true\nSOFTWARE_LIST=led_effect\nSOFTWARE_led_effect=on\nSOFTWARE_led_effect_INFO=LED effects\nROOT_PASSWORD=x\n", allowed)
+	if got["SOFTWARE_led_effect"] != "on" || got["SOFTWARE_LIST"] != "led_effect" || got["ROOT_PASSWORD"] != "" {
+		t.Errorf("parsed %v", got)
+	}
+	items := softwareFrom(got)
+	if len(items) != 1 || items[0].Name != "led_effect" || items[0].Info != "LED effects" || !items[0].Installed {
+		t.Errorf("catalog %+v", items)
+	}
+	// Without SOFTWARE in the manifest the family is not accepted.
+	if got := parseSettings("SOFTWARE_led_effect=on\n", manifestSettings("interface=1\nsettings=SSH_ENABLED\n")); len(got) != 0 {
+		t.Errorf("accepted without the manifest: %v", got)
+	}
+	if keyAllowed(allowed, "SOFTWARE_LIST") || !keyAllowed(allowed, "SOFTWARE_led_effect") || keyAllowed(allowed, "SOFTWARE_led_effect_INFO") {
+		t.Error("only SOFTWARE_<name> is a setting to send")
+	}
+}
+
+// What goes onto a new image: only what is not Default, and the secrets only
+// where the image takes them.
+func TestTargetSettingsSendsOnlyWhatIsNotDefault(t *testing.T) {
+	options = &Options{}
+	all := manifestSettings("interface=1\nsettings=SSH_ENABLED,SCREEN_ROTATION,ROOT_PASSWORD,WIFI_COUNTRY,TIMEZONE,WIFI_MODE,HOTSPOT_SSID,HOTSPOT_PSK,SOFTWARE\n")
+	got, err := targetSettings(all)
+	if err != nil || got != "SETTINGS=1\nSSH_ENABLED=false\nSCREEN_ROTATION=0\n" {
+		t.Errorf("all default: %q %v", got, err)
+	}
+	options = &Options{RootPassword: "rootpw1", WifiCountry: "NO", Timezone: "Europe/Oslo", WifiMode: "ap", HotspotSSID: "Shop", HotspotPSK: "hemmelig1", Software: "led_effect"}
+	got, _ = targetSettings(all)
+	for _, line := range []string{"ROOT_PASSWORD=rootpw1", "WIFI_COUNTRY=NO", "TIMEZONE=Europe/Oslo", "WIFI_MODE=ap", "HOTSPOT_SSID=Shop", "HOTSPOT_PSK=hemmelig1", "SOFTWARE_led_effect=on"} {
+		if !strings.Contains(got, line+"\n") {
+			t.Errorf("missing %s in %q", line, got)
+		}
+	}
+	// An image that does not list them is not sent them.
+	got, _ = targetSettings(manifestSettings("interface=1\nsettings=SSH_ENABLED\n"))
+	if strings.Contains(got, "ROOT") || strings.Contains(got, "SOFTWARE") || strings.Contains(got, "HOTSPOT") {
+		t.Errorf("sent to an image that does not take them: %q", got)
+	}
+	options = &Options{RootPassword: "a\nSETTINGS=2"}
+	if _, err := targetSettings(all); err == nil {
+		t.Error("a line break in the root password was sent")
+	}
+}
+
+func TestNewSecretsAreNeverStoredOrReturned(t *testing.T) {
+	setupTest(t)
+	options = &Options{}
+	if err := lockSetOptions([]byte(`{"rootPassword":"rootsecret1","hotspotPSK":"hotsecret12","wifiCountry":"NO"}`)); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := toml.Marshal(options)
+	if strings.Contains(string(saved), "secret") || !strings.Contains(string(saved), "NO") {
+		t.Errorf("options.cfg would hold the secrets, or lose the country:\n%s", saved)
+	}
+	w := httptest.NewRecorder()
+	writeOptions(w)
+	body := w.Body.String()
+	if strings.Contains(body, "secret") || !strings.Contains(body, `"rootPasswordSet":true`) || !strings.Contains(body, `"hotspotPSKSet":true`) {
+		t.Errorf("get_options answered %s", body)
+	}
+}
+
+func TestIncludeArgsRefuseWhatIsNotAPath(t *testing.T) {
+	got, err := includeArgs([]string{"home/printer/printer_data/config/printer.cfg", "home/printer/printer_data/config/my files/a.cfg"})
+	if err != nil || strings.Join(got, "|") != "--include|home/printer/printer_data/config/printer.cfg|--include|home/printer/printer_data/config/my files/a.cfg" {
+		t.Errorf("got %v %v", got, err)
+	}
+	for _, bad := range []string{"", "../etc/shadow", "a/../b", "a\nb"} {
+		if _, err := includeArgs([]string{bad}); err == nil {
+			t.Errorf("%q was accepted", bad)
+		}
 	}
 }
 
