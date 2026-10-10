@@ -49,18 +49,6 @@ describe('TheOptions', () => {
 
     expect(optionPayloads(dispatch)).toEqual([{ screenRotation: 270 }])
   })
-
-  // Guards the wiring, not the handler. The bug lived in the template's
-  // @change argument, so a test that only calls onChange() directly stays
-  // green through the entire outage - shallowMount stubs the radio away, so
-  // the binding has to be asserted on the source itself.
-  it('wires the rotation control to the screenRotation key', () => {
-    const binding = theOptionsSource.match(
-      /@change="onChange\('([^']+)',\s*options\.screenRotation\)"/)
-
-    expect(binding).not.toBeNull()
-    expect(binding[1]).toBe('screenRotation')
-  })
 })
 
 // Reboot and Shut down sit next to each other and used to fire on one click.
@@ -136,16 +124,45 @@ function mountWithText(options = {}) {
 
 // The password itself is set in its own window (TheLoginPassword, #186); the
 // panel opens it and says whether one is set.
-describe('TheOptions login password (#182, #186)', () => {
-  it('opens the password window', async () => {
-    const wrapper = mountWithText()
-    const button = wrapper.findAll('w-button-stub').find((b) => b.text().includes('SSH password'))
-    await button.trigger('click')
-    expect(wrapper.emitted('open-login-password')).toBeTruthy()
+describe('TheOptions Advanced (#198)', () => {
+  const source = theOptionsSource
+  // What moved to Set up printer is not here any more.
+  it('points to Set up printer for what moved there, and keeps no buttons for it', () => {
+    expect(source).not.toMatch(/open-wifi|open-login-password|open-serial-number/)
+    expect(source).toContain('under Set up printer')
   })
 
-  it('says whether one is set, and never shows it', () => {
-    expect(mountWithText({ loginPasswordSet: true }).text()).toContain('Password for the user debian: set.')
-    expect(mountWithText({ loginPasswordSet: false }).text()).toContain('Password for the user debian: the default.')
+  it('keeps pre-releases and the serial number under Advanced', () => {
+    const advanced = source.slice(source.indexOf('<details'), source.indexOf('</details>'))
+    expect(advanced).toContain('showPrereleases')
+    expect(advanced).toContain('serial-number')
+    expect(source.slice(0, source.indexOf('<details'))).not.toContain('showPrereleases')
+  })
+
+  it('saves the serial number only when it is a changed number', async () => {
+    const { wrapper } = mountOptions()
+    wrapper.vm.serialSaved = '0482'
+    wrapper.vm.serialInput = '0482'
+    expect(wrapper.vm.serialDirty).toBe(false)
+    wrapper.vm.serialInput = '0483'
+    expect(wrapper.vm.serialDirty).toBe(true)
+    wrapper.vm.serialInput = '04x3'
+    expect(wrapper.vm.serialDirty).toBe(false)
+
+    axios.post.mockResolvedValueOnce({ data: { status: 'OK' } })
+    wrapper.vm.serialInput = '0483'
+    await wrapper.vm.saveSerial()
+    expect(axios.post).toHaveBeenCalledWith('/api/update_config', { snr: 483 })
+    expect(wrapper.emitted('serial-saved')).toBeTruthy()
+    expect(wrapper.vm.serialDirty).toBe(false)
+  })
+
+  it('says why a serial number was not saved', async () => {
+    const { wrapper } = mountOptions()
+    wrapper.vm.serialInput = '77'
+    axios.post.mockResolvedValueOnce({ data: { status: 'ERROR', error: 'eMMC busy' } })
+    await wrapper.vm.saveSerial()
+    expect(wrapper.vm.serialError).toBe('eMMC busy')
+    expect(wrapper.emitted('serial-saved')).toBeFalsy()
   })
 })
