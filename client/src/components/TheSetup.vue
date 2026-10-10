@@ -41,12 +41,11 @@
               <label class="keep"><input type="checkbox" :checked="isDef('wifiMode')" @change="keep('wifiMode', $event.target.checked)" /> Default</label>
             </div>
             <div class="radios" role="radiogroup" aria-label="Wi-Fi mode">
-              <label class="radio"><input type="radio" name="wifiMode" value="client" :checked="options.wifiMode === 'client'" @change="edit('wifiMode', { wifiMode: 'client' })" />Client</label>
-              <label class="radio"><input type="radio" name="wifiMode" value="ap" :checked="options.wifiMode === 'ap'" @change="edit('wifiMode', { wifiMode: 'ap' })" />Access point</label>
+              <label v-for="m in wifiModes" :key="m.value" class="radio"><input type="radio" name="wifiMode" :value="m.value" :checked="(options.wifiMode || '') === m.value" @change="chooseMode(m.value)" />{{ m.label }}</label>
             </div>
             <span class="help" v-if="effectiveMode === 'auto'"><b>Default:</b> join the network below if one is set. If it is not found within 2 minutes, start the hotspot until the next boot.</span>
-            <span class="help" v-else-if="effectiveMode === 'client'"><b>Client:</b> only join the network below; never start the hotspot.</span>
-            <span class="help" v-else><b>Access point:</b> always run the hotspot; the board does not join a network.</span>
+            <span class="help" v-else-if="effectiveMode === 'client'"><b>Client only:</b> only join the network below; never start the hotspot.</span>
+            <span class="help" v-else><b>Access point only:</b> always run the hotspot; the board does not join a network.</span>
           </div>
 
           <div v-show="effectiveMode !== 'ap'" class="field">
@@ -292,6 +291,13 @@ export default {
       save: { open: false, files: [], selected: [], reason: "", loaded: false },
       install: { open: false, files: [], selected: [], reason: "", loaded: false, name: "" },
     },
+    // One is always chosen. Automatic is what the image does when nothing is
+    // said, and is the Default.
+    wifiModes: [
+      { label: "Automatic", value: "" },
+      { label: "Client only", value: "client" },
+      { label: "Access point only", value: "ap" },
+    ],
     rotations: [
       { label: "Normal", value: 0 },
       { label: "90 degrees", value: 90 },
@@ -316,8 +322,7 @@ export default {
       return s;
     },
     effectiveMode() {
-      if (this.isDef("wifiMode")) return "auto";
-      return this.options.wifiMode || "client";
+      return this.options.wifiMode || "auto";
     },
     software() {
       return this.options.softwareAvailable || [];
@@ -388,6 +393,11 @@ export default {
           this.tree.install.open = false;
         }
       }
+    },
+    // Automatic is Default, so choosing it ticks the box again.
+    chooseMode(value) {
+      this.custom = { ...this.custom, wifiMode: value !== "" };
+      this.setOption({ wifiMode: value });
     },
     edit(name, change) {
       this.custom = { ...this.custom, [name]: true };

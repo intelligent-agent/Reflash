@@ -99,14 +99,6 @@
           <w-button @click="startWifiConnect" :disabled="busy || !selected">
             Connect
           </w-button>
-          <w-button
-            @click="startHotspot"
-            :disabled="busy || wifi.mode === 'ap'"
-            class="ml2"
-            title="Serve the Recore access point instead of joining a network"
-          >
-            Use hotspot
-          </w-button>
         </div>
       </div>
 

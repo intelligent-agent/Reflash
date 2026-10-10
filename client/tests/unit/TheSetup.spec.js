@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { reactive } from 'vue'
 import axios from 'axios'
 import TheSetup from '../../src/components/TheSetup.vue'
 import source from '../../src/components/TheSetup.vue?raw'
@@ -16,7 +17,7 @@ let options
 let dispatch
 
 function mountSetup(over = {}) {
-  options = { ...base, ...over }
+  options = reactive({ ...base, ...over })
   dispatch = vi.fn(async (action, payload) => {
     if (action === 'setOption') Object.assign(options, payload)
   })
@@ -147,6 +148,32 @@ describe('Set up printer (#198)', () => {
     const rule = (sel) => source.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' \\{([^}]*)\\}'))[1]
     expect(rule('.setup-wrap .switch')).toMatch(/position:\s*relative/)
     expect(rule('.setup-wrap .switch input')).toMatch(/position:\s*absolute/)
+  })
+
+  // One of the three is always chosen, so the page never reads as having no mode.
+  it('always has one Wi-Fi mode chosen, Automatic being the Default', async () => {
+    const w = mountSetup()
+    await w.find('.setup-toggle').trigger('click')
+    const chosen = () => w.findAll('input[name=wifiMode]').filter((r) => r.element.checked).map((r) => r.element.value)
+    expect(chosen()).toEqual([''])
+    expect(w.findAll('input[name=wifiMode]').map((r) => r.element.parentElement.textContent.trim()))
+      .toEqual(['Automatic', 'Client only', 'Access point only'])
+
+    await w.find('input[name=wifiMode][value=ap]').setValue(true)
+    expect(sent().pop()).toEqual({ wifiMode: 'ap' })
+    expect(w.vm.isDef('wifiMode')).toBe(false)
+    expect(w.vm.effectiveMode).toBe('ap')
+
+    // Choosing Automatic is going back to Default.
+    await w.find('input[name=wifiMode][value=""]').setValue(true)
+    expect(sent().pop()).toEqual({ wifiMode: '' })
+    expect(w.vm.isDef('wifiMode')).toBe(true)
+  })
+
+  it('shows the mode the printer already has', () => {
+    const w = mountSetup({ wifiMode: 'client' })
+    expect(w.vm.isDef('wifiMode')).toBe(false)
+    expect(w.vm.effectiveMode).toBe('client')
   })
 
   it('has no Default box on the Wi-Fi network, which it cannot take back', () => {

@@ -458,3 +458,17 @@ describe('the scan poll stops with the dialog', () => {
     expect(w.vm.progressVisible).toBe(false)
   })
 })
+
+// #198: the mode - join a network or be a hotspot - is chosen with the radio
+// buttons in the setup panel, so the form there has no button for it.
+describe('TheWifiSetup inside the setup panel', () => {
+  it('has no Use hotspot button, and the dialog keeps its own', async () => {
+    const raw = (await import('../../src/components/TheWifiSetup.vue?raw')).default
+    const inline = raw.slice(raw.indexOf('<div v-else class="wifi-inline">'), raw.indexOf('</template>\n<script>'))
+    const dialog = raw.slice(raw.indexOf('<w-dialog'), raw.indexOf('<div v-else class="wifi-inline">'))
+    expect(inline).not.toContain('Use hotspot')
+    expect(inline).toContain('Scan for Networks')
+    expect(inline).toContain('Connect')
+    expect(dialog).toContain('Use hotspot')
+  })
+})
