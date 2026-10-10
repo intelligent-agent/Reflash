@@ -145,6 +145,32 @@ func TestRestoreIntoInstalled(t *testing.T) {
 	}
 }
 
+func TestRestoreFeedbackLog(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nactions=restore\n'`)
+	os.MkdirAll(backups_folder, 0o755)
+	os.WriteFile(filepath.Join(backups_folder, "mine.tar.gz"), configArchive(t), 0o644)
+	fakeBin(t, dir, "target-install", `exit 0`)
+	restoreIntoInstalled(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/file_backups/restore", strings.NewReader(`{"name":"mine.tar.gz"}`)))
+	log, _ := os.ReadFile(log_file)
+	for _, want := range []string{"Install config now requested: mine.tar.gz", "Install config now completed: mine.tar.gz"} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("missing log entry %q", want)
+		}
+	}
+	restoreIntoInstalled(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/file_backups/restore", strings.NewReader(`{"name":"missing.tar.gz"}`)))
+	log, _ = os.ReadFile(log_file)
+	if !strings.Contains(string(log), "Install config now failed: the backup missing.tar.gz is not on the USB drive") {
+		t.Errorf("missing failure feedback: %s", log)
+	}
+	w := httptest.NewRecorder()
+	restoreIntoInstalled(w, httptest.NewRequest("POST", "/api/file_backups/restore", strings.NewReader(`not JSON`)))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid request status: %d", w.Code)
+	}
+}
+
 // An image goes to this computer by a name that cannot leave the folder.
 func TestDownloadImage(t *testing.T) {
 	setupTest(t)
