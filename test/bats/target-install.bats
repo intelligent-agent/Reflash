@@ -467,6 +467,7 @@ legacy_system() {
   [ "$status" -eq 3 ]
   run "$PROD_BIN/target-install" settings
   [ "$status" -eq 3 ]
+}
 
 # ---- #198: include lists and listing ----
 
