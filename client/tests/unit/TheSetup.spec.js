@@ -126,6 +126,25 @@ describe('Set up printer (#198)', () => {
     expect(w.vm.rootPw).toBe('')
   }, 10000)
 
+  it('does not offer to install software without internet, and says why; off is always possible', async () => {
+    const item = [{ name: 'led_effect', info: 'LED effects', installed: false }]
+    const w = mountSetup({ softwareAvailable: item })
+    await w.setProps({ internet: false })
+    await w.find('.setup-toggle').trigger('click')
+    const sw = () => w.find('#setup-software .w-switch, #setup-software w-switch-stub')
+    expect(w.find('#setup-software').text()).toContain('needs an internet connection')
+    expect(w.find('#setup-software').html()).toMatch(/disabled/)
+    // Already on: it can be switched off, and no warning is shown.
+    const on = mountSetup({ softwareAvailable: item, software: 'led_effect' })
+    await on.setProps({ internet: false })
+    await on.find('.setup-toggle').trigger('click')
+    expect(on.find('#setup-software').text()).not.toContain('needs an internet connection')
+    // With internet, nothing is said.
+    const online = mountSetup({ softwareAvailable: item })
+    await online.find('.setup-toggle').trigger('click')
+    expect(online.find('#setup-software').text()).not.toContain('needs an internet connection')
+  })
+
   it('turns software on and off as a list', async () => {
     const w = mountSetup({ softwareAvailable: [{ name: 'led_effect', info: 'LED effects', installed: false }] })
     await w.find('.setup-toggle').trigger('click')

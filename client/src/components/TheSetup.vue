@@ -229,8 +229,9 @@
           <h4>Optional software</h4>
           <div v-for="s in software" :key="s.name" class="field">
             <div class="top"><span class="lab">{{ title(s.name) }}</span></div>
-            <w-switch :model-value="!!softwareOn[s.name]" @update:model-value="toggleSoftware(s.name, $event)">Install&nbsp;<code>{{ s.name }}</code></w-switch>
-            <span class="help">{{ s.info }}. Like the other settings, it reaches the installed system at once and goes onto the next image after a flash. Off by default.</span>
+            <w-switch :model-value="!!softwareOn[s.name]" :disabled="!internet && !softwareOn[s.name]" @update:model-value="toggleSoftware(s.name, $event)">Install&nbsp;<code>{{ s.name }}</code></w-switch>
+            <span class="error" v-if="!internet && !softwareOn[s.name]">It is installed from GitHub, so it needs an internet connection. Connect the board to the internet to install it.</span>
+            <span class="help">{{ s.info }}. Cloned from GitHub, so it updates through Moonraker. Like the other settings, it reaches the installed system at once and goes onto the next image after a flash. Off by default.</span>
             <span class="help">Installed on this printer now: <b>{{ s.installed ? "yes" : "no" }}</b></span>
           </div>
           <p class="sub center">More components can be added to this list later.</p>
@@ -270,6 +271,11 @@ const shortName = (name) => String(name || "").replace(/\.tar\.gz$/, "");
 export default {
   name: "TheSetup",
   components: { TheWifiSetup, FileTree },
+  props: {
+    // Whether the board can reach the internet: software that is cloned from
+    // GitHub cannot be switched on without (#205). Switching it off can.
+    internet: { type: Boolean, default: true },
+  },
   data: () => ({
     expanded: false,
     current: "setup-network",

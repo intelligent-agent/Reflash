@@ -511,3 +511,47 @@ func TestSyncStateSaysWhenTheWriteIsDone(t *testing.T) {
 		t.Error("still busy after the write")
 	}
 }
+
+// #205: software that could not be installed - no connection to GitHub, say -
+// is not left switched on, for the next image to fail on as well.
+func TestSoftwareThatCouldNotBeInstalledIsSwitchedOffAgain(t *testing.T) {
+	r := newPushRig(t)
+	r.err = errors.New("led_effect is installed from GitHub and there is no connection to it")
+	savedOpts := options
+	options = &Options{Software: "led_effect,other", WifiCountry: "NO"}
+	defer func() { options = savedOpts }()
+
+	queuePush(map[string]string{"SOFTWARE_led_effect": "on"})
+	r.waitFor(t, 1)
+	time.Sleep(40 * time.Millisecond)
+	optionsLock.Lock()
+	kept, country := options.Software, options.WifiCountry
+	optionsLock.Unlock()
+	if kept != "other" {
+		t.Errorf("the failed one was kept on, or another was dropped: %q", kept)
+	}
+	if country != "NO" {
+		t.Errorf("an unrelated setting changed: %q", country)
+	}
+	if _, failure := syncState(); !strings.Contains(failure, "no connection") {
+		t.Errorf("the reason was not shown: %q", failure)
+	}
+}
+
+// Switching it off needs no connection, and a failure then keeps nothing off.
+func TestSwitchingSoftwareOffIsNotUndoneByAFailure(t *testing.T) {
+	r := newPushRig(t)
+	r.err = errors.New("eMMC error")
+	savedOpts := options
+	options = &Options{Software: "other"}
+	defer func() { options = savedOpts }()
+	queuePush(map[string]string{"SOFTWARE_led_effect": "off"})
+	r.waitFor(t, 1)
+	time.Sleep(40 * time.Millisecond)
+	optionsLock.Lock()
+	kept := options.Software
+	optionsLock.Unlock()
+	if kept != "other" {
+		t.Errorf("software list changed by a failed off: %q", kept)
+	}
+}

@@ -305,6 +305,32 @@ run_chrooted() {
         "$chroot_cmd" "$MNT" "$INSTALLER" "$ACTION" ${SECRETS:+"$SECRETS"} ${EXTRA[@]+"${EXTRA[@]}"} < "$stdin"
 }
 
+# A name server for the installer, when it configures (#205): optional software
+# is cloned from GitHub, and the image's /etc/resolv.conf is usually a link into
+# /run, which does not exist in a chroot. Reflash's own is put there for the
+# length of the run and the image's put back after.
+RESOLV_HOST=${REFLASH_RESOLV:-/etc/resolv.conf}
+RESOLV_LINK="" RESOLV_SAVED=""
+enable_dns() {
+    local f="$MNT/etc/resolv.conf"
+    [ -s "$RESOLV_HOST" ] || return 0
+    if [ -L "$f" ]; then
+        RESOLV_LINK=$(readlink "$f")
+        rm -f "$f"
+    elif [ -e "$f" ]; then
+        RESOLV_SAVED="$f.reflash-saved"
+        mv "$f" "$RESOLV_SAVED"
+    fi
+    cp "$RESOLV_HOST" "$f" 2>/dev/null || true
+}
+disable_dns() {
+    local f="$MNT/etc/resolv.conf"
+    [ -n "$RESOLV_LINK$RESOLV_SAVED" ] || { [ -z "${RESOLV_ENABLED:-}" ] || rm -f "$f"; return 0; }
+    rm -f "$f"
+    if [ -n "$RESOLV_LINK" ]; then ln -s "$RESOLV_LINK" "$f"; else mv "$RESOLV_SAVED" "$f"; fi
+    RESOLV_LINK="" RESOLV_SAVED=""
+}
+
 # Run the installer inside the image. Its output goes to the log; the last
 # "ERROR: " line it printed is what the user is shown when it fails. With a
 # second argument, its stdout is data and goes there instead, and only its
@@ -317,6 +343,8 @@ run_installer() {
         mount --bind "/$d" "$MNT/$d"
         MOUNTED+=("$MNT/$d")
     done
+
+    [ "$ACTION" != configure ] || { enable_dns; RESOLV_ENABLED=1; }
 
     out=$(mktemp)
     # Resolved before env -i replaces PATH with the image's.
@@ -351,6 +379,7 @@ run_installer() {
     [ -n "$reason" ] || reason=$(cat "$out.last" 2>/dev/null || true)
     rm -f "$out" "$out.last"
     sync
+    disable_dns
     unmount_all
     [ "$rc" != 3 ] || [ "$ACTION" = prepare ] || [ "$ACTION" = configure ] || unsupported "the installer says so"
     [ "$rc" = 0 ] || fatal "the image's installer failed (exit $rc)${reason:+: $reason}"

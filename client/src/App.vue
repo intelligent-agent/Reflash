@@ -317,7 +317,7 @@
           @changed="onUsbFilesChanged"
         />
       </w-flex>
-      <TheSetup @close="checkInternet(); getStatus()" />
+      <TheSetup :internet="hasInternet" @close="checkInternet(); getStatus()" />
     </w-card>
   </w-app>
 </template>
