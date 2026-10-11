@@ -35,6 +35,15 @@
       <div class="setup-scroll" ref="scroll" @scroll="spy">
         <section id="setup-network" data-title="Network">
           <h4>Network</h4>
+          <div class="field" :class="{ 'is-default': isDef('hostname') }">
+            <div class="top">
+              <label class="lab" for="hostname">Hostname</label>
+              <label class="keep"><input type="checkbox" :checked="isDef('hostname')" @change="keep('hostname', $event.target.checked)" /> Default</label>
+            </div>
+            <input id="hostname" class="input" :value="options.hostname || ''" placeholder="recore" maxlength="63" @change="setHostname($event.target.value)" />
+            <span class="error" v-if="problem.hostname">{{ problem.hostname }}</span>
+            <span class="help">The installed system uses this name after booting. Open <code>{{ options.hostname || 'recore' }}.local</code>. <b>Default:</b> recore.</span>
+          </div>
           <div class="field" :class="{ 'is-default': isDef('wifiMode') }">
             <div class="top">
               <span class="lab">Wi-Fi mode</span>
@@ -252,6 +261,7 @@ import { countries, timezones } from "../countries";
 // What each option is when the Default box is ticked: what is sent to put the
 // installed system back, and what an unchanged option already is.
 const DEFAULTS = {
+  hostname: { hostname: "" },
   wifiMode: { wifiMode: "" },
   hotspot: { hotspotSSID: "", hotspotPSK: "" },
   country: { wifiCountry: "" },
@@ -366,6 +376,7 @@ export default {
       const o = this.options;
       if (this.seeded || o.wifiMode === undefined) return;
       this.custom = {
+        hostname: !!o.hostname,
         wifiMode: !!o.wifiMode,
         hotspot: !!(o.hotspotSSID || o.hotspotPSKSet),
         country: !!o.wifiCountry,
@@ -440,6 +451,20 @@ export default {
       if (err) {
         this.problem = { ...this.problem, [kind]: err };
         this.custom = { ...this.custom, [kind]: false };
+      }
+    },
+    async setHostname(value) {
+      const hostname = value.trim().toLowerCase();
+      if (hostname && (hostname.length > 63 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(hostname))) {
+        this.problem = { ...this.problem, hostname: "Use 1 to 63 letters, digits or hyphens, starting and ending with a letter or digit, without .local." };
+        return;
+      }
+      this.problem = { ...this.problem, hostname: "" };
+      try {
+        await this.setOption({ hostname });
+        this.custom = { ...this.custom, hostname: !!hostname };
+      } catch (err) {
+        this.problem = { ...this.problem, hostname: this.errorOf(err) };
       }
     },
     async setHotspotName() {

@@ -140,6 +140,7 @@ ignores keys it does not know, and must never write `WIFI_PSK` or
 | `LOGIN_PASSWORD` | a new password for the system's login account, or empty to leave the account as it is |
 | `ROOT_PASSWORD` | a new password for root, or empty to leave it as it is |
 | `WIFI_COUNTRY` | two capital letters, the Wi-Fi regulatory domain; empty puts it back to none |
+| `HOSTNAME` | a single DNS label, 1–63 letters, digits or hyphens with a letter or digit at each end; empty restores `recore`; takes effect at the next boot |
 | `TIMEZONE` | a name like `Europe/Oslo`; empty puts it back to UTC |
 | `WIFI_MODE` | `auto` (join the network, hotspot when it is not found), `client` (never the hotspot) or `ap` (always the hotspot); empty is `auto` |
 | `HOTSPOT_SSID` | the hotspot's name; empty is the image's own |
@@ -156,7 +157,7 @@ password is good enough by the image's own rules. A password it refuses fails
 for a new password at its first login. Like `WIFI_PSK`, it is never logged and
 never printed back by the `settings` action.
 
-An empty value for `WIFI_COUNTRY`, `TIMEZONE`, `WIFI_MODE`, `HOTSPOT_SSID` and
+An empty value for `HOSTNAME`, `WIFI_COUNTRY`, `TIMEZONE`, `WIFI_MODE`, `HOTSPOT_SSID` and
 `HOTSPOT_PSK` means "the image's own": Reflash's Default box (#198). It is sent
 when a setting goes back to Default after a change, and a key that was never
 changed is not sent at all, so an image left alone behaves exactly as it did.
@@ -196,7 +197,7 @@ For these actions stdout carries data, and only stderr goes to Reflash's log.
   printed. `HOTSPOT_PSK`, when it is not the default, is printed with the
   same word, for the same reason.
 
-  `settings` also prints `WIFI_COUNTRY`, `TIMEZONE`, `WIFI_MODE` and
+  `settings` also prints `HOSTNAME`, `WIFI_COUNTRY`, `TIMEZONE`, `WIFI_MODE` and
   `HOTSPOT_SSID`. A timezone of `Etc/UTC` and a mode of `auto` are the
   defaults and Reflash shows them as that.
 
