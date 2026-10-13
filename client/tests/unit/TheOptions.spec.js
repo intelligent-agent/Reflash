@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { shallowMount } from '@vue/test-utils'
+import { shallowMount, mount } from '@vue/test-utils'
 import axios from 'axios'
 import TheOptions from '../../src/components/TheOptions.vue'
 // ?raw hands us the file's text at transform time. Reading it with fs and
@@ -165,4 +165,12 @@ describe('TheOptions Advanced (#198)', () => {
     expect(wrapper.vm.serialError).toBe('eMMC busy')
     expect(wrapper.emitted('serial-saved')).toBeFalsy()
   })
+})
+
+it('offers the config archive manager from Options', async () => {
+ const w = mount(TheOptions, { props: { open: true }, global: { mocks: { $store: { getters: { options: {} }, dispatch: vi.fn(async () => {}) } } } })
+ const button = w.findAllComponents({ name: 'w-button' }).find(b => b.text() === 'Manage config archives')
+ expect(button).toBeTruthy()
+ await button.trigger('click')
+ expect(w.emitted('manage-archives')).toHaveLength(1)
 })

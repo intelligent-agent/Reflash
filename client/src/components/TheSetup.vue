@@ -11,8 +11,6 @@
         <span class="chev" aria-hidden="true"></span>Set up printer ...
       </button>
       <div class="setup-meta">
-        <span>{{ countText }}</span>
-        <button type="button" class="link" @click="resetAll()">Reset all to default</button>
         <span :class="status.error ? 'error' : 'good'">{{ status.text }}</span>
       </div>
     </div>
@@ -35,19 +33,18 @@
       <div class="setup-scroll" ref="scroll" @scroll="spy">
         <section id="setup-network" data-title="Network">
           <h4>Network</h4>
-          <div class="field" :class="{ 'is-default': isDef('hostname') }">
+          <div class="field">
             <div class="top">
               <label class="lab" for="hostname">Hostname</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('hostname')" @change="keep('hostname', $event.target.checked)" /> Default</label>
             </div>
-            <input id="hostname" class="input" :value="options.hostname || ''" placeholder="recore" maxlength="63" @change="setHostname($event.target.value)" />
+            <input id="hostname" class="input" :value="options.hostname || 'recore'" maxlength="63" @change="setHostname($event.target.value)" />
             <span class="error" v-if="problem.hostname">{{ problem.hostname }}</span>
-            <span class="help">The installed system uses this name after booting. Open <code>{{ options.hostname || 'recore' }}.local</code>. <b>Default:</b> recore.</span>
+            <span class="help">The installed system uses this name after booting. Open <code>{{ options.hostname || 'recore' }}.local</code>.</span>
           </div>
-          <div class="field" :class="{ 'is-default': isDef('wifiMode') }">
+          <div v-if="wifiPresent" class="wifi-settings">
+          <div class="field">
             <div class="top">
               <span class="lab">Wi-Fi mode</span>
-              <label class="keep"><input type="checkbox" :checked="isDef('wifiMode')" @change="keep('wifiMode', $event.target.checked)" /> Default</label>
             </div>
             <div class="radios" role="radiogroup" aria-label="Wi-Fi mode">
               <label v-for="m in wifiModes" :key="m.value" class="radio"><input type="radio" name="wifiMode" :value="m.value" :checked="(options.wifiMode || '') === m.value" @change="chooseMode(m.value)" />{{ m.label }}</label>
@@ -60,59 +57,61 @@
           <div v-show="effectiveMode !== 'ap'" class="field">
             <div class="top"><span class="lab">Client network — router SSID and password</span></div>
             <TheWifiSetup :open="expanded" inline />
-            <span class="help"><b>Default:</b> no network set. The passphrase stays on the printer and never goes into a config archive.</span>
+            <span class="help"><b>When unchanged:</b> no network set. The passphrase stays on the printer and never goes into a config archive.</span>
           </div>
 
-          <div v-show="effectiveMode !== 'client'" class="field" :class="{ 'is-default': isDef('hotspot') }">
+          <div v-show="effectiveMode !== 'client'" class="field">
             <div class="top">
               <span class="lab">{{ effectiveMode === 'auto' ? "Fallback hotspot — printer AP name and password" : "Hotspot — printer AP name and password" }}</span>
-              <label class="keep"><input type="checkbox" :checked="isDef('hotspot')" @change="keep('hotspot', $event.target.checked)" /> Default</label>
             </div>
             <label class="sub" for="hotspot-name">Name</label>
             <input id="hotspot-name" class="input" v-model="hotspotName" placeholder="Recore" @change="setHotspotName()" />
             <label class="sub" for="hotspot-psk">Password</label>
             <div class="row">
-              <input id="hotspot-psk" class="input" :type="show.hotspot ? 'text' : 'password'" v-model="hotspotPsk" :placeholder="options.hotspotPSKSet ? '(set)' : '12345678'" autocomplete="off" @keydown.enter="setHotspotPassword()" />
+              <input id="hotspot-psk" class="input" :type="show.hotspot ? 'text' : 'password'" v-model="hotspotPsk" :placeholder="options.hotspotPSKSet ? 'Password configured — leave blank to keep' : '12345678'" autocomplete="off" @keydown.enter="setHotspotPassword()" />
               <button type="button" class="btn small plain" @click="show.hotspot = !show.hotspot">{{ show.hotspot ? "Hide" : "Show" }}</button>
               <button type="button" class="btn small" :disabled="!hotspotPsk" @click="setHotspotPassword()">Set</button>
             </div>
             <span class="error" v-if="problem.hotspot">{{ problem.hotspot }}</span>
-            <span class="help"><b>Default:</b> name <code>Recore</code>, password <code>12345678</code>, address 192.168.50.1.</span>
+            <span class="help"><b>When unchanged:</b> name <code>Recore</code>, password <code>12345678</code>, address 192.168.50.1.</span>
+          </div>
+          </div>
+          <div v-if="wifiPresent !== true" class="field wifi-check">
+            <span class="help">{{ wifiPresent === false ? 'No Wi-Fi adapter detected. You can connect an adapter and check again.' : 'Checking for a Wi-Fi adapter...' }}</span>
+            <button type="button" class="btn small" :disabled="wifiChecking" @click="checkWifi()">{{ wifiChecking ? 'Checking...' : 'Check again' }}</button>
+            <span class="help" v-if="wifiCheckError">{{ wifiCheckError }}</span>
           </div>
         </section>
 
         <section id="setup-location" data-title="Location">
           <h4>Location</h4>
-          <div class="field" :class="{ 'is-default': isDef('country') }">
+          <div class="field">
             <div class="top">
               <label class="lab" for="country">Country</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('country')" @change="keep('country', $event.target.checked)" /> Default</label>
             </div>
             <select id="country" class="input" :value="options.wifiCountry || ''" @change="edit('country', { wifiCountry: $event.target.value })">
-              <option value="" disabled>Choose a country</option>
+              <option value="">Not specified</option>
               <option v-for="c in countries" :key="c[0]" :value="c[0]">{{ c[1] }} ({{ c[0] }})</option>
             </select>
-            <span class="help">Sets the Wi-Fi regulatory domain: which channels and power the radio may use. <b>Default:</b> none set.</span>
+            <span class="help">Sets the Wi-Fi regulatory domain: which channels and power the radio may use. <b>When unchanged:</b> none set.</span>
           </div>
-          <div class="field" :class="{ 'is-default': isDef('timezone') }">
+          <div class="field">
             <div class="top">
               <label class="lab" for="timezone">Timezone</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('timezone')" @change="keep('timezone', $event.target.checked)" /> Default</label>
             </div>
-            <select id="timezone" class="input" :value="options.timezone || ''" @change="edit('timezone', { timezone: $event.target.value })">
-              <option value="" disabled>Choose a timezone</option>
+            <select id="timezone" class="input" :value="options.timezone || 'UTC'" @change="edit('timezone', { timezone: $event.target.value })">
+
               <option v-for="z in zones" :key="z" :value="z">{{ z }}</option>
             </select>
-            <span class="help"><b>Default:</b> UTC.</span>
+            <span class="help">Uses the selected timezone.</span>
           </div>
         </section>
 
         <section id="setup-accounts" data-title="Accounts">
           <h4>Accounts</h4>
-          <div class="field" :class="{ 'is-default': isDef('sshPassword') }">
+          <div class="field">
             <div class="top">
               <label class="lab" for="ssh-password">SSH password (user debian)</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('sshPassword')" @change="keep('sshPassword', $event.target.checked)" /> Default</label>
             </div>
             <div class="row">
               <input id="ssh-password" class="input" :type="show.ssh ? 'text' : 'password'" v-model="sshPw" :placeholder="options.loginPasswordSet ? '(set)' : 'At least 6 characters'" autocomplete="off" @keydown.enter="setPassword('sshPassword')" />
@@ -120,12 +119,11 @@
               <button type="button" class="btn small" :disabled="!sshPw" @click="setPassword('sshPassword')">Set</button>
             </div>
             <span class="error" v-if="problem.sshPassword">{{ problem.sshPassword }}</span>
-            <span class="help"><b>Default:</b> <code>temppwd</code>, which must be changed at first login.</span>
+            <span class="help">Leave blank to keep the installed image’s existing password.</span>
           </div>
-          <div class="field" :class="{ 'is-default': isDef('rootPassword') }">
+          <div class="field">
             <div class="top">
               <label class="lab" for="root-password">Root password</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('rootPassword')" @change="keep('rootPassword', $event.target.checked)" /> Default</label>
             </div>
             <div class="row">
               <input id="root-password" class="input" :type="show.root ? 'text' : 'password'" v-model="rootPw" :placeholder="options.rootPasswordSet ? '(set)' : 'At least 6 characters'" autocomplete="off" @keydown.enter="setPassword('rootPassword')" />
@@ -133,29 +131,27 @@
               <button type="button" class="btn small" :disabled="!rootPw" @click="setPassword('rootPassword')">Set</button>
             </div>
             <span class="error" v-if="problem.rootPassword">{{ problem.rootPassword }}</span>
-            <span class="help">For the serial console; root cannot log in over SSH with a password. <b>Default:</b> <code>temppwd</code>.</span>
+            <span class="help">For the serial console; root cannot log in over SSH with a password. Leave blank to keep the existing password.</span>
           </div>
-          <div class="field" :class="{ 'is-default': isDef('ssh') }">
+          <div class="field">
             <div class="top">
               <span class="lab">SSH access</span>
-              <label class="keep"><input type="checkbox" :checked="isDef('ssh')" @change="keep('ssh', $event.target.checked)" /> Default</label>
             </div>
             <w-switch :model-value="!!options.enableSsh" @update:model-value="edit('ssh', { enableSsh: $event })" label="Enable SSH access"></w-switch>
-            <span class="help">Turns itself off after a while if the password is still the default. <b>Default:</b> off.</span>
+            <span class="help">Turns itself off after a while if the password is still the default. <b>When unchanged:</b> off.</span>
           </div>
         </section>
 
         <section id="setup-display" data-title="Display">
           <h4>Display</h4>
-          <div class="field" :class="{ 'is-default': isDef('rotation') }">
+          <div class="field">
             <div class="top">
               <span class="lab">Screen rotation</span>
-              <label class="keep"><input type="checkbox" :checked="isDef('rotation')" @change="keep('rotation', $event.target.checked)" /> Default</label>
             </div>
             <div class="radios" role="radiogroup" aria-label="Screen rotation">
               <label v-for="r in rotations" :key="r.value" class="radio"><input type="radio" name="rotation" :value="r.value" :checked="options.screenRotation === r.value" @change="edit('rotation', { screenRotation: r.value })" />{{ r.label }}</label>
             </div>
-            <span class="help"><b>Default:</b> normal.</span>
+            <span class="help"><b>When unchanged:</b> normal.</span>
           </div>
         </section>
 
@@ -163,16 +159,42 @@
           <h4>Config archive</h4>
 
           <div class="field">
-            <div class="top"><label class="lab" for="save-name">Save this printer's config</label></div>
+            <label class="lab" for="config-install">Config to install</label>
+            <w-select id="config-install" :model-value="options.restoreBackup || ''" :items="archiveChoices" no-unselect @update:model-value="chooseConfig($event)" />
+            <span class="help">Use the image's own configuration, or restore a saved archive after flashing.</span>
+            <button type="button" class="btn small" @click="openArchives()">Manage config archives</button>
+          </div>
+        </section>
+
+        <section v-if="software.length" id="setup-software" data-title="Optional software">
+          <h4>Optional software</h4>
+          <div v-for="s in software" :key="s.name" class="field">
+            <div class="top"><span class="lab">{{ title(s.name) }}</span></div>
+            <w-switch :model-value="!!softwareOn[s.name]" :disabled="!internet && !softwareOn[s.name]" @update:model-value="toggleSoftware(s.name, $event)">Install&nbsp;<code>{{ s.name }}</code></w-switch>
+            <span class="error" v-if="!internet && !softwareOn[s.name]">It is installed from GitHub, so it needs an internet connection. Connect the board to the internet to install it.</span>
+            <span class="help">{{ s.info }}. Cloned from GitHub, so it updates through Moonraker. Like the other settings, it reaches the installed system at once and goes onto the next image after a flash. Off by default.</span>
+            <span class="help">Installed on this printer now: <b>{{ s.installed ? "yes" : "no" }}</b></span>
+          </div>
+          <p class="sub center">More components can be added to this list later.</p>
+        </section>
+      </div>
+
+      <div class="setup-foot"><button type="button" class="btn big" @click="expanded = false">Done</button></div>
+    </div>
+    <w-dialog v-if="managerOpen" v-model="managerOpen" width="80%" :persistent="busy.save || busy.upload || busy.install">
+      <template #title>Manage config archives</template>
+      <div class="archive-manager setup-wrap">
+          <div class="field">
+            <div class="top"><label class="lab" for="save-name">Create archive from current image</label></div>
             <div class="row">
               <input id="save-name" class="input" v-model="saveName" placeholder="Name, for example voron-20261010" @keydown.enter="save()" />
-              <button type="button" class="btn small" :disabled="busy.save" @click="save()">{{ busy.save ? "Saving..." : "Save" }}</button>
+              <button type="button" class="btn small" :disabled="busy.save" @click="save()">{{ busy.save ? "Creating..." : "Create" }}</button>
             </div>
             <button type="button" class="disc" :aria-expanded="String(tree.save.open)" aria-controls="tree-save" @click="toggleTree('save')">
               <span class="chev" aria-hidden="true"></span>Choose files <span class="tally">{{ tally('save') }}</span>
             </button>
             <div id="tree-save" v-if="tree.save.open">
-              <p v-if="tree.save.reason" class="help">{{ tree.save.reason }} The whole config is saved.</p>
+              <p v-if="tree.save.reason" class="help">{{ tree.save.reason }} The whole config is included.</p>
               <FileTree v-else v-model="tree.save.selected" :files="tree.save.files" />
             </div>
             <span class="help">Every folder in <code>config/</code> is listed, including ones you made yourself. The shipped examples are never saved. The Wi-Fi settings, SSH and the passwords are not part of an archive.</span>
@@ -207,12 +229,8 @@
             <span class="error" v-if="problem.archives">{{ problem.archives }}</span>
           </div>
 
-          <div class="field" :class="{ 'is-default': isDef('config') }">
-            <div class="top">
-              <label class="lab" for="config-install">Config to install</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('config')" @change="keep('config', $event.target.checked)" /> Default</label>
-            </div>
-            <w-select id="config-install" :model-value="options.restoreBackup || ''" :items="archiveChoices" placeholder="Choose an archive" no-unselect @update:model-value="chooseConfig($event)" />
+        <div v-if="options.restoreBackup" class="field">
+          <h4>Selected archive: {{ shortName(options.restoreBackup) }}</h4>
             <div v-if="options.restoreBackup">
               <button type="button" class="disc" :aria-expanded="String(tree.install.open)" aria-controls="tree-install" @click="toggleTree('install')">
                 <span class="chev" aria-hidden="true"></span>Choose files <span class="tally">{{ tally('install') }}</span>
@@ -227,25 +245,10 @@
               <span class="good" v-if="message.install">{{ message.install }}</span>
             </div>
             <span class="error" v-if="problem.install">{{ problem.install }}</span>
-            <span class="help">Goes in after the image, or on its own into the system that is installed now. Only the files ticked are written; the rest of the config stays as it is. <b>Default:</b> the image's own config.</span>
-          </div>
-        </section>
-
-        <section v-if="software.length" id="setup-software" data-title="Optional software">
-          <h4>Optional software</h4>
-          <div v-for="s in software" :key="s.name" class="field">
-            <div class="top"><span class="lab">{{ title(s.name) }}</span></div>
-            <w-switch :model-value="!!softwareOn[s.name]" :disabled="!internet && !softwareOn[s.name]" @update:model-value="toggleSoftware(s.name, $event)">Install&nbsp;<code>{{ s.name }}</code></w-switch>
-            <span class="error" v-if="!internet && !softwareOn[s.name]">It is installed from GitHub, so it needs an internet connection. Connect the board to the internet to install it.</span>
-            <span class="help">{{ s.info }}. Cloned from GitHub, so it updates through Moonraker. Like the other settings, it reaches the installed system at once and goes onto the next image after a flash. Off by default.</span>
-            <span class="help">Installed on this printer now: <b>{{ s.installed ? "yes" : "no" }}</b></span>
-          </div>
-          <p class="sub center">More components can be added to this list later.</p>
-        </section>
+        </div>
       </div>
-
-      <div class="setup-foot"><button type="button" class="btn big" @click="expanded = false">Done</button></div>
-    </div>
+      <div class="setup-foot archive-manager-foot setup-wrap"><button type="button" class="btn big" :disabled="busy.save || busy.upload || busy.install" @click="managerOpen = false">Done</button></div>
+    </w-dialog>
   </div>
 </template>
 
@@ -285,6 +288,10 @@ export default {
   },
   data: () => ({
     expanded: false,
+    managerOpen: false,
+    wifiPresent: null,
+    wifiChecking: false,
+    wifiCheckError: "",
     current: "setup-network",
     // Options left alone but shown as set: ticking Default again is a choice.
     custom: {},
@@ -335,7 +342,7 @@ export default {
       return s;
     },
     archiveChoices() {
-      return this.archives.map((archive) => ({ label: shortName(archive.name), value: archive.name }));
+      return [{ label: "Default — image configuration", value: "" }, ...this.archives.filter(archive => archive.ok).map((archive) => ({ label: shortName(archive.name), value: archive.name }))];
     },
     effectiveMode() {
       return this.options.wifiMode || "auto";
@@ -387,7 +394,7 @@ export default {
         rotation: (o.screenRotation || 0) !== 0,
         config: !!o.restoreBackup,
       };
-      this.hotspotName = o.hotspotSSID || "";
+      this.hotspotName = o.hotspotSSID || "Recore";
       this.seeded = true;
     },
     isDef(name) {
@@ -469,7 +476,7 @@ export default {
     },
     async setHotspotName() {
       if (!this.hotspotName.trim()) {
-        this.problem = { ...this.problem, hotspot: "Enter a hotspot name, or choose Default to use Recore." };
+        this.problem = { ...this.problem, hotspot: "Enter a hotspot name, for example Recore." };
         return;
       }
       this.problem = { ...this.problem, hotspot: "" };
@@ -496,11 +503,26 @@ export default {
       this.setOption({ software: Object.keys(now).sort().join(",") });
     },
     // ---- Config archives ----
+    async openArchives() {
+      this.managerOpen = true;
+      await this.listArchives();
+    },
+    async checkWifi() {
+      if (this.wifiChecking) return;
+      this.wifiChecking = true;
+      this.wifiCheckError = "";
+      try {
+        const result = await axios.get('/api/get_status', { timeout: 3000 });
+        this.wifiPresent = !!result.data.network?.wifi?.present;
+      } catch (_) {
+        this.wifiCheckError = "Could not check for a Wi-Fi adapter. Check again when the board is reachable.";
+      } finally { this.wifiChecking = false; }
+    },
     async listArchives() {
       try {
         this.archives = (await axios.get(`/api/file_backups`)).data || [];
       } catch (err) {
-        this.archives = [];
+        this.problem = { ...this.problem, archives: "Could not list config archives: " + this.errorOf(err) };
       }
     },
     notify(message, type = "success", time = 6000) {
@@ -597,7 +619,7 @@ export default {
       this.listArchives();
     },
     async chooseConfig(name) {
-      this.custom = { ...this.custom, config: true };
+      this.custom = { ...this.custom, config: !!name };
       this.tree.install.loaded = false;
       await this.setOption({ restoreBackup: name, restoreInclude: "" });
       if (this.tree.install.open) await this.loadFiles("install");
@@ -655,6 +677,7 @@ export default {
       clearInterval(this.pollTimer);
       if (open) {
         this.getOptions();
+        this.checkWifi();
         this.listArchives();
         this.pollTimer = setInterval(() => {
           if (this.options.settingsSyncBusy) this.getOptions();
@@ -1007,4 +1030,10 @@ export default {
     padding-inline: 16px;
   }
 }
+</style>
+
+<style scoped>
+.archive-manager.setup-wrap, .archive-manager-foot.setup-wrap { margin-top: 0; }
+.archive-manager { max-height: 65vh; overflow-y: auto; padding: 8px 16px; text-align: left; }
+.archive-manager .field { margin-bottom: 20px; }
 </style>

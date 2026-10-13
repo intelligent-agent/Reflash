@@ -35,6 +35,7 @@ const sent = () => dispatch.mock.calls.filter(([a]) => a === 'setOption').map(([
 beforeEach(() => {
   axios.get.mockReset(); axios.post.mockReset(); axios.put.mockReset()
   axios.get.mockImplementation(async (url) => {
+    if (url === '/api/get_status') return { data: { network: { wifi: { present: true } } } }
     if (url === '/api/file_backups') return { data: [{ name: 'voron.tar.gz', size: 2048, ok: true }, { name: 'a7.tar.gz', size: 900, ok: true }] }
     if (url.startsWith('/api/file_backups/files')) return { data: { supported: true, files: ['home/printer/printer_data/config/printer.cfg', 'home/printer/printer_data/config/moonraker.conf', 'home/printer/printer_data/database/x.db'] } }
     return { data: options }
@@ -61,10 +62,7 @@ describe('Set up printer (#198)', () => {
     expect(w2.findAll('.setup-nav a').map((a) => a.text())).toContain('Optional software')
   })
 
-  it('starts with everything at default and says so', async () => {
-    const w = mountSetup()
-    expect(w.find('.setup-meta').text()).toContain('All options at default')
-  })
+
 
   it('starts an option as custom when the printer already has it that way', () => {
     const w = mountSetup({ wifiCountry: 'NO', screenRotation: 90, enableSsh: true, loginPasswordSet: true })
@@ -73,7 +71,7 @@ describe('Set up printer (#198)', () => {
     expect(w.vm.isDef('ssh')).toBe(false)
     expect(w.vm.isDef('sshPassword')).toBe(false)
     expect(w.vm.isDef('timezone')).toBe(true)
-    expect(w.find('.setup-meta').text()).toContain('4 changed from default')
+
   })
 
   it('touching an option leaves default and sends only that option', async () => {
@@ -82,25 +80,10 @@ describe('Set up printer (#198)', () => {
     await w.find('#country').setValue('NO')
     expect(sent()).toEqual([{ wifiCountry: 'NO' }])
     expect(w.vm.isDef('country')).toBe(false)
-    expect(w.find('.setup-meta').text()).toContain('1 changed from default')
+
   })
 
-  it('ticking Default puts the option back, and Reset all puts back all of them', async () => {
-    const w = mountSetup({ wifiCountry: 'NO', timezone: 'Europe/Oslo', screenRotation: 180 })
-    await w.find('.setup-toggle').trigger('click')
-    const box = w.find('#country').element.closest('.field').querySelector('.keep input')
-    box.checked = true
-    box.dispatchEvent(new Event('change'))
-    await flushPromises()
-    expect(sent()).toContainEqual({ wifiCountry: '' })
-    dispatch.mockClear()
-    await w.find('.setup-meta .link').trigger('click')
-    const payloads = sent()
-    expect(payloads).toContainEqual({ timezone: '' })
-    expect(payloads).toContainEqual({ screenRotation: 0 })
-    expect(payloads).toContainEqual({ wifiMode: '' })
-    expect(w.find('.setup-meta').text()).toContain('All options at default')
-  })
+
 
   it('refuses a short password here, before anything is sent', async () => {
     const w = mountSetup()
@@ -180,6 +163,7 @@ describe('Set up printer (#198)', () => {
   it('always has one Wi-Fi mode chosen, Automatic being the Default', async () => {
     const w = mountSetup()
     await w.find('.setup-toggle').trigger('click')
+    await flushPromises()
     const chosen = () => w.findAll('input[name=wifiMode]').filter((r) => r.element.checked).map((r) => r.element.value)
     expect(chosen()).toEqual([''])
     expect(w.findAll('input[name=wifiMode]').map((r) => r.element.parentElement.textContent.trim()))
@@ -212,6 +196,7 @@ describe('Config archives in the panel', () => {
     const w = mountSetup(over)
     await w.find('.setup-toggle').trigger('click')
     await flushPromises()
+    await w.vm.openArchives()
     return w
   }
 
@@ -334,6 +319,7 @@ describe('setup feedback and Wi-Fi modes', () => {
     const w = mountSetup({ hotspotSSID: 'Voron AP' })
     document.body.appendChild(w.element)
     await w.find('.setup-toggle').trigger('click')
+    await flushPromises()
     w.vm.hotspotPsk = 'pending password'
     const network = () => w.findComponent({ name: 'TheWifiSetup' })
     const hotspot = () => w.find('#hotspot-name')
@@ -410,6 +396,7 @@ describe('Wi-Fi credential guidance (#217)', () => {
  it('identifies client and fallback credentials, including defaults', async () => {
   const w = mountSetup()
   await w.find('.setup-toggle').trigger('click')
+  await flushPromises()
   expect(w.text()).toContain('Configure both sets of credentials')
   expect(w.text()).toContain('Client network — router SSID and password')
   expect(w.text()).toContain('Fallback hotspot — printer AP name and password')
@@ -421,6 +408,51 @@ describe('Wi-Fi credential guidance (#217)', () => {
   w.vm.hotspotName = '   '
   await w.vm.setHotspotName()
   expect(sent()).toEqual([])
-  expect(w.vm.problem.hotspot).toContain('choose Default')
+  expect(w.vm.problem.hotspot).toContain('Enter a hotspot name')
+ })
+})
+
+describe('simplified setup prototype (#216)', () => {
+ it('shows effective hostname and timezone without Default checkboxes', async () => {
+  const w = mountSetup()
+  await w.find('.setup-toggle').trigger('click')
+  expect(w.find('#hostname').element.value).toBe('recore')
+  expect(w.find('#timezone').element.value).toBe('UTC')
+  expect(w.findAll('.keep input')).toHaveLength(0)
+ })
+ it('hides absent Wi-Fi and discovers a newly connected adapter on Check again', async () => {
+  let present = false
+  axios.get.mockImplementation(async url => ({ data: url === '/api/get_status' ? { network: { wifi: { present } } } : [] }))
+  const w = mountSetup({ wifiMode: 'client', hotspotSSID: 'My AP' })
+  await w.find('.setup-toggle').trigger('click')
+  await flushPromises()
+  expect(w.find('.wifi-settings').exists()).toBe(false)
+  expect(w.find('.wifi-check').text()).toContain('No Wi-Fi adapter detected')
+  expect(w.find('.wifi-check .error').exists()).toBe(false)
+  present = true
+  await w.find('.wifi-check button').trigger('click')
+  await flushPromises()
+  expect(w.find('.wifi-settings').exists()).toBe(true)
+  expect(options.wifiMode).toBe('client')
+  expect(options.hotspotSSID).toBe('My AP')
+  expect(sent()).toEqual([])
+ })
+ it('keeps setup limited to selecting an archive and opening the manager', async () => {
+  const w = mountSetup()
+  await w.find('.setup-toggle').trigger('click')
+  await flushPromises()
+  expect(w.find('#setup-config #save-name').exists()).toBe(false)
+  expect(w.find('#setup-config .archives').exists()).toBe(false)
+  expect(w.vm.archiveChoices[0]).toEqual({ label: 'Default — image configuration', value: '' })
+  await w.find('#setup-config button').trigger('click')
+  await flushPromises()
+  expect(w.vm.managerOpen).toBe(true)
+  expect(w.find('.archive-manager #save-name').exists()).toBe(true)
+  expect(w.find('.archive-manager').text()).toContain('Create archive from current image')
+ })
+ it('selecting the image configuration clears an old archive and partial selection', async () => {
+  const w = mountSetup({ restoreBackup: 'voron.tar.gz', restoreInclude: 'printer.cfg' })
+  await w.vm.chooseConfig('')
+  expect(sent()).toContainEqual({ restoreBackup: '', restoreInclude: '' })
  })
 })

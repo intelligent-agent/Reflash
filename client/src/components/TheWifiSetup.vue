@@ -53,8 +53,9 @@
       <!-- Only once the server has actually answered: before the first reply
            "not present" is just "not asked yet", and claiming the dongle is
            missing on the way in is how this warning came to flash spuriously. -->
-      <div v-else-if="wifiStatusKnown" class="pa4 text-center mt4 color-error border-error-all">
-        <p>⚠️ No WiFi dongle detected. Please plug in a USB WiFi adapter.</p>
+      <div v-else-if="wifiStatusKnown" class="pa4 text-center mt4">
+        <p>No Wi-Fi adapter detected.</p>
+        <w-button @click="getWifiStatus()">Check again</w-button>
       </div>
 
       <div v-if="statusMessage" class="pa2 mt4 text-center">
@@ -103,8 +104,9 @@
       <!-- Only once the server has actually answered: before the first reply
            "not present" is just "not asked yet", and claiming the dongle is
            missing on the way in is how this warning came to flash spuriously. -->
-      <div v-else-if="wifiStatusKnown" class="pa4 text-center mt4 color-error border-error-all">
-        <p>⚠️ No WiFi dongle detected. Please plug in a USB WiFi adapter.</p>
+      <div v-else-if="wifiStatusKnown" class="pa4 text-center mt4">
+        <p>No Wi-Fi adapter detected.</p>
+        <w-button @click="getWifiStatus()">Check again</w-button>
       </div>
 
       <div v-if="statusMessage" class="pa2 mt4 text-center">

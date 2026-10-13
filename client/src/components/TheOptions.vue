@@ -23,6 +23,7 @@
         <div class="caption ma2">
           Wi-Fi, location, passwords, SSH and screen rotation are under Set up printer on the main page.
         </div>
+        <w-button outline class="ma2" @click="$emit('manage-archives')">Manage config archives</w-button>
         <w-divider class="my6 mx-3"></w-divider>
         <!-- What is not for everyone: the picker's pre-releases, which are
              for developers, and the board's serial number, which is printed

@@ -20,6 +20,7 @@
     <TheLogger :open="openLog" @close="openLog = false" />
     <TheOptions
       :open="openOptions"
+      @manage-archives="openOptions = false; $refs.setup.openArchives()"
       @set-option="setOption"
       @reboot-board="rebootBoard"
       @shutdown-board="shutdownBoard"
@@ -304,7 +305,7 @@
           @changed="onUsbFilesChanged"
         />
       </w-flex>
-      <TheSetup :internet="hasInternet" @close="checkInternet(); getStatus()" />
+      <TheSetup ref="setup" :internet="hasInternet" @close="checkInternet(); getStatus()" />
     </w-card>
   </w-app>
 </template>
