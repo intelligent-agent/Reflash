@@ -726,3 +726,13 @@ it.each(['reflash', 'emmc', 'manual'])('offers the next-image mode independently
  expect(axios.post).toHaveBeenCalledWith('/api/set_options?apply=false',{wifiMode:'client'})
  expect(axios.post.mock.calls.some(([url]) => url.includes('start_connect') || url === '/api/installed_settings')).toBe(false)
 })
+
+it('reopens Manage Wi-Fi from the mDNS link and consumes its navigation state', async () => {
+ window.history.replaceState({},'', '/?manageWifi=1&wifiSSID=Home%20network')
+ const w = mountSetup(); await flushPromises()
+ expect(w.vm.expanded).toBe(true); expect(w.vm.wifiManagerOpen).toBe(true)
+ expect(w.vm.wifiResumeSSID).toBe('Home network')
+ expect(w.findComponent({name:'TheWifiSetup'}).props('initialSsid')).toBe('Home network')
+ expect(window.location.search).toBe('')
+ w.unmount()
+})

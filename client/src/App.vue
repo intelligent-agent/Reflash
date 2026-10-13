@@ -1,6 +1,5 @@
 <template>
   <w-app>
-    <ReconnectNotice />
     <!-- The server starts before the USB drive is ready, so the page can load
          while the board is still partitioning it - which on a worn stick takes
          minutes (#116). Saying so beats an empty image list that looks like a
@@ -311,7 +310,6 @@
 </template>
 
 <script>
-import ReconnectNotice from "./components/ReconnectNotice.vue";
 import TheOptions from "./components/TheOptions";
 import TheLogger from "./components/TheLogger";
 import TheInfo from "./components/TheInfo";
@@ -339,7 +337,6 @@ export function shortName(name, max = 32) {
 export default {
   name: "App",
   components: {
-    ReconnectNotice,
     TheOptions,
     TheLogger,
     TheInfo,

@@ -19,6 +19,12 @@
             <button type="button" class="btn small" @click="startWifiScan" :disabled="busy">{{ progressVisible ? 'Scanning...' : 'Scan for networks' }}</button>
             <button type="button" class="btn small wifi-connect-button" @click="startWifiConnect" :disabled="busy || !selected">{{ reconnecting ? 'Connecting...' : 'Connect' }}</button>
           </div>
+          <div v-if="ipHandoverWarning" class="wifi-handover-warning" role="alert">
+            <p>Connecting to a client network will stop the hotspot at this IP address. Open this page by its mDNS name first so it can reconnect after the switch.</p>
+            <p v-if="handoverURL"><a :href="handoverURL">Continue at {{ handoverHostname }}</a> — Manage Wi-Fi stays open with this network selected. Re-enter the password there.</p>
+            <p v-else>{{ handoverLookup ? 'Looking up the board’s mDNS name...' : 'The mDNS name is unavailable. After connecting, rejoin the destination Wi-Fi and find the board’s new IP in your router.' }}</p>
+            <button type="button" class="btn small" :disabled="handoverLookup" @click="startWifiConnect(true)">Connect using IP anyway</button>
+          </div>
           <p class="wifi-note">Scanning or changing networks may disconnect this browser.</p>
         </section>
         <section class="wifi-manager-section wifi-split">
@@ -31,7 +37,8 @@
         <button type="button" class="btn small" @click="getWifiStatus()">Check again</button>
       </div>
       <p v-if="statusMessage" class="wifi-message" role="status">{{ statusMessage }}</p>
-      <ReconnectNotice transition-only :active="reconnecting && !boardReachable" :target="reconnectTarget" />
+      <button v-if="reconnectTimedOut" type="button" class="btn small" @click="beginReconnect(reconnectTarget, reconnectWantMode)">Retry connection check</button>
+      <ReconnectNotice transition-only :active="(reconnecting || reconnectTimedOut) && !boardReachable" :target="reconnectTarget" />
       <section v-if="isWifiPresent" class="wifi-manager-section">
         <h4>Installed image (eMMC)</h4>
         <p class="wifi-note">Apply this Wi-Fi setup to the installed image for its next boot.</p>
@@ -99,7 +106,7 @@
 import axios from "axios";
 import { mapGetters } from "vuex";
 import ReconnectNotice from "./ReconnectNotice.vue";
-import { wifiSummary } from "../network";
+import { wifiSummary, isIPAddress, wifiManagerURL } from "../network";
 
 // Every request here can be in flight while the radio changes mode, and a
 // request to an origin that has just gone away does not necessarily fail -
@@ -116,6 +123,7 @@ export default {
   name: "TheWifiSetup",
   components: { ReconnectNotice },
   props: {
+    initialSsid: { type: String, default: "" },
     applyRequest: Function,
     open: Boolean,
     showOverlay: Boolean,
@@ -127,6 +135,10 @@ export default {
       show: false,
       width: "min(620px, calc(100vw - 32px))",
     },
+    locationURL: window.location.href,
+    ipHandoverWarning: false,
+    handoverLookup: false,
+    handoverHostname: '',
     showPassword: false,
     applyingSetup: false,
     applyMessage: "",
@@ -143,6 +155,9 @@ export default {
     progressVisible: false,
     // A mode switch is in flight and we are waiting to reach the board again.
     reconnecting: false,
+    reconnectTimedOut: false,
+    reconnectDeadline: 0,
+    reconnectWantMode: "",
     // Whether the board answered our last probe. Starts true so the hint does
     // not flash before the first probe has had a chance to run.
     boardReachable: true,
@@ -154,6 +169,13 @@ export default {
   }),
   computed: {
     ...mapGetters(["options"]),
+    handoverURL() {
+      return wifiManagerURL(this.locationURL, this.handoverHostname, this.selected?.SSID || '');
+    },
+    needsIPHandoverWarning() {
+      const host = new URL(this.locationURL).hostname;
+      return this.wifi.mode === 'ap' && isIPAddress(host) && (!this.wifi.ip || host === this.wifi.ip);
+    },
     wifiSummary() {
       return wifiSummary(this.wifi);
     },
@@ -204,10 +226,13 @@ export default {
           axios.get('/api/get_wifi', { timeout: REQUEST_TIMEOUT }),
           axios.get('/api/wifi_poll_scan', { timeout: REQUEST_TIMEOUT }),
         ]);
-        this.inputSSID = wifi.data.SSID || "";
+        this.inputSSID = this.initialSsid || wifi.data.SSID || "";
         // 204 means a scan is in flight; leave whatever is on screen alone.
         if (aps.status !== 204 && Array.isArray(aps.data)) {
           this.setAvailableAPs(aps.data);
+        }
+        if (this.initialSsid && !this.availableAPs.some(ap => ap.SSID === this.initialSsid)) {
+          this.availableAPs.push({SSID: this.initialSsid, signal: '', label: this.initialSsid});
         }
         this.reselectSavedSSID();
       } catch (err) {
@@ -275,9 +300,19 @@ export default {
         setTimeout(this.pollScanResults, 1000);
       }
     },
-    async startWifiConnect() {
+    async startWifiConnect(allowIP = false) {
       if (!this.selected || !this.selected.SSID?.trim()) {
         this.$waveui.notify("Please select an access point", "error", 0);
+        return;
+      }
+      if (this.needsIPHandoverWarning && allowIP !== true) {
+        this.ipHandoverWarning = true;
+        this.handoverLookup = true;
+        try {
+          const response = await axios.get('/api/reconnect_address', {timeout: REQUEST_TIMEOUT});
+          this.handoverHostname = response.data.hostname || '';
+        } catch (_) { this.handoverHostname = ''; }
+        finally { this.handoverLookup = false; }
         return;
       }
       if (this.inputPassword.trim().length < 8) {
@@ -285,6 +320,7 @@ export default {
         this.$waveui.notify(this.statusMessage, "error", 4000);
         return;
       }
+      this.ipHandoverWarning = false;
       this.statusMessage = `Connecting to ${this.selected.SSID}...`;
       try {
         await axios.post('/api/wifi_start_connect', {
@@ -293,7 +329,13 @@ export default {
         }, { timeout: REQUEST_TIMEOUT });
         this.beginReconnect(this.selected.SSID, "station");
       } catch (err) {
-        const msg = err.response?.data || "Could not start connection";
+        if (!err.response) {
+          // The AP can disappear before its HTTP acknowledgement arrives.
+          // Do not replay Connect: ask for the outcome of the first request.
+          this.beginReconnect(this.selected.SSID, "station", true);
+          return;
+        }
+        const msg = err.response.data || "Could not start connection";
         this.$waveui.notify(msg, "error", 4000);
         this.statusMessage = msg;
       }
@@ -303,9 +345,12 @@ export default {
     // deadline and offering a "continue at recore.local" button that only
     // guesses, watch for the board to come back and say what is true at each
     // step: switching -> (unreachable) reconnect this computer -> connected.
-    beginReconnect(target, wantMode) {
+    beginReconnect(target, wantMode, responseLost = false) {
       this.stopReconnectWatch();
       this.reconnecting = true;
+      this.reconnectTimedOut = false;
+      this.reconnectDeadline = Date.now() + 180000;
+      this.reconnectWantMode = wantMode;
       this.reconnectTarget = target;
       // The state the board is in right now. Nothing it reports counts as an
       // outcome until it has left this - straight after the request it is
@@ -314,7 +359,7 @@ export default {
       this.sawTransition = false;
       this.progressVisible = false; // the reconnect state drives `busy` now
       this.boardReachable = true;
-      this.statusMessage = `Recore is switching to ${target}.`;
+      this.statusMessage = responseLost ? `The connection request lost its response. Checking whether Recore joined ${target}...` : `Recore is switching to ${target}.`;
       this.watchForReconnect(wantMode);
     },
     stopReconnectWatch() {
@@ -325,13 +370,19 @@ export default {
       this.reconnecting = false;
     },
     async watchForReconnect(wantMode) {
-      // Bounded by the dialog, not by a timer: closing it stops the watch, so
-      // this cannot become another loop that runs forever (#115).
+      // Closing the dialog stops the watch; an overall deadline also bounds
+      // the wait when the request or its acknowledgement was lost.
       if (!this.open) {
         this.stopReconnectWatch();
         return;
       }
       const target = this.reconnectTarget;
+      if (this.reconnectDeadline && Date.now() >= this.reconnectDeadline) {
+        this.stopReconnectWatch();
+        this.reconnectTimedOut = true;
+        this.statusMessage = `Could not confirm the connection to ${target}. Rejoin that network on this device, then retry the connection check. If the board is still on its hotspot, reopen Reflash there to see the result.`;
+        return;
+      }
       let wifi = null;
       try {
         // An explicit timeout, because a request to an origin that has gone
@@ -463,6 +514,7 @@ export default {
       handler(is_open) {
         if (is_open) {
           this.statusMessage = "";
+          this.ipHandoverWarning = false;
           this.dialog.show = true;
           this.openDialog();
         } else {
@@ -498,6 +550,9 @@ export default {
 .wifi-manager .wifi-split .wifi-note { margin-bottom: 0; }
 .wifi-manager .wifi-message { margin: 14px 0 0; font-size: 0.9rem; overflow-wrap: anywhere; }
 .wifi-manager .wifi-next-image { margin-top: 16px; }
+.wifi-handover-warning { margin-top: 14px; padding: 12px; border: 1px solid #d9a441; font-size: 0.9rem; line-height: 1.5; }
+.wifi-handover-warning p { margin-bottom: 10px; }
+.wifi-handover-warning a { color: #04a3e5; text-decoration: underline; }
 .wifi-manager-footer { display: flex; justify-content: flex-end; margin-top: 16px; }
 @media (max-width: 480px) {
   .wifi-manager { padding: 16px; }

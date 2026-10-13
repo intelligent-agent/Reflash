@@ -92,3 +92,21 @@ export function reconnectURL(current, hostname) {
   url.username = ''; url.password = '';
   return url.href;
 }
+
+
+// Only nonsecret UI state crosses origins when opening the board by mDNS.
+export function wifiManagerURL(current, hostname, ssid = '') {
+  const target = reconnectURL(current, hostname);
+  if (!target) return '';
+  const url = new URL(target);
+  url.searchParams.set('manageWifi', '1');
+  if (ssid) url.searchParams.set('wifiSSID', ssid);
+  else url.searchParams.delete('wifiSSID');
+  return url.href;
+}
+export function wifiManagerState(current) {
+  const url = new URL(current);
+  const open = url.searchParams.get('manageWifi') === '1';
+  const ssid = url.searchParams.get('wifiSSID') || '';
+  return { open, ssid: open && new TextEncoder().encode(ssid).length <= 32 && !/[\r\n\0]/.test(ssid) ? ssid : '' };
+}
