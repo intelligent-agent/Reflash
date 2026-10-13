@@ -480,6 +480,7 @@ func ServerInit() {
 	fmt.Println("Starting Reflash go server " + reflashVersion)
 	http.Handle("/", fs)
 	http.HandleFunc("/api/get_info", getInfo)
+	http.HandleFunc("/api/reconnect_address", getReconnectAddress)
 	http.HandleFunc("/api/get_metrics", getMetrics)
 	http.HandleFunc("/api/get_status", getStatus)
 	http.HandleFunc("/api/stream_log", streamLog)
@@ -2857,7 +2858,7 @@ func sendResponse(w http.ResponseWriter, err error) {
 // returned unchanged.
 func resolveCmd(name string) string {
 	switch name {
-	case "pkill", "xz", "tail", "lsblk", "sync":
+	case "pkill", "xz", "tail", "lsblk", "sync", "busctl":
 		return name
 	}
 	if strings.ContainsRune(name, '/') {

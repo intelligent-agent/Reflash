@@ -228,11 +228,12 @@ describe('reconnect watch after a mode switch', () => {
     const wrapper = mountDialog(true)
     await settle(wrapper)
     wrapper.vm.selected = { SSID: 'HomeNet' }
+    wrapper.vm.inputPassword = 'wifi-password'
 
     await wrapper.vm.startWifiConnect()
     expect(axios.post).toHaveBeenCalledWith(
       '/api/wifi_start_connect',
-      { SSID: 'HomeNet', password: '' },
+      { SSID: 'HomeNet', password: 'wifi-password' },
       expect.objectContaining({ timeout: expect.any(Number) })
     )
     expect(wrapper.vm.statusMessage).toContain('switching to HomeNet')
@@ -266,6 +267,7 @@ describe('reconnect watch after a mode switch', () => {
     const wrapper = mountDialog(true)
     await settle(wrapper)
     wrapper.vm.selected = { SSID: 'HomeNet' }
+    wrapper.vm.inputPassword = 'wifi-password'
 
     await wrapper.vm.startWifiConnect()
     await flushProbe()
@@ -284,6 +286,7 @@ describe('reconnect watch after a mode switch', () => {
     const wrapper = mountDialog(true)
     await settle(wrapper)
     wrapper.vm.selected = { SSID: 'HomeNet' }
+    wrapper.vm.inputPassword = 'wifi-password'
 
     await wrapper.vm.startWifiConnect()
     await flushProbe()
@@ -307,6 +310,7 @@ describe('reconnect watch after a mode switch', () => {
     const wrapper = mountDialog(true)
     await settle(wrapper)
     wrapper.vm.selected = { SSID: 'HomeNet' }
+    wrapper.vm.inputPassword = 'wifi-password'
 
     await wrapper.vm.startWifiConnect()
     await flushProbe()
@@ -326,6 +330,7 @@ describe('reconnect watch after a mode switch', () => {
     const wrapper = mountDialog(true)
     await settle(wrapper)
     wrapper.vm.selected = { SSID: 'HomeNet' }
+    wrapper.vm.inputPassword = 'wifi-password'
 
     await wrapper.vm.startWifiConnect()
     await flushProbe()
@@ -343,6 +348,7 @@ describe('reconnect watch after a mode switch', () => {
     const wrapper = mountDialog(true)
     await settle(wrapper)
     wrapper.vm.selected = { SSID: 'HomeNet' }
+    wrapper.vm.inputPassword = 'wifi-password'
 
     await wrapper.vm.startWifiConnect()
     await flushProbe()
@@ -379,6 +385,7 @@ describe('reconnect watch after a mode switch', () => {
     const wrapper = mountDialog(true)
     await settle(wrapper)
     wrapper.vm.selected = { SSID: 'HomeNet' }
+    wrapper.vm.inputPassword = 'wifi-password'
     await wrapper.vm.startWifiConnect()
     expect(wrapper.vm.reconnecting).toBe(true)
 
@@ -471,4 +478,17 @@ describe('TheWifiSetup inside the setup panel', () => {
     expect(inline).toContain('Connect')
     expect(dialog).toContain('Use hotspot')
   })
+})
+
+
+describe('client credential validation (#217)', () => {
+ it('explains missing credentials without switching the radio', async () => {
+  const wrapper = mountDialog()
+  wrapper.vm.selected = { SSID: 'HomeNet' }
+  wrapper.vm.inputPassword = 'short'
+  await wrapper.vm.startWifiConnect()
+  expect(axios.post).not.toHaveBeenCalled()
+  expect(wrapper.vm.statusMessage).toContain('client Wi-Fi password')
+  expect(wrapper.vm.reconnecting).toBe(false)
+ })
 })
