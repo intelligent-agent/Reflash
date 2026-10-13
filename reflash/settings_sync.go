@@ -8,18 +8,9 @@ import (
 	"time"
 )
 
-// #185: Wi-Fi, screen rotation and SSH are one set of settings, held by Reflash
-// and by the system on the eMMC, and kept the same:
-//
-//   - when Reflash starts, the installed system is read and its values replace
-//     Reflash's own;
-//   - whatever is changed in Reflash is applied to the installed system as
-//     soon as it is changed;
-//   - when an install finishes, what Reflash then holds goes onto the new
-//     image, as it always did.
-//
-// So there is nothing to carry over: Reflash already holds what the old system
-// did, and applies whatever the user has changed since.
+// Ordinary settings still synchronize with eMMC (#185). Wi-Fi now has two
+// independent setups: Reflash's live connection and the selection for the
+// next image. Copying either setup to eMMC requires an explicit action.
 
 // The settings keys Reflash mirrors, in the interface's own words.
 const (
@@ -421,6 +412,12 @@ func syncFromInstalled() error {
 	optionsLock.Lock()
 	defer optionsLock.Unlock()
 	merged := mergeInstalled(*options, got)
+	// Once the user chooses a Wi-Fi source, a reboot must not replace the
+	// staged setup with the old image's network settings.
+	if options.WifiSource != "" {
+		merged.WifiSSID, merged.WifiPSK, merged.WifiMode = options.WifiSSID, options.WifiPSK, options.WifiMode
+		merged.HotspotSSID, merged.HotspotPSK = options.HotspotSSID, options.HotspotPSK
+	}
 	if merged != *options {
 		*options = merged
 		isDirty = true

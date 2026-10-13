@@ -1,68 +1,45 @@
 <template>
   <div class="wifi-root">
-  <w-dialog v-if="!inline" v-model="dialog.show" :width="dialog.width">
-    <template #title>
-      <span class="dialog_title">Wi-Fi configuration</span>
-    </template>
-    <p>
-      Here you can choose an external access point and password for your local Wi-Fi router, so
-      it can be used with Rebuild. You can also choose to keep the Wi-Fi as an access point. 
-    </p>
-    <div class="pa5">
-      <img style="width: 20%" :src="computeSVG('Wi-Fi')" /><br />
-      <w-progress v-if="progressVisible" class="ma1" circle></w-progress>
+  <w-dialog v-if="!inline" v-model="dialog.show" :width="dialog.width" dialog-class="wifi-manager-dialog" content-class="wifi-manager-content" @update:model-value="!$event && $emit('close')">
+    <template #title><span class="wifi-dialog-title">Manage Wi-Fi</span></template>
+    <div class="wifi-manager setup-wrap">
+      <p class="wifi-intro">Connect Reflash to your network or use its hotspot.</p>
       <div v-if="isWifiPresent">
-        <h3>{{ wifiSummary }}</h3>
-        
-        <w-select
-          style="width: 50%; margin: auto"
-          v-model="selected"
-          :items="availableAPs"
-          item-label-key="label"
-          return-object
-          placeholder="Select an access point">
-          SSID
-        </w-select>
-
-        <w-input
-          class="mt4"
-          style="width: 50%; margin: auto"
-          v-model="inputPassword"
-          type="password">
-          Password
-        </w-input>
-
-        <div class="mt4">
-          <w-button @click="startWifiScan" :disabled="busy" class="mr2">
-            Scan for Networks
-          </w-button>
-          <w-button @click="startWifiConnect" :disabled="busy || !selected">
-            Connect
-          </w-button>
-          <w-button
-            @click="startHotspot"
-            :disabled="busy || wifi.mode === 'ap'"
-            class="ml2"
-            title="Serve the Recore access point instead of joining a network"
-          >
-            Use hotspot
-          </w-button>
-        </div>
+        <div class="wifi-connection" role="status"><span class="wifi-status-dot" aria-hidden="true"></span>{{ wifiSummary }}</div>
+        <section class="wifi-manager-section">
+          <h4>Client network</h4>
+          <label class="wifi-field-label" for="live-wifi-ssid">SSID</label>
+          <w-select id="live-wifi-ssid" class="wifi-network-select" v-model="selected" :items="availableAPs" item-label-key="label" return-object placeholder="Select a network" :disabled="busy" />
+          <label class="wifi-field-label" for="live-wifi-password">Password</label>
+          <div class="row">
+            <input id="live-wifi-password" class="input" v-model="inputPassword" :type="showPassword ? 'text' : 'password'" autocomplete="off" placeholder="Enter the network password" :disabled="busy" />
+            <button type="button" class="btn small plain" @click="showPassword = !showPassword">{{ showPassword ? 'Hide' : 'Show' }}</button>
+          </div>
+          <div class="wifi-actions">
+            <button type="button" class="btn small" @click="startWifiScan" :disabled="busy">{{ progressVisible ? 'Scanning...' : 'Scan for networks' }}</button>
+            <button type="button" class="btn small wifi-connect-button" @click="startWifiConnect" :disabled="busy || !selected">{{ reconnecting ? 'Connecting...' : 'Connect' }}</button>
+          </div>
+          <p class="wifi-note">Scanning or changing networks may disconnect this browser.</p>
+        </section>
+        <section class="wifi-manager-section wifi-split">
+          <div><h4>Reflash hotspot</h4><p class="wifi-note">Recore · 192.168.50.1</p></div>
+          <button type="button" class="btn small" @click="startHotspot" :disabled="busy || wifi.mode === 'ap'">{{ wifi.mode === 'ap' ? 'Hotspot active' : 'Use hotspot' }}</button>
+        </section>
       </div>
-
-      <!-- Only once the server has actually answered: before the first reply
-           "not present" is just "not asked yet", and claiming the dongle is
-           missing on the way in is how this warning came to flash spuriously. -->
-      <div v-else-if="wifiStatusKnown" class="pa4 text-center mt4 color-error border-error-all">
-        <p>⚠️ No WiFi dongle detected. Please plug in a USB WiFi adapter.</p>
+      <div v-else-if="wifiStatusKnown" class="wifi-manager-section">
+        <p>No Wi-Fi adapter detected.</p>
+        <button type="button" class="btn small" @click="getWifiStatus()">Check again</button>
       </div>
-
-      <div v-if="statusMessage" class="pa2 mt4 text-center">
-        <p>{{ statusMessage }}</p>
-        <!-- Only while the board is genuinely unreachable. Telling someone to
-             reconnect when the page is still talking to the board is noise. -->
-        <ReconnectNotice transition-only :active="reconnecting && !boardReachable" :target="reconnectTarget" />
-      </div>
+      <p v-if="statusMessage" class="wifi-message" role="status">{{ statusMessage }}</p>
+      <ReconnectNotice transition-only :active="reconnecting && !boardReachable" :target="reconnectTarget" />
+      <section v-if="isWifiPresent" class="wifi-manager-section">
+        <h4>Installed image (eMMC)</h4>
+        <p class="wifi-note">Apply this Wi-Fi setup to the installed image for its next boot.</p>
+        <button type="button" class="btn small" :disabled="busy || applyingSetup" @click="useSetupOnEmmc()">{{ applyingSetup ? 'Applying...' : 'Use this setup on eMMC' }}</button>
+        <p v-if="applyMessage" class="wifi-message" role="status">{{ applyMessage }}</p>
+      </section>
+      <p class="wifi-note wifi-next-image">Choose Wi-Fi for the next flash in Set up printer.</p>
+      <div class="wifi-manager-footer"><button type="button" class="btn small" :disabled="applyingSetup" @click="dialog.show = false; $emit('close')">Done</button></div>
     </div>
   </w-dialog>
   <!-- The same form without the dialog around it, for the setup panel (#198). -->
@@ -103,8 +80,9 @@
       <!-- Only once the server has actually answered: before the first reply
            "not present" is just "not asked yet", and claiming the dongle is
            missing on the way in is how this warning came to flash spuriously. -->
-      <div v-else-if="wifiStatusKnown" class="pa4 text-center mt4 color-error border-error-all">
-        <p>⚠️ No WiFi dongle detected. Please plug in a USB WiFi adapter.</p>
+      <div v-else-if="wifiStatusKnown" class="pa4 text-center mt4">
+        <p>No Wi-Fi adapter detected.</p>
+        <w-button @click="getWifiStatus()">Check again</w-button>
       </div>
 
       <div v-if="statusMessage" class="pa2 mt4 text-center">
@@ -138,6 +116,7 @@ export default {
   name: "TheWifiSetup",
   components: { ReconnectNotice },
   props: {
+    applyRequest: Function,
     open: Boolean,
     showOverlay: Boolean,
     // Drawn in the page, not in a dialog.
@@ -146,8 +125,11 @@ export default {
   data: () => ({
     dialog: {
       show: false,
-      width: "30%",
+      width: "min(620px, calc(100vw - 32px))",
     },
+    showPassword: false,
+    applyingSetup: false,
+    applyMessage: "",
     isWifiPresent: false,
     wifiStatusKnown: false,
     wifi: {},
@@ -182,6 +164,17 @@ export default {
     },
   },
   methods: {
+    async useSetupOnEmmc() {
+      this.applyingSetup = true; this.applyMessage = '';
+      try {
+        const body = {source: 'reflash', action: 'apply'};
+        if (this.applyRequest) await this.applyRequest('/api/wifi_setup', body);
+        else await axios.post('/api/wifi_setup', body, {timeout: 300000});
+        this.applyMessage = 'Reflash’s Wi-Fi setup was applied to eMMC for its next boot.';
+      } catch (err) {
+        this.applyMessage = err.response?.data || 'Could not apply this Wi-Fi setup to eMMC.';
+      } finally { this.applyingSetup = false; }
+    },
     computeSVG(name) {
       var color;
       if (this.$waveui.theme == "dark") {
@@ -394,6 +387,7 @@ export default {
           this.wifiStatusKnown = true;
           this.stopReconnectWatch();
           this.statusMessage = `Connected to ${target}.`;
+          this.$emit("setup-changed");
           return;
         }
         // Reachable, and it fell back to its own hotspot instead of joining:
@@ -472,6 +466,7 @@ export default {
           this.dialog.show = true;
           this.openDialog();
         } else {
+          this.dialog.show = false;
           // The watch is bounded by the dialog being open; without this it
           // would keep polling an invisible dialog forever (#115).
           this.stopReconnectWatch();
@@ -483,8 +478,30 @@ export default {
 </script>
 
 <style>
-.dialog_title {
-  margin: auto;
+.w-dialog__content.wifi-manager-dialog { max-width: calc(100vw - 32px); }
+.wifi-manager-content { padding: 0 !important; }
+.wifi-dialog-title { font-size: 1.1rem; font-weight: 500; }
+.wifi-manager { padding: 18px 24px 20px; text-align: left; }
+.wifi-manager p { margin: 0; }
+.wifi-manager .wifi-intro { font-size: 0.95rem; margin-bottom: 16px; opacity: 0.8; }
+.wifi-connection { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; overflow-wrap: anywhere; }
+.wifi-status-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: #5cb85c; }
+.wifi-manager-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid rgba(var(--w-base-color-rgb), 0.2); }
+.wifi-manager-section h4 { margin: 0 0 10px; font-size: 0.95rem; font-weight: 500; }
+.wifi-field-label { display: block; font-size: 0.85rem; margin: 12px 0 4px; opacity: 0.8; }
+.wifi-manager .wifi-network-select { width: 100%; }
+.wifi-manager .wifi-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+.wifi-manager .wifi-connect-button { background: #04a3e5; color: #101010; }
+.wifi-manager .wifi-note { font-size: 0.85rem; opacity: 0.7; line-height: 1.5; margin: 10px 0; }
+.wifi-manager .wifi-split { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.wifi-manager .wifi-split h4 { margin-bottom: 0; }
+.wifi-manager .wifi-split .wifi-note { margin-bottom: 0; }
+.wifi-manager .wifi-message { margin: 14px 0 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.wifi-manager .wifi-next-image { margin-top: 16px; }
+.wifi-manager-footer { display: flex; justify-content: flex-end; margin-top: 16px; }
+@media (max-width: 480px) {
+  .wifi-manager { padding: 16px; }
+  .wifi-manager .wifi-split { flex-wrap: wrap; }
 }
 .wifi-inline h3 {
   font-size: 1.05rem;

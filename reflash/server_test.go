@@ -502,8 +502,9 @@ func TestGetWifi(t *testing.T) {
 	setupTest(t)
 	// The SSID comes from the options the server already holds - no helper, no
 	// eMMC mount.
-	options.WifiSSID = "HomeNet"
-	options.WifiPSK = "hunter2secret"
+	options.WifiSSID = "NextImageNet"
+	options.LiveWifiSSID = "HomeNet"
+	options.LiveWifiPSK = "hunter2secret"
 
 	rr := httptest.NewRecorder()
 	getWifi(rr, httptest.NewRequest("GET", "/api/get_wifi", nil))
@@ -1546,15 +1547,18 @@ func TestConnectWifiStoresCredentialsOnlyOnSuccess(t *testing.T) {
 		waitFor(t, func() bool {
 			optionsLock.Lock()
 			defer optionsLock.Unlock()
-			return options.WifiSSID == "Kraakeslottet"
+			return options.LiveWifiSSID == "Kraakeslottet"
 		})
 
 		optionsLock.Lock()
 		defer optionsLock.Unlock()
 		// Trimmed: the dialog's input picks up stray whitespace, and a PSK
 		// with a trailing space fails in a way nothing reports.
-		if options.WifiPSK != "goodpassphrase" {
-			t.Errorf("PSK = %q, want it trimmed", options.WifiPSK)
+		if options.LiveWifiPSK != "goodpassphrase" {
+			t.Errorf("PSK = %q, want it trimmed", options.LiveWifiPSK)
+		}
+		if options.WifiSSID != "" || options.WifiPSK != "" {
+			t.Error("live connection changed the next-image setup")
 		}
 		if !isDirty {
 			t.Error("working credentials were not marked for saving")
@@ -1574,7 +1578,7 @@ func TestConnectWifiStoresCredentialsOnlyOnSuccess(t *testing.T) {
 		waitFor(t, func() bool {
 			optionsLock.Lock()
 			defer optionsLock.Unlock()
-			return options.WifiSSID == "Net"
+			return options.LiveWifiSSID == "Net"
 		})
 
 		log, err := os.ReadFile(log_file)
@@ -1951,5 +1955,25 @@ func TestAnIdleBoardIsNotResampled(t *testing.T) {
 
 	if state.BytesNow != 7 {
 		t.Errorf("bytes_now = %d, want it untouched at 7", state.BytesNow)
+	}
+}
+
+func TestOptionsRequestBeforeStartupDoesNotHoldTheLock(t *testing.T) {
+	setupTest(t)
+	options = nil
+	w := httptest.NewRecorder()
+	writeOptions(w)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatal("early request should report settings not ready")
+	}
+	if !optionsLock.TryLock() {
+		t.Fatal("early request left the settings mutex locked")
+	}
+	options = &Options{Hostname: "ready"}
+	optionsLock.Unlock()
+	w = httptest.NewRecorder()
+	writeOptions(w)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"hostname":"ready"`) {
+		t.Fatal("options did not recover after startup")
 	}
 }

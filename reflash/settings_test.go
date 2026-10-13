@@ -403,3 +403,59 @@ func TestRestoreBackupAtInstall(t *testing.T) {
 		t.Error("the restore choice was kept for the next install")
 	}
 }
+
+func TestLegacyHostnameCanBeReadButNotApplied(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	fakeBin(t, dir, "target-manifest", "exit 0")
+	fakeBin(t, dir, "get-installed-hostname", "echo legacy-a8")
+	w := httptest.NewRecorder()
+	installedSettings(w, httptest.NewRequest("GET", "/api/installed_settings", nil))
+	var result InstalledSettings
+	json.NewDecoder(w.Body).Decode(&result)
+	if result.Supported || result.Current[keyHostname] != "legacy-a8" {
+		t.Fatalf("got %+v", result)
+	}
+	w = httptest.NewRecorder()
+	installedSettings(w, httptest.NewRequest("POST", "/api/installed_settings", strings.NewReader(`{"HOSTNAME":"new-a8"}`)))
+	json.NewDecoder(w.Body).Decode(&result)
+	if result.Supported {
+		t.Fatal("legacy image unexpectedly accepted a setting")
+	}
+}
+func TestNextFlashOptionDoesNotQueueInstalledChanges(t *testing.T) {
+	setupTest(t)
+	options = &Options{Hostname: "old-image"}
+	pushLock.Lock()
+	if pushTimer != nil {
+		pushTimer.Stop()
+	}
+	pushPending = map[string]string{}
+	pushLock.Unlock()
+	if err := lockSetOptionsMode([]byte(`{"hostname":"new-image"}`), false); err != nil {
+		t.Fatal(err)
+	}
+	if options.Hostname != "new-image" {
+		t.Fatal(options.Hostname)
+	}
+	pushLock.Lock()
+	defer pushLock.Unlock()
+	if len(pushPending) != 0 {
+		t.Fatalf("staging queued writes: %v", pushPending)
+	}
+}
+
+func TestEarlyInstallerHostnameReadDoesNotAddSetCapability(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nsettings=SSH_ENABLED\nactions=settings\n'`)
+	fakeBin(t, dir, "target-install", "echo SSH_ENABLED=true")
+	fakeBin(t, dir, "get-installed-hostname", "echo early-a8")
+	w := httptest.NewRecorder()
+	installedSettings(w, httptest.NewRequest("GET", "/api/installed_settings", nil))
+	var result InstalledSettings
+	json.NewDecoder(w.Body).Decode(&result)
+	if result.Current[keyHostname] != "early-a8" || strings.Join(result.Keys, ",") != "SSH_ENABLED" {
+		t.Fatalf("got %+v", result)
+	}
+}

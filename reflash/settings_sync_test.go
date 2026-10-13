@@ -201,14 +201,14 @@ func TestTargetSettingsSendsOnlyWhatIsNotDefault(t *testing.T) {
 	}
 }
 
-func TestNewSecretsAreNeverStoredOrReturned(t *testing.T) {
+func TestAccountSecretsAreNotStoredAndWifiSecretsAreNotReturned(t *testing.T) {
 	setupTest(t)
 	options = &Options{}
 	if err := lockSetOptions([]byte(`{"rootPassword":"rootsecret1","hotspotPSK":"hotsecret12","wifiCountry":"NO"}`)); err != nil {
 		t.Fatal(err)
 	}
 	saved, _ := toml.Marshal(options)
-	if strings.Contains(string(saved), "secret") || !strings.Contains(string(saved), "NO") {
+	if strings.Contains(string(saved), "rootsecret1") || !strings.Contains(string(saved), "hotsecret12") || !strings.Contains(string(saved), "NO") {
 		t.Errorf("options.cfg would hold the secrets, or lose the country:\n%s", saved)
 	}
 	w := httptest.NewRecorder()
@@ -400,16 +400,15 @@ func TestSetOptionsWithNothingChangedWritesNothing(t *testing.T) {
 	}
 }
 
-// The Wi-Fi is stored by the connect handler, not by set_options, so it has
-// to queue its own push. A test on the source: the hook was missed once for a
-// whole install path, and a streamed install is not easy to drive here.
+// Ordinary option updates still use the settings synchronizer. Live Wi-Fi
+// now requires an explicit application to eMMC.
 func TestEveryPlaceThatStoresSettingsBringsTheInstalledSystemAlong(t *testing.T) {
 	src, err := os.ReadFile("server.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(src)
-	for _, want := range []string{"queuePush(changedSettings(before, *options))", "queuePush(map[string]string{keyWifiName: ssid, keyWifiPSK: psk})", "syncFromInstalled()"} {
+	for _, want := range []string{"queuePush(changedSettings(before, *options))", "syncFromInstalled()"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("server.go no longer has %q: a setting would stop reaching the installed system (#185)", want)
 		}

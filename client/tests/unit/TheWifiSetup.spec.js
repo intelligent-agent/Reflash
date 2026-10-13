@@ -492,3 +492,23 @@ describe('client credential validation (#217)', () => {
   expect(wrapper.vm.reconnecting).toBe(false)
  })
 })
+
+describe('explicit installed-image Wi-Fi copy', () => {
+ it('applies only after the user requests it and does not reconnect the radio', async () => {
+  const w = mountDialog()
+  expect(axios.post).not.toHaveBeenCalled()
+  await w.vm.useSetupOnEmmc()
+  expect(axios.post).toHaveBeenCalledTimes(1)
+  expect(axios.post).toHaveBeenCalledWith('/api/wifi_setup', {source:'reflash',action:'apply'}, {timeout:300000})
+  expect(w.vm.applyMessage).toContain('applied to eMMC')
+  w.unmount()
+ })
+ it('shows installer failures inside the manager', async () => {
+  const w = mountDialog()
+  axios.post.mockRejectedValue({response:{data:'This image cannot change WIFI_MODE'}})
+  await w.vm.useSetupOnEmmc()
+  expect(w.vm.applyMessage).toContain('cannot change WIFI_MODE')
+  expect(w.vm.applyingSetup).toBe(false)
+  w.unmount()
+ })
+})

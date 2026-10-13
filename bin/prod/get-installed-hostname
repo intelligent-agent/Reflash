@@ -1,0 +1,15 @@
+#!/bin/bash
+# Read-only compatibility for pre-installer Rebuild images. New images expose
+# HOSTNAME through target-install settings instead. Never apply a setting here.
+set -euo pipefail
+EMMC="${REFLASH_EMMC:-/dev/mmcblk2}"
+MNT="${REFLASH_HOSTNAME_MNT:-/mnt/hostname-read}"
+mkdir -p "$MNT"
+mount -o ro,noload "${EMMC}p2" "$MNT"
+trap 'umount "$MNT"' EXIT
+version=$(chroot "$MNT" /bin/cat /etc/rebuild-version)
+[[ $version =~ ^rebuild-(barebone|fluidd|mainsail|octoprint)-v1\.[01]\.[0-9]+ ]] || {
+    echo 'The installed image is not a supported legacy Rebuild image' >&2
+    exit 3
+}
+chroot "$MNT" /bin/cat /etc/hostname

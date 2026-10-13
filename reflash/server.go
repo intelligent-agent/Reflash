@@ -167,6 +167,12 @@ type Options struct {
 	ScreenRotation  int    `json:"screenRotation"`
 	WifiSSID        string `json:"SSID"`
 	WifiPSK         string `json:"PSK"`
+	WifiSource      string `json:"wifiSource"`
+	// Reflash's connection is independent of the setup staged for a new image.
+	LiveWifiInitialized bool   `json:"-"`
+	LiveWifiSSID        string `json:"-"`
+	LiveWifiPSK         string `json:"-"`
+	LiveWifiMode        string `json:"-"`
 	// The login password for the next installed system (#182). Held in memory
 	// only - never in options.cfg on the USB drive, never sent back by
 	// get_options - and dropped once an installed system has taken it.
@@ -189,7 +195,7 @@ type Options struct {
 	// "", "client" or "ap": the usual behaviour, only the network, only the hotspot.
 	WifiMode    string `json:"wifiMode"`
 	HotspotSSID string `json:"hotspotSSID"`
-	HotspotPSK  string `json:"hotspotPSK" toml:"-"`
+	HotspotPSK  string `json:"hotspotPSK"`
 	// Optional software that is on, comma separated.
 	Software string `json:"software"`
 }
@@ -416,6 +422,14 @@ func slowInit() {
 				pushLock.Unlock()
 			}
 		})
+		optionsLock.Lock()
+		if !options.LiveWifiInitialized {
+			options.LiveWifiSSID, options.LiveWifiPSK = options.WifiSSID, options.WifiPSK
+			options.LiveWifiMode = options.WifiMode
+			options.LiveWifiInitialized = true
+			isDirty = true
+		}
+		optionsLock.Unlock()
 	}
 
 	startWatchdog()
@@ -522,6 +536,7 @@ func ServerInit() {
 	http.HandleFunc("/api/get_serial_number", getSerialNumber)
 
 	http.HandleFunc("/api/get_wifi", getWifi)
+	http.HandleFunc("/api/wifi_setup", wifiSetup)
 	http.HandleFunc("/api/wifi_start_scan", startScanWifi)
 	http.HandleFunc("/api/wifi_poll_scan", getWifiScanResults)
 	http.HandleFunc("/api/wifi_start_connect", startConnectWifi)
@@ -601,7 +616,7 @@ func getSerialNumber(w http.ResponseWriter, r *http.Request) {
 // hotspot.
 func getWifi(w http.ResponseWriter, r *http.Request) {
 	optionsLock.Lock()
-	ssid := options.WifiSSID
+	ssid := options.LiveWifiSSID
 	optionsLock.Unlock()
 
 	var get_wifi *GetWifi = &GetWifi{
@@ -636,13 +651,21 @@ func bringupWifi() {
 		return
 	}
 
-	// If we have saved credentials, try to connect immediately
-	if options.WifiSSID != "" && options.WifiPSK != "" {
-		logInfo("Boot: Attempting auto-connect to " + options.WifiSSID)
-		runCommand2("wifi-connect", options.WifiSSID, options.WifiPSK)
+	// Use only the saved live setup, never a manually staged network.
+	optionsLock.Lock()
+	live := *options
+	optionsLock.Unlock()
+	current := getNetworkStatus().Wifi
+	if current.IP != "" && ((current.Mode == "station" && current.SSID == live.LiveWifiSSID && live.LiveWifiMode != "ap") || (current.Mode == "ap" && (live.LiveWifiMode == "ap" || live.LiveWifiSSID == ""))) {
+		logInfo("Boot: Keeping Reflash's existing Wi-Fi connection")
+		return
+	}
+	if live.LiveWifiMode != "ap" && live.LiveWifiSSID != "" && live.LiveWifiPSK != "" {
+		logInfo("Boot: Attempting auto-connect to " + live.LiveWifiSSID)
+		runCommand2("wifi-connect", live.LiveWifiSSID, live.LiveWifiPSK)
 	} else {
 		logInfo("Boot: No SSID found, trying auto bring-up")
-		runCommand2("wifi-bringup")
+		runCommand2("wifi-hotspot")
 	}
 }
 func startScanWifi(w http.ResponseWriter, r *http.Request) {
@@ -769,14 +792,18 @@ func startConnectWifi(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Only now are these credentials known to work, so only now are they
-		// worth keeping and worth copying into a flashed image.
+		// A successful live connection is retained independently. Only an
+		// explicit Reflash source selection follows it into the next image.
 		optionsLock.Lock()
-		options.WifiSSID = ssid
-		options.WifiPSK = psk
+		options.LiveWifiInitialized = true
+		options.LiveWifiSSID = ssid
+		options.LiveWifiPSK = psk
+		options.LiveWifiMode = "auto"
+		if options.WifiSource == "reflash" {
+			copyLiveWifiCredentials(options)
+		}
 		isDirty = true
 		optionsLock.Unlock()
-		queuePush(map[string]string{keyWifiName: ssid, keyWifiPSK: psk})
 		logInfo("WiFi Connection successful")
 	}()
 
@@ -797,6 +824,14 @@ func startHotspotWifi(w http.ResponseWriter, r *http.Request) {
 		logInfo("Switching to hotspot mode on request")
 		if _, _, err := runCommand2("wifi-hotspot"); err != nil {
 			logError("Could not start the hotspot: " + err.Error())
+		} else {
+			optionsLock.Lock()
+			options.LiveWifiMode = "ap"
+			if options.WifiSource == "reflash" {
+				copyLiveWifiCredentials(options)
+			}
+			isDirty = true
+			optionsLock.Unlock()
 		}
 	}()
 	w.WriteHeader(http.StatusAccepted)
@@ -839,8 +874,15 @@ func pollConnectWifi(w http.ResponseWriter, r *http.Request) {
 // only the way back that closes.
 func writeOptions(w http.ResponseWriter) {
 	optionsLock.Lock()
-	raw, err := json.Marshal(options)
+	if options == nil {
+		optionsLock.Unlock()
+		http.Error(w, "Reflash settings are not ready yet", http.StatusServiceUnavailable)
+		return
+	}
+	// Snapshot once: startup and saves can replace the options pointer.
+	current := *options
 	optionsLock.Unlock()
+	raw, err := json.Marshal(current)
 	if err != nil {
 		logError("Could not encode options: " + err.Error())
 		http.Error(w, "Could not encode options", http.StatusInternalServerError)
@@ -858,12 +900,10 @@ func writeOptions(w http.ResponseWriter) {
 	delete(fields, "loginPassword")
 	delete(fields, "rootPassword")
 	delete(fields, "hotspotPSK")
-	optionsLock.Lock()
-	passwordSet := options.LoginPassword != ""
-	rootSet := options.RootPassword != ""
-	hotspotSet := options.HotspotPSK != ""
-	wifiSet := options.WifiPSK != ""
-	optionsLock.Unlock()
+	passwordSet := current.LoginPassword != ""
+	rootSet := current.RootPassword != ""
+	hotspotSet := current.HotspotPSK != ""
+	wifiSet := current.WifiPSK != ""
 	fields["loginPasswordSet"], _ = json.Marshal(passwordSet)
 	fields["rootPasswordSet"], _ = json.Marshal(rootSet)
 	fields["hotspotPSKSet"], _ = json.Marshal(hotspotSet)
@@ -886,7 +926,7 @@ func getOptions(w http.ResponseWriter, r *http.Request) {
 
 func setOptions(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
-	if err := lockSetOptions(reqBody); err != nil {
+	if err := lockSetOptionsMode(reqBody, r.URL.Query().Get("apply") != "false"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -2454,7 +2494,16 @@ func installedSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(manifest) == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(InstalledSettings{Reason: "the installed system is too old to have its settings changed from Reflash: reinstall it"})
+		result := InstalledSettings{Reason: "This installed image is too old to support applying settings through Reflash. Your selection can still be used for the next image.", Current: map[string]string{}}
+		if r.Method == http.MethodGet {
+			if hostname, _, err := runCommand2Timeout(10*time.Second, "get-installed-hostname"); err == nil {
+				hostname = strings.ToLower(strings.TrimSpace(hostname))
+				if hostname != "" && validateHostname(hostname) == nil {
+					result.Current[keyHostname] = hostname
+				}
+			}
+		}
+		json.NewEncoder(w).Encode(result)
 		return
 	}
 	allowed := manifestSettings(manifest)
@@ -2480,6 +2529,16 @@ func installedSettings(w http.ResponseWriter, r *http.Request) {
 		for _, line := range strings.Split(current, "\n") {
 			if k, v, ok := strings.Cut(line, "="); ok && k != "SETTINGS" && allowed[k] {
 				out.Current[k] = v
+			}
+		}
+	}
+	// Early Rebuild installers can expose settings without offering HOSTNAME.
+	// Reading their static hostname remains safe; it does not make Set supported.
+	if _, present := out.Current[keyHostname]; !present && !allowed[keyHostname] {
+		if hostname, _, err := runCommand2Timeout(10*time.Second, "get-installed-hostname"); err == nil {
+			hostname = strings.ToLower(strings.TrimSpace(hostname))
+			if hostname != "" && validateHostname(hostname) == nil {
+				out.Current[keyHostname] = hostname
 			}
 		}
 	}
@@ -3323,6 +3382,11 @@ func validateHostname(name string) error {
 }
 
 func lockSetOptions(opts []byte) error {
+	return lockSetOptionsMode(opts, true)
+}
+
+// apply=false retains choices for the next flash without changing the installed image.
+func lockSetOptionsMode(opts []byte, apply bool) error {
 	optionsLock.Lock()
 	defer optionsLock.Unlock()
 
@@ -3340,7 +3404,9 @@ func lockSetOptions(opts []byte) error {
 	}
 	options = &after
 	// What changed is brought to the installed system as well (#185).
-	queuePush(changedSettings(before, *options))
+	if apply {
+		queuePush(changedSettings(before, *options))
+	}
 
 	isDirty = true
 	logInfo("Options updated in memory and marked dirty")
@@ -3871,4 +3937,168 @@ func handleSerialCommand(line string) []string {
 	default:
 		return []string{"ERR unknown command: " + fields[0]}
 	}
+}
+
+// Secrets stay on the board when copying a complete Wi-Fi setup.
+func liveWifiSettings(o Options) map[string]string {
+	mode := o.LiveWifiMode
+	if mode == "" {
+		mode = "auto"
+	}
+	return map[string]string{keyWifiName: o.LiveWifiSSID, keyWifiPSK: o.LiveWifiPSK,
+		keyWifiMode: mode, keyHotspotSSID: "Recore", keyHotspotPSK: "12345678"}
+}
+func copyWifiOptions(o *Options, v map[string]string) {
+	o.WifiSSID, o.WifiPSK = v[keyWifiName], v[keyWifiPSK]
+	o.WifiMode = v[keyWifiMode]
+	if o.WifiMode == "auto" {
+		o.WifiMode = ""
+	}
+	o.HotspotSSID, o.HotspotPSK = v[keyHotspotSSID], v[keyHotspotPSK]
+}
+
+// A live handover changes credentials, not the next image's chosen mode.
+func copyLiveWifiCredentials(o *Options) {
+	mode := o.WifiMode
+	copyWifiOptions(o, liveWifiSettings(*o))
+	o.WifiMode = mode
+}
+func validateWifiSetup(v map[string]string) error {
+	for _, k := range []string{keyWifiName, keyWifiPSK, keyWifiMode, keyHotspotSSID, keyHotspotPSK} {
+		if strings.ContainsAny(v[k], "\r\n\x00") {
+			return fmt.Errorf("Wi-Fi settings cannot contain control characters")
+		}
+	}
+	if v[keyWifiMode] != "auto" && v[keyWifiMode] != "client" && v[keyWifiMode] != "ap" {
+		return fmt.Errorf("choose Automatic, Client or Hotspot")
+	}
+	if len(v[keyWifiName]) > 32 || len(v[keyHotspotSSID]) == 0 || len(v[keyHotspotSSID]) > 32 {
+		return fmt.Errorf("network names must be at most 32 bytes; hotspot name is required")
+	}
+	if v[keyWifiMode] == "client" && v[keyWifiName] == "" {
+		return fmt.Errorf("client SSID is required")
+	}
+	if v[keyWifiName] != "" && (len(v[keyWifiPSK]) < 8 || len(v[keyWifiPSK]) > 63) {
+		return fmt.Errorf("client password must be 8–63 characters")
+	}
+	if len(v[keyHotspotPSK]) < 8 || len(v[keyHotspotPSK]) > 63 {
+		return fmt.Errorf("hotspot password must be 8–63 characters")
+	}
+	return nil
+}
+func wifiSetup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var request struct {
+		Source   string            `json:"source"`
+		Action   string            `json:"action"`
+		Settings map[string]string `json:"settings"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "bad Wi-Fi setup", 400)
+		return
+	}
+	if request.Action != "stage" && request.Action != "apply" {
+		http.Error(w, "choose stage or apply", 400)
+		return
+	}
+	if busy := eMMCBusy(); busy != "" {
+		http.Error(w, "busy: "+busy, 409)
+		return
+	}
+	installedSettingsLock.Lock()
+	defer installedSettingsLock.Unlock()
+	optionsLock.Lock()
+	if options == nil {
+		optionsLock.Unlock()
+		http.Error(w, "Reflash settings are not ready yet", http.StatusServiceUnavailable)
+		return
+	}
+	before := *options
+	optionsLock.Unlock()
+	var values map[string]string
+	switch request.Source {
+	case "reflash":
+		values = liveWifiSettings(before)
+		if request.Action == "stage" {
+			values[keyWifiMode] = before.WifiMode
+			if values[keyWifiMode] == "" {
+				values[keyWifiMode] = "auto"
+			}
+		}
+	case "emmc":
+		manifest, _, err := runCommand2("target-manifest")
+		if err != nil {
+			http.Error(w, "Cannot read the installed Wi-Fi setup", 400)
+			return
+		}
+		allowed := manifestSettings(manifest)
+		current, _, err := runCommand2("target-install", "settings", "secrets")
+		if err != nil {
+			http.Error(w, "This installed image cannot supply its Wi-Fi setup", 400)
+			return
+		}
+		values = parseSettings(current, allowed)
+		if values[keyWifiMode] == "" {
+			values[keyWifiMode] = "auto"
+		}
+		if values[keyHotspotSSID] == "" {
+			values[keyHotspotSSID] = "Recore"
+		}
+		if values[keyHotspotPSK] == "" {
+			values[keyHotspotPSK] = "12345678"
+		}
+		if _, ok := values[keyWifiName]; !ok {
+			http.Error(w, "The installed image does not expose its Wi-Fi setup", 400)
+			return
+		}
+	case "manual":
+		values = request.Settings
+		if values == nil {
+			http.Error(w, "Wi-Fi settings required", 400)
+			return
+		}
+		if values[keyWifiPSK] == "" && values[keyWifiName] == before.WifiSSID {
+			values[keyWifiPSK] = before.WifiPSK
+		}
+		if values[keyHotspotPSK] == "" {
+			values[keyHotspotPSK] = before.HotspotPSK
+			if values[keyHotspotPSK] == "" {
+				values[keyHotspotPSK] = "12345678"
+			}
+		}
+	default:
+		http.Error(w, "unknown Wi-Fi source", 400)
+		return
+	}
+	if err := validateWifiSetup(values); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if request.Action == "apply" {
+		manifest, _, err := runCommand2("target-manifest")
+		if err != nil {
+			http.Error(w, "Cannot read the installed image's capabilities", 400)
+			return
+		}
+		changes := map[string]string{}
+		for _, k := range []string{keyWifiName, keyWifiPSK, keyWifiMode, keyHotspotSSID, keyHotspotPSK} {
+			changes[k] = values[k]
+		}
+		// Validate every key before running the installer; no partial setup copy.
+		if err := applyInstalledSettings(manifestSettings(manifest), changes); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+	} else {
+		optionsLock.Lock()
+		copyWifiOptions(options, values)
+		options.WifiSource = request.Source
+		isDirty = true
+		optionsLock.Unlock()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }

@@ -11,8 +11,6 @@
         <span class="chev" aria-hidden="true"></span>Set up printer ...
       </button>
       <div class="setup-meta">
-        <span>{{ countText }}</span>
-        <button type="button" class="link" @click="resetAll()">Reset all to default</button>
         <span :class="status.error ? 'error' : 'good'">{{ status.text }}</span>
       </div>
     </div>
@@ -35,84 +33,107 @@
       <div class="setup-scroll" ref="scroll" @scroll="spy">
         <section id="setup-network" data-title="Network">
           <h4>Network</h4>
-          <div class="field" :class="{ 'is-default': isDef('hostname') }">
-            <div class="top">
-              <label class="lab" for="hostname">Hostname</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('hostname')" @change="keep('hostname', $event.target.checked)" /> Default</label>
+          <div class="field emmc-field">
+            <label class="lab hostname-label" for="hostname">Hostname</label>
+            <span id="hostname-emmc-heading" class="emmc-heading">eMMC</span>
+            <input id="hostname" class="input" v-model="hostnameDraft" maxlength="63" @change="setHostname(hostnameDraft)" />
+            <div class="emmc-buttons" role="group" aria-labelledby="hostname-emmc-heading">
+              <button type="button" class="btn small" :disabled="hostnameBusy || !hostnameCanRead" @click="getInstalledHostname()">{{ hostnameBusy === 'get' ? 'Getting...' : 'Get' }}</button>
+              <button type="button" class="btn small" :disabled="hostnameBusy || !hostnameCanSet" @click="applyHostname()">{{ hostnameBusy === 'set' ? 'Setting...' : 'Set' }}</button>
             </div>
-            <input id="hostname" class="input" :value="options.hostname || ''" placeholder="recore" maxlength="63" @change="setHostname($event.target.value)" />
-            <span class="error" v-if="problem.hostname">{{ problem.hostname }}</span>
-            <span class="help">The installed system uses this name after booting. Open <code>{{ options.hostname || 'recore' }}.local</code>. <b>Default:</b> recore.</span>
+            <span class="good emmc-feedback" v-if="hostnameMessage">{{ hostnameMessage }}</span>
+            <span class="help emmc-feedback" v-if="hostnameReason">{{ hostnameReason }}</span>
+            <span class="error emmc-feedback" v-if="problem.hostname">{{ problem.hostname }}</span>
+            <span class="help emmc-feedback">Get reads the currently installed image. Set applies to that image for its next boot. Edits are retained for the next flash. Open <code>{{ options.hostname || 'recore' }}.local</code>.</span>
           </div>
-          <div class="field" :class="{ 'is-default': isDef('wifiMode') }">
-            <div class="top">
-              <span class="lab">Wi-Fi mode</span>
-              <label class="keep"><input type="checkbox" :checked="isDef('wifiMode')" @change="keep('wifiMode', $event.target.checked)" /> Default</label>
+          <div v-if="wifiPresent" class="wifi-settings">
+            <div class="field">
+              <span class="lab">Wi-Fi mode for the new image</span>
+              <div class="radios" role="radiogroup" aria-label="Wi-Fi mode for the new image">
+                <label v-for="m in wifiModes" :key="m.value" class="radio"><input type="radio" name="wifiMode" :value="m.value || 'auto'" :checked="effectiveMode === (m.value || 'auto')" :disabled="settingBusy.wifiMode || wifiSetupBusy" @change="settingDraft.wifiMode = m.value || 'auto'; saveNextSetting('wifiMode')" />{{ m.label }}</label>
+              </div>
+              <span class="help" v-if="effectiveMode === 'auto'">Configure both the client network and fallback hotspot. The new image tries the client network first.</span>
+              <span class="help" v-else-if="effectiveMode === 'client'">The new image joins the client network without starting a hotspot.</span>
+              <span class="help" v-else>The new image runs a hotspot without joining a client network.</span>
+              <span class="good" v-if="settingMessage.wifiMode">{{ settingMessage.wifiMode }}</span>
+              <span class="error" v-if="settingError.wifiMode">{{ settingError.wifiMode }}</span>
             </div>
-            <div class="radios" role="radiogroup" aria-label="Wi-Fi mode">
-              <label v-for="m in wifiModes" :key="m.value" class="radio"><input type="radio" name="wifiMode" :value="m.value" :checked="(options.wifiMode || '') === m.value" @change="chooseMode(m.value)" />{{ m.label }}</label>
+            <div class="field">
+              <label class="lab" for="wifi-source">Wi-Fi credentials for the new image</label>
+              <select id="wifi-source" class="input" v-model="wifiSource" @change="chooseWifiSource()" :disabled="wifiSetupBusy">
+                <option value="reflash">Use from Reflash</option>
+                <option value="emmc">Get from eMMC</option>
+                <option value="manual">Manual</option>
+              </select>
+              <span class="help">This setup is installed on the new image. It does not change or test Reflash’s connection.</span>
+              <span v-if="wifiSource !== 'manual'" class="help">Client: {{ options.SSID || 'not configured' }} · Hotspot: {{ options.hotspotSSID || 'Recore' }}</span>
+              <button v-if="wifiSource === 'emmc'" class="btn small" :disabled="wifiSetupBusy" @click="chooseWifiSource()">Get again from eMMC</button>
             </div>
-            <span class="help" v-if="effectiveMode === 'auto'"><b>Automatic:</b> connect to the client network. If it is not found within 2 minutes, start the fallback hotspot until the next boot. Configure both sets of credentials below; the hotspot can use the displayed defaults.</span>
-            <span class="help" v-else-if="effectiveMode === 'client'"><b>Client only:</b> only join the network below; never start the hotspot.</span>
-            <span class="help" v-else><b>Access point only:</b> always run the hotspot; the board does not join a network.</span>
+            <div v-if="wifiSource === 'manual'" class="field">
+              <div v-show="effectiveMode !== 'ap'">
+                <label class="sub" for="client-ssid">Client SSID</label>
+                <input id="client-ssid" class="input" v-model="settingDraft.client" @change="saveManualWifi()" />
+                <label class="sub" for="client-psk">Client password</label>
+                <div class="row">
+                  <input id="client-psk" class="input" v-model="clientPsk" :type="show.client ? 'text' : 'password'" :placeholder="options.wifiPSKSet ? 'Configured — leave blank to keep for this SSID' : 'Wi-Fi password'" autocomplete="off" @change="saveManualWifi()" />
+                  <button class="btn small plain" @click="show.client = !show.client">{{ show.client ? 'Hide' : 'Show' }}</button>
+                </div>
+              </div>
+              <div v-show="effectiveMode !== 'client'">
+                <label class="sub" for="hotspot-name">Hotspot name</label>
+                <input id="hotspot-name" class="input" v-model="hotspotName" @change="saveManualWifi()" />
+                <label class="sub" for="hotspot-psk">Hotspot password</label>
+                <div class="row">
+                  <input id="hotspot-psk" class="input" v-model="hotspotPsk" :type="show.hotspot ? 'text' : 'password'" placeholder="Configured — leave blank to keep" autocomplete="off" @change="saveManualWifi()" />
+                  <button class="btn small plain" @click="show.hotspot = !show.hotspot">{{ show.hotspot ? 'Hide' : 'Show' }}</button>
+                </div>
+              </div>
+              <button class="btn small" :disabled="wifiSetupBusy" @click="saveManualWifi()">Save for next flash</button>
+            </div>
+            <span class="good" v-if="wifiSetupMessage" role="status">{{ wifiSetupMessage }}</span>
+            <span class="error" v-if="wifiSetupError" role="alert">{{ wifiSetupError }}</span>
+            <button class="btn small" @click="wifiManagerOpen = true">Manage Wi-Fi</button>
+            <TheWifiSetup :open="wifiManagerOpen" :apply-request="emmcRequest" @close="wifiManagerOpen = false" @setup-changed="refreshWifiChoice()" />
           </div>
-
-          <div v-show="effectiveMode !== 'ap'" class="field">
-            <div class="top"><span class="lab">Client network — router SSID and password</span></div>
-            <TheWifiSetup :open="expanded" inline />
-            <span class="help"><b>Default:</b> no network set. The passphrase stays on the printer and never goes into a config archive.</span>
-          </div>
-
-          <div v-show="effectiveMode !== 'client'" class="field" :class="{ 'is-default': isDef('hotspot') }">
-            <div class="top">
-              <span class="lab">{{ effectiveMode === 'auto' ? "Fallback hotspot — printer AP name and password" : "Hotspot — printer AP name and password" }}</span>
-              <label class="keep"><input type="checkbox" :checked="isDef('hotspot')" @change="keep('hotspot', $event.target.checked)" /> Default</label>
-            </div>
-            <label class="sub" for="hotspot-name">Name</label>
-            <input id="hotspot-name" class="input" v-model="hotspotName" placeholder="Recore" @change="setHotspotName()" />
-            <label class="sub" for="hotspot-psk">Password</label>
-            <div class="row">
-              <input id="hotspot-psk" class="input" :type="show.hotspot ? 'text' : 'password'" v-model="hotspotPsk" :placeholder="options.hotspotPSKSet ? '(set)' : '12345678'" autocomplete="off" @keydown.enter="setHotspotPassword()" />
-              <button type="button" class="btn small plain" @click="show.hotspot = !show.hotspot">{{ show.hotspot ? "Hide" : "Show" }}</button>
-              <button type="button" class="btn small" :disabled="!hotspotPsk" @click="setHotspotPassword()">Set</button>
-            </div>
-            <span class="error" v-if="problem.hotspot">{{ problem.hotspot }}</span>
-            <span class="help"><b>Default:</b> name <code>Recore</code>, password <code>12345678</code>, address 192.168.50.1.</span>
+          <div v-if="wifiPresent !== true" class="field wifi-check">
+            <span class="help">{{ wifiPresent === false ? 'No Wi-Fi adapter detected. You can connect an adapter and check again.' : 'Checking for a Wi-Fi adapter...' }}</span>
+            <button type="button" class="btn small" :disabled="wifiChecking" @click="checkWifi()">{{ wifiChecking ? 'Checking...' : 'Check again' }}</button>
+            <span class="help" v-if="wifiCheckError">{{ wifiCheckError }}</span>
           </div>
         </section>
 
         <section id="setup-location" data-title="Location">
           <h4>Location</h4>
-          <div class="field" :class="{ 'is-default': isDef('country') }">
-            <div class="top">
-              <label class="lab" for="country">Country</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('country')" @change="keep('country', $event.target.checked)" /> Default</label>
-            </div>
-            <select id="country" class="input" :value="options.wifiCountry || ''" @change="edit('country', { wifiCountry: $event.target.value })">
-              <option value="" disabled>Choose a country</option>
+          <div class="field emmc-field">
+            <label class="lab" for="country">Country</label>
+            <select id="country" class="input" v-model="settingDraft.country" @change="saveNextSetting('country')">
+              <option value="">Not specified</option>
               <option v-for="c in countries" :key="c[0]" :value="c[0]">{{ c[1] }} ({{ c[0] }})</option>
             </select>
-            <span class="help">Sets the Wi-Fi regulatory domain: which channels and power the radio may use. <b>Default:</b> none set.</span>
+            <EmmcActions label="Country" :can-get="canGetSetting('country')" :can-set="canSetSetting('country')" :busy="settingBusy.country" @get="getInstalledSetting('country')" @set="applyInstalledSetting('country')" />
+            <span class="good emmc-feedback" v-if="settingMessage.country">{{ settingMessage.country }}</span>
+            <span class="error emmc-feedback" v-if="settingError.country">{{ settingError.country }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('country')">{{ settingReason('country') }}</span>
+            <span class="help emmc-feedback">Sets the Wi-Fi regulatory domain. Edits are retained for the next flash; Set applies to the installed image.</span>
           </div>
-          <div class="field" :class="{ 'is-default': isDef('timezone') }">
-            <div class="top">
-              <label class="lab" for="timezone">Timezone</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('timezone')" @change="keep('timezone', $event.target.checked)" /> Default</label>
-            </div>
-            <select id="timezone" class="input" :value="options.timezone || ''" @change="edit('timezone', { timezone: $event.target.value })">
-              <option value="" disabled>Choose a timezone</option>
+          <div class="field emmc-field">
+            <label class="lab" for="timezone">Timezone</label>
+            <select id="timezone" class="input" v-model="settingDraft.timezone" @change="saveNextSetting('timezone')">
+              <option v-if="!zones.includes(settingDraft.timezone)" :value="settingDraft.timezone">{{ settingDraft.timezone }}</option>
               <option v-for="z in zones" :key="z" :value="z">{{ z }}</option>
             </select>
-            <span class="help"><b>Default:</b> UTC.</span>
+            <EmmcActions label="Timezone" :can-get="canGetSetting('timezone')" :can-set="canSetSetting('timezone')" :busy="settingBusy.timezone" @get="getInstalledSetting('timezone')" @set="applyInstalledSetting('timezone')" />
+            <span class="good emmc-feedback" v-if="settingMessage.timezone">{{ settingMessage.timezone }}</span>
+            <span class="error emmc-feedback" v-if="settingError.timezone">{{ settingError.timezone }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('timezone')">{{ settingReason('timezone') }}</span>
           </div>
         </section>
 
         <section id="setup-accounts" data-title="Accounts">
           <h4>Accounts</h4>
-          <div class="field" :class="{ 'is-default': isDef('sshPassword') }">
+          <div class="field">
             <div class="top">
               <label class="lab" for="ssh-password">SSH password (user debian)</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('sshPassword')" @change="keep('sshPassword', $event.target.checked)" /> Default</label>
             </div>
             <div class="row">
               <input id="ssh-password" class="input" :type="show.ssh ? 'text' : 'password'" v-model="sshPw" :placeholder="options.loginPasswordSet ? '(set)' : 'At least 6 characters'" autocomplete="off" @keydown.enter="setPassword('sshPassword')" />
@@ -120,12 +141,11 @@
               <button type="button" class="btn small" :disabled="!sshPw" @click="setPassword('sshPassword')">Set</button>
             </div>
             <span class="error" v-if="problem.sshPassword">{{ problem.sshPassword }}</span>
-            <span class="help"><b>Default:</b> <code>temppwd</code>, which must be changed at first login.</span>
+            <span class="help">The documented factory password is temppwd. Set applies the entered password; existing passwords are not read back.</span>
           </div>
-          <div class="field" :class="{ 'is-default': isDef('rootPassword') }">
+          <div class="field">
             <div class="top">
               <label class="lab" for="root-password">Root password</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('rootPassword')" @change="keep('rootPassword', $event.target.checked)" /> Default</label>
             </div>
             <div class="row">
               <input id="root-password" class="input" :type="show.root ? 'text' : 'password'" v-model="rootPw" :placeholder="options.rootPasswordSet ? '(set)' : 'At least 6 characters'" autocomplete="off" @keydown.enter="setPassword('rootPassword')" />
@@ -133,29 +153,33 @@
               <button type="button" class="btn small" :disabled="!rootPw" @click="setPassword('rootPassword')">Set</button>
             </div>
             <span class="error" v-if="problem.rootPassword">{{ problem.rootPassword }}</span>
-            <span class="help">For the serial console; root cannot log in over SSH with a password. <b>Default:</b> <code>temppwd</code>.</span>
+            <span class="help">For the serial console; root cannot log in over SSH with a password. The documented factory password is temppwd. Set applies the entered password; existing passwords are not read back.</span>
           </div>
-          <div class="field" :class="{ 'is-default': isDef('ssh') }">
-            <div class="top">
-              <span class="lab">SSH access</span>
-              <label class="keep"><input type="checkbox" :checked="isDef('ssh')" @change="keep('ssh', $event.target.checked)" /> Default</label>
+          <div class="field emmc-field">
+            <span class="lab">SSH access</span>
+            <div class="setting-input">
+              <w-switch :model-value="settingDraft.ssh" @update:model-value="settingDraft.ssh = $event; saveNextSetting('ssh')" label="Enable SSH access"></w-switch>
             </div>
-            <w-switch :model-value="!!options.enableSsh" @update:model-value="edit('ssh', { enableSsh: $event })" label="Enable SSH access"></w-switch>
-            <span class="help">Turns itself off after a while if the password is still the default. <b>Default:</b> off.</span>
+            <EmmcActions label="SSH access" :can-get="canGetSetting('ssh')" :can-set="canSetSetting('ssh')" :busy="settingBusy.ssh" @get="getInstalledSetting('ssh')" @set="applyInstalledSetting('ssh')" />
+            <span class="good emmc-feedback" v-if="settingMessage.ssh">{{ settingMessage.ssh }}</span>
+            <span class="error emmc-feedback" v-if="settingError.ssh">{{ settingError.ssh }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('ssh')">{{ settingReason('ssh') }}</span>
+            <span class="help emmc-feedback">Get reads SSH access on the installed image; Set applies the selected state to that image.</span>
           </div>
         </section>
 
         <section id="setup-display" data-title="Display">
           <h4>Display</h4>
-          <div class="field" :class="{ 'is-default': isDef('rotation') }">
-            <div class="top">
-              <span class="lab">Screen rotation</span>
-              <label class="keep"><input type="checkbox" :checked="isDef('rotation')" @change="keep('rotation', $event.target.checked)" /> Default</label>
-            </div>
+          <div class="field emmc-field">
+            <span class="lab">Screen rotation</span>
             <div class="radios" role="radiogroup" aria-label="Screen rotation">
-              <label v-for="r in rotations" :key="r.value" class="radio"><input type="radio" name="rotation" :value="r.value" :checked="options.screenRotation === r.value" @change="edit('rotation', { screenRotation: r.value })" />{{ r.label }}</label>
+              <label v-for="r in rotations" :key="r.value" class="radio"><input type="radio" name="rotation" :value="r.value" :checked="settingDraft.rotation === r.value" @change="settingDraft.rotation = r.value; saveNextSetting('rotation')" />{{ r.label }}</label>
             </div>
-            <span class="help"><b>Default:</b> normal.</span>
+            <EmmcActions label="Display rotation" :can-get="canGetSetting('rotation')" :can-set="canSetSetting('rotation')" :busy="settingBusy.rotation" @get="getInstalledSetting('rotation')" @set="applyInstalledSetting('rotation')" />
+            <span class="good emmc-feedback" v-if="settingMessage.rotation">{{ settingMessage.rotation }}</span>
+            <span class="error emmc-feedback" v-if="settingError.rotation">{{ settingError.rotation }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('rotation')">{{ settingReason('rotation') }}</span>
+            <span class="help emmc-feedback">Get reads the installed image's display rotation; Set applies the selected rotation to that image.</span>
           </div>
         </section>
 
@@ -163,71 +187,10 @@
           <h4>Config archive</h4>
 
           <div class="field">
-            <div class="top"><label class="lab" for="save-name">Save this printer's config</label></div>
-            <div class="row">
-              <input id="save-name" class="input" v-model="saveName" placeholder="Name, for example voron-20261010" @keydown.enter="save()" />
-              <button type="button" class="btn small" :disabled="busy.save" @click="save()">{{ busy.save ? "Saving..." : "Save" }}</button>
-            </div>
-            <button type="button" class="disc" :aria-expanded="String(tree.save.open)" aria-controls="tree-save" @click="toggleTree('save')">
-              <span class="chev" aria-hidden="true"></span>Choose files <span class="tally">{{ tally('save') }}</span>
-            </button>
-            <div id="tree-save" v-if="tree.save.open">
-              <p v-if="tree.save.reason" class="help">{{ tree.save.reason }} The whole config is saved.</p>
-              <FileTree v-else v-model="tree.save.selected" :files="tree.save.files" />
-            </div>
-            <span class="help">Every folder in <code>config/</code> is listed, including ones you made yourself. The shipped examples are never saved. The Wi-Fi settings, SSH and the passwords are not part of an archive.</span>
-            <span class="error" v-if="problem.save">{{ problem.save }}</span>
-          </div>
-
-          <div class="field">
-            <div class="top">
-              <span class="lab">Archives on the USB drive</span>
-              <span>
-                <input ref="upload" type="file" class="hidden" accept=".tar.gz,.tgz,.gz" @change="onUpload" />
-                <button type="button" class="btn small plain" :disabled="busy.upload" @click="$refs.upload.click()">{{ busy.upload ? "Uploading..." : "Upload ..." }}</button>
-              </span>
-            </div>
-            <div class="archives">
-              <div v-if="!archives.length" class="archive empty">No archives on this USB drive yet.</div>
-              <div v-for="a in archives" :key="a.name" class="archive">
-                <span class="name" :title="a.name">{{ shortName(a.name) }}<span v-if="!a.ok" class="error"> (damaged)</span></span>
-                <span class="acts" v-if="deleting !== a.name">
-                  <span>{{ size(a.size) }}</span>
-                  <button type="button" class="act" @click="download(a.name)">Download</button>
-                  <button type="button" class="act danger" @click="deleting = a.name">Delete</button>
-                </span>
-                <span class="acts" v-else>
-                  <span>Delete {{ shortName(a.name) }}?</span>
-                  <button type="button" class="act danger" @click="remove(a.name)">Delete</button>
-                  <button type="button" class="act" @click="deleting = ''">Keep</button>
-                </span>
-              </div>
-            </div>
-            <span class="help">Archives are only ever kept on this USB drive.</span>
-            <span class="error" v-if="problem.archives">{{ problem.archives }}</span>
-          </div>
-
-          <div class="field" :class="{ 'is-default': isDef('config') }">
-            <div class="top">
-              <label class="lab" for="config-install">Config to install</label>
-              <label class="keep"><input type="checkbox" :checked="isDef('config')" @change="keep('config', $event.target.checked)" /> Default</label>
-            </div>
-            <w-select id="config-install" :model-value="options.restoreBackup || ''" :items="archiveChoices" placeholder="Choose an archive" no-unselect @update:model-value="chooseConfig($event)" />
-            <div v-if="options.restoreBackup">
-              <button type="button" class="disc" :aria-expanded="String(tree.install.open)" aria-controls="tree-install" @click="toggleTree('install')">
-                <span class="chev" aria-hidden="true"></span>Choose files <span class="tally">{{ tally('install') }}</span>
-              </button>
-              <div id="tree-install" v-if="tree.install.open">
-                <p v-if="tree.install.reason" class="help">{{ tree.install.reason }} All of it is installed.</p>
-                <FileTree v-else v-model="tree.install.selected" :files="tree.install.files" @update:modelValue="installSelectionChanged" />
-              </div>
-            </div>
-            <div class="row center">
-              <button type="button" class="btn small" :disabled="!options.restoreBackup || busy.install" @click="installNow()">{{ busy.install ? "Installing..." : "Install config now" }}</button>
-              <span class="good" v-if="message.install">{{ message.install }}</span>
-            </div>
-            <span class="error" v-if="problem.install">{{ problem.install }}</span>
-            <span class="help">Goes in after the image, or on its own into the system that is installed now. Only the files ticked are written; the rest of the config stays as it is. <b>Default:</b> the image's own config.</span>
+            <label class="lab" for="config-install">Config to install</label>
+            <w-select id="config-install" :model-value="options.restoreBackup || ''" :items="archiveChoices" no-unselect @update:model-value="chooseConfig($event)" />
+            <span class="help">Use the image's own configuration, or restore a saved archive after flashing.</span>
+            <button type="button" class="btn small" @click="openArchives()">Manage config archives</button>
           </div>
         </section>
 
@@ -246,12 +209,85 @@
 
       <div class="setup-foot"><button type="button" class="btn big" @click="expanded = false">Done</button></div>
     </div>
+    <w-dialog v-if="managerOpen" v-model="managerOpen" width="80%" :persistent="busy.save || busy.upload || busy.install">
+      <template #title>Manage config archives</template>
+      <div class="archive-manager setup-wrap">
+          <div class="field">
+            <div class="top"><label class="lab" for="save-name">Create archive from current image</label></div>
+            <div class="row">
+              <input id="save-name" class="input" v-model="saveName" placeholder="Archive name" @keydown.enter="save()" />
+              <button type="button" class="btn small" :disabled="busy.save" @click="save()">{{ busy.save ? "Creating..." : "Create" }}</button>
+            </div>
+            <button type="button" class="disc" :aria-expanded="String(tree.save.open)" aria-controls="tree-save" @click="toggleTree('save')">
+              <span class="chev" aria-hidden="true"></span>Choose files <span class="tally">{{ tally('save') }}</span>
+            </button>
+            <div id="tree-save" v-if="tree.save.open">
+              <p v-if="tree.save.reason" class="help">{{ tree.save.reason }} The whole config is included.</p>
+              <FileTree v-else v-model="tree.save.selected" :files="tree.save.files" />
+            </div>
+            <span class="help">Every folder in <code>config/</code> is listed, including ones you made yourself. The shipped examples are never saved. The Wi-Fi settings, SSH and the passwords are not part of an archive.</span>
+            <span class="good" role="status" v-if="message.save">{{ message.save }}</span>
+            <span class="error" v-if="problem.save">{{ problem.save }}</span>
+          </div>
+
+          <div class="field">
+            <div class="top">
+              <span class="lab">Archives on the USB drive</span>
+              <span>
+                <input ref="upload" type="file" class="hidden" accept=".tar.gz,.tgz,.gz" @change="onUpload" />
+                <button type="button" class="btn small plain" :disabled="busy.upload" @click="$refs.upload.click()">{{ busy.upload ? "Uploading..." : "Upload ..." }}</button>
+              </span>
+            </div>
+            <div class="archives">
+              <div v-if="!archives.length" class="archive empty">No archives on this USB drive yet.</div>
+              <div v-for="a in archives" :key="a.name" class="archive">
+                <span class="name" :title="a.name">{{ shortName(a.name) }}<span v-if="!a.ok" class="error"> (damaged)</span></span>
+                <span class="acts" v-if="deleting !== a.name">
+                  <span>{{ size(a.size) }}</span>
+                  <time class="archive-date" :datetime="archiveDateTime(a.date)" title="Date saved on this USB drive">{{ archiveDate(a.date) }}</time>
+                  <button type="button" class="act" :disabled="!a.ok || busy.install" @click="chooseConfig(a.name)">{{ options.restoreBackup === a.name ? 'Selected' : 'Select' }}</button>
+                  <button type="button" class="act" @click="download(a.name)">Download</button>
+                  <button type="button" class="act danger" @click="deleting = a.name">Delete</button>
+                </span>
+                <span class="acts" v-else>
+                  <span>Delete {{ shortName(a.name) }}?</span>
+                  <button type="button" class="act danger" @click="remove(a.name)">Delete</button>
+                  <button type="button" class="act" @click="deleting = ''">Keep</button>
+                </span>
+              </div>
+            </div>
+            <span class="help">Archives are only ever kept on this USB drive.</span>
+            <span class="error" v-if="problem.archives">{{ problem.archives }}</span>
+          </div>
+
+        <div v-if="options.restoreBackup" class="field">
+          <h4>Selected archive: {{ shortName(options.restoreBackup) }}</h4>
+          <span class="help">Apply the selected files to the currently installed image on eMMC. This does not flash a new image.</span>
+            <div v-if="options.restoreBackup">
+              <button type="button" class="disc" :aria-expanded="String(tree.install.open)" aria-controls="tree-install" @click="toggleTree('install')">
+                <span class="chev" aria-hidden="true"></span>Choose files <span class="tally">{{ tally('install') }}</span>
+              </button>
+              <div id="tree-install" v-if="tree.install.open">
+                <p v-if="tree.install.reason" class="help">{{ tree.install.reason }} All of it is installed.</p>
+                <FileTree v-else v-model="tree.install.selected" :files="tree.install.files" @update:modelValue="installSelectionChanged" />
+              </div>
+            </div>
+            <div class="row center">
+              <button type="button" class="btn small" :disabled="!options.restoreBackup || busy.install" @click="installNow()">{{ busy.install ? "Installing..." : "Use this config on eMMC" }}</button>
+              <span class="good" v-if="message.install">{{ message.install }}</span>
+            </div>
+            <span class="error" v-if="problem.install">{{ problem.install }}</span>
+        </div>
+      </div>
+      <div class="setup-foot archive-manager-foot setup-wrap"><button type="button" class="btn big" :disabled="busy.save || busy.upload || busy.install" @click="managerOpen = false">Done</button></div>
+    </w-dialog>
   </div>
 </template>
 
 <script>
 import axios from "axios";
 import { mapGetters, mapActions } from "vuex";
+import EmmcActions from "./EmmcActions.vue";
 import TheWifiSetup from "./TheWifiSetup.vue";
 import FileTree from "./FileTree.vue";
 import { includeFor } from "../fileTree";
@@ -273,11 +309,21 @@ const DEFAULTS = {
   config: { restoreBackup: "", restoreInclude: "" },
 };
 
+const EMMC_SETTINGS = {
+  wifiMode: { key: 'WIFI_MODE', option: 'wifiMode', label: 'Wi-Fi mode' },
+  ssh: { key: 'SSH_ENABLED', option: 'enableSsh', label: 'SSH access' },
+  country: { key: 'WIFI_COUNTRY', option: 'wifiCountry', label: 'Country' },
+  timezone: { key: 'TIMEZONE', option: 'timezone', label: 'Timezone' },
+  rotation: { key: 'SCREEN_ROTATION', option: 'screenRotation', label: 'Display rotation' },
+  hotspot: { key: 'HOTSPOT_SSID', option: 'hotspotSSID', label: 'AP name' },
+  client: { key: 'WIFI_SSID', option: 'SSID', label: 'Client SSID' },
+};
+
 const shortName = (name) => String(name || "").replace(/\.tar\.gz$/, "");
 
 export default {
   name: "TheSetup",
-  components: { TheWifiSetup, FileTree },
+  components: { TheWifiSetup, FileTree, EmmcActions },
   props: {
     // Whether the board can reach the internet: software that is cloned from
     // GitHub cannot be switched on without (#205). Switching it off can.
@@ -285,11 +331,33 @@ export default {
   },
   data: () => ({
     expanded: false,
+    managerOpen: false,
+    hostnameDraft: "recore",
+    hostnameBusy: "",
+    hostnameCanRead: false,
+    hostnameCanSet: false,
+    hostnameReason: "Checking the installed image’s hostname support...",
+    hostnameMessage: "",
+    installedSettings: { supported: false, keys: [], current: {} },
+    settingDraft: { wifiMode: 'auto', ssh: false, country: '', timezone: 'UTC', rotation: 0, hotspot: 'Recore', client: '' },
+    settingBusy: {},
+    settingMessage: {},
+    settingError: {},
+    wifiSource: 'manual',
+    wifiManagerOpen: false,
+    wifiSetupBusy: false,
+    wifiSaveQueued: false,
+    wifiSetupMessage: '',
+    wifiSetupError: '',
+    clientPsk: '',
+    wifiPresent: null,
+    wifiChecking: false,
+    wifiCheckError: "",
     current: "setup-network",
     // Options left alone but shown as set: ticking Default again is a choice.
     custom: {},
     seeded: false,
-    show: { ssh: false, root: false, hotspot: false },
+    show: { ssh: false, root: false, hotspot: false, client: false },
     sshPw: "",
     rootPw: "",
     hotspotName: "",
@@ -308,8 +376,8 @@ export default {
     // said, and is the Default.
     wifiModes: [
       { label: "Automatic", value: "" },
-      { label: "Client only", value: "client" },
-      { label: "Access point only", value: "ap" },
+      { label: "Client", value: "client" },
+      { label: "Hotspot", value: "ap" },
     ],
     rotations: [
       { label: "Normal", value: 0 },
@@ -335,10 +403,10 @@ export default {
       return s;
     },
     archiveChoices() {
-      return this.archives.map((archive) => ({ label: shortName(archive.name), value: archive.name }));
+      return [{ label: "Default — image configuration", value: "" }, ...this.archives.filter(archive => archive.ok).map((archive) => ({ label: shortName(archive.name), value: archive.name }))];
     },
     effectiveMode() {
-      return this.options.wifiMode || "auto";
+      return this.settingDraft.wifiMode;
     },
     software() {
       return this.options.softwareAvailable || [];
@@ -357,7 +425,7 @@ export default {
     status() {
       if (this.options.settingsSyncError) return { text: "Not saved to the installed system: " + this.options.settingsSyncError, error: true };
       if (this.options.settingsSyncBusy) return { text: "Saving to the installed system ...", error: false };
-      return { text: "Saved to the installed system", error: false };
+      return { text: "Settings ready", error: false };
     },
   },
   methods: {
@@ -387,7 +455,14 @@ export default {
         rotation: (o.screenRotation || 0) !== 0,
         config: !!o.restoreBackup,
       };
-      this.hotspotName = o.hotspotSSID || "";
+      // A documented factory suggestion, not a password read from the image.
+      if (!o.loginPasswordSet) this.sshPw = "temppwd";
+      if (!o.rootPasswordSet) this.rootPw = "temppwd";
+      if (!o.hotspotPSKSet) this.hotspotPsk = "12345678";
+      this.hostnameDraft = o.hostname || "recore";
+      this.hotspotName = o.hotspotSSID || "Recore";
+      this.wifiSource = o.wifiSource || 'manual';
+      this.settingDraft = { wifiMode: o.wifiMode || 'auto', ssh: !!o.enableSsh, country: o.wifiCountry || '', timezone: o.timezone || 'UTC', rotation: o.screenRotation || 0, hotspot: this.hotspotName, client: o.SSID || '' };
       this.seeded = true;
     },
     isDef(name) {
@@ -445,8 +520,6 @@ export default {
       this.problem = { ...this.problem, [kind]: "" };
       this.custom = { ...this.custom, [kind]: true };
       await this.setOption(root ? { rootPassword: pw } : { loginPassword: pw });
-      if (root) this.rootPw = "";
-      else this.sshPw = "";
       const err = await this.settle();
       if (err) {
         this.problem = { ...this.problem, [kind]: err };
@@ -454,22 +527,169 @@ export default {
       }
     },
     async setHostname(value) {
-      const hostname = value.trim().toLowerCase();
-      if (hostname && (hostname.length > 63 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(hostname))) {
+      const hostname = value.trim().toLowerCase() || "recore";
+      if (hostname.length > 63 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(hostname)) {
         this.problem = { ...this.problem, hostname: "Use 1 to 63 letters, digits or hyphens, starting and ending with a letter or digit, without .local." };
-        return;
+        return false;
       }
       this.problem = { ...this.problem, hostname: "" };
+      this.hostnameDraft = hostname;
       try {
-        await this.setOption({ hostname });
-        this.custom = { ...this.custom, hostname: !!hostname };
+        await axios.post('/api/set_options?apply=false', { hostname });
+        await this.getOptions();
+        this.hostnameMessage = `Selected ${hostname} for the next image.`;
+        return true;
       } catch (err) {
-        this.problem = { ...this.problem, hostname: this.errorOf(err) };
+        this.problem = { ...this.problem, hostname: String(this.errorOf(err)) };
+        return false;
       }
+    },
+    async installedSettingsRequest(changes) {
+      return this.emmcRequest('/api/installed_settings', changes);
+    },
+    async emmcRequest(url, changes, timeout = changes === undefined ? 15000 : 300000) {
+      let saveDeadline = 0;
+      for (;;) {
+        try {
+          return changes === undefined
+            ? await axios.get(url, { timeout })
+            : await axios.post(url, changes, { timeout });
+        } catch (err) {
+          // A SAVING conflict is returned before the installer runs. Only this
+          // brief options-save conflict is safe to retry; never replay a timed
+          // out POST or retry across an image flash.
+          if (err.response?.status !== 409 || String(err.response.data).trim() !== 'busy: SAVING') throw err;
+          if (!saveDeadline) saveDeadline = Date.now() + 20000;
+          for (;;) {
+            if (Date.now() >= saveDeadline) throw new Error('Options are still being saved. Try again shortly.');
+            await new Promise(resolve => setTimeout(resolve, 250));
+            const { data } = await axios.get('/api/get_progress', { timeout: Math.min(3000, Math.max(1, saveDeadline - Date.now())) });
+            if (data.state !== 'SAVING') {
+              if (!['IDLE', 'FINISHED', 'ERROR', 'CANCELLED'].includes(data.state)) throw new Error(`Reflash is busy: ${data.state || 'unknown state'}. Try again when it is idle.`);
+              break;
+            }
+          }
+        }
+      }
+    },
+    async readInstalledSettings() {
+      const { data } = await this.installedSettingsRequest();
+      this.installedSettings = data;
+      this.hostnameCanRead = typeof data.current?.HOSTNAME === 'string';
+      this.hostnameCanSet = !!data.supported && (data.keys || []).includes('HOSTNAME');
+      this.hostnameReason = data.reason || (!this.hostnameCanSet ? 'This installed image cannot apply hostname changes. Your selection is still used for the next flash.' : '');
+      return data;
+    },
+    async readHostnameSupport() {
+      return (await this.readInstalledSettings()).current?.HOSTNAME;
+    },
+    async checkHostnameSupport() {
+      try { await this.readHostnameSupport(); }
+      catch (err) {
+        this.hostnameCanRead = false;
+        this.hostnameCanSet = false;
+        this.hostnameReason = `Could not read the installed image: ${this.errorOf(err)}`;
+      }
+    },
+    async getInstalledHostname() {
+      this.hostnameBusy = 'get';
+      this.hostnameMessage = '';
+      this.problem = { ...this.problem, hostname: '' };
+      try {
+        const hostname = await this.readHostnameSupport();
+        if (hostname === undefined) throw new Error(this.hostnameReason || 'The installed image cannot return a hostname.');
+        if (await this.setHostname(hostname)) this.hostnameMessage = `Read ${this.hostnameDraft} from the installed image; selected for the next flash.`;
+      } catch (err) { this.problem = { ...this.problem, hostname: String(this.errorOf(err)) }; }
+      finally { this.hostnameBusy = ''; }
+    },
+    async applyHostname() {
+      this.hostnameBusy = 'set';
+      this.hostnameMessage = '';
+      try {
+        if (!await this.setHostname(this.hostnameDraft)) return;
+        const { data } = await this.installedSettingsRequest({ HOSTNAME: this.hostnameDraft });
+        if (data.status !== 'OK') throw new Error(data.error || data.reason || 'The installed image refused the hostname.');
+        this.hostnameMessage = `Set ${this.hostnameDraft} on the installed image; takes effect at its next boot.`;
+      } catch (err) { this.problem = { ...this.problem, hostname: String(this.errorOf(err)) }; }
+      finally { this.hostnameBusy = ''; }
+    },
+    canGetSetting(name) {
+      return Object.prototype.hasOwnProperty.call(this.installedSettings.current || {}, EMMC_SETTINGS[name].key);
+    },
+    canSetSetting(name) {
+      return !!this.installedSettings.supported && (this.installedSettings.keys || []).includes(EMMC_SETTINGS[name].key);
+    },
+    settingReason(name) {
+      if (this.canGetSetting(name) && this.canSetSetting(name)) return '';
+      if (this.installedSettings.reason) return this.installedSettings.reason;
+      if (!this.canSetSetting(name)) return `${EMMC_SETTINGS[name].label} cannot be applied by this installed image. Edits can still be used for the next flash.`;
+      return `This installed image cannot return ${EMMC_SETTINGS[name].label.toLowerCase()}.`;
+    },
+    async saveNextSetting(name) {
+      const spec = EMMC_SETTINGS[name];
+      let value = name === 'hotspot' ? this.hotspotName : this.settingDraft[name];
+      this.settingError = { ...this.settingError, [name]: '' };
+      if (name === 'country' && value && !/^[A-Z]{2}$/.test(value)) {
+        this.settingError = { ...this.settingError, [name]: 'Choose a valid country.' }; return false;
+      }
+      if (name === 'rotation' && ![0, 90, 180, 270].includes(Number(value))) {
+        this.settingError = { ...this.settingError, [name]: 'Choose a supported display rotation.' }; return false;
+      }
+      if (name === 'rotation') value = Number(value);
+      if (name === 'wifiMode' && !['auto', 'client', 'ap'].includes(value)) {
+        this.settingError = { ...this.settingError, [name]: 'Choose Automatic, Client only, or Access point only.' }; return false;
+      }
+      if (name === 'ssh' && typeof value !== 'boolean') {
+        this.settingError = { ...this.settingError, [name]: 'Choose whether SSH is enabled.' }; return false;
+      }
+      if (['client', 'hotspot'].includes(name) && (/[\r\n]/.test(value) || new TextEncoder().encode(value).length > 32 || (name === 'hotspot' && !value.trim()))) {
+        this.settingError = { ...this.settingError, [name]: 'Use a Wi-Fi name of at most 32 bytes without line breaks.' }; return false;
+      }
+      try {
+        await axios.post('/api/set_options?apply=false', { [spec.option]: name === 'wifiMode' && value === 'auto' ? '' : value });
+        this.settingDraft[name] = value;
+        await this.getOptions();
+        this.settingMessage = { ...this.settingMessage, [name]: 'Selected for the next flash.' };
+        return true;
+      } catch (err) {
+        this.settingError = { ...this.settingError, [name]: String(this.errorOf(err)) }; return false;
+      }
+    },
+    async getInstalledSetting(name) {
+      this.settingBusy = { ...this.settingBusy, [name]: 'get' };
+      this.settingMessage = { ...this.settingMessage, [name]: '' };
+      try {
+        const data = await this.readInstalledSettings();
+        if (!Object.prototype.hasOwnProperty.call(data.current || {}, EMMC_SETTINGS[name].key)) throw new Error(this.settingReason(name));
+        let value = data.current[EMMC_SETTINGS[name].key];
+        if (name === 'rotation') value = Number(value);
+        if (name === 'ssh') {
+          if (!['true', 'false'].includes(value)) throw new Error('The installed image returned an invalid SSH access state.');
+          value = value === 'true';
+        }
+        if (name === 'timezone') value = value || 'UTC';
+        if (name === 'wifiMode') value = value || 'auto';
+        if (name === 'hotspot') { value = value || 'Recore'; this.hotspotName = value; }
+        this.settingDraft[name] = value;
+        if (await this.saveNextSetting(name)) this.settingMessage = { ...this.settingMessage, [name]: 'Read from the installed image; selected for the next flash.' };
+      } catch (err) { this.settingError = { ...this.settingError, [name]: String(this.errorOf(err)) }; }
+      finally { this.settingBusy = { ...this.settingBusy, [name]: '' }; }
+    },
+    async applyInstalledSetting(name) {
+      this.settingBusy = { ...this.settingBusy, [name]: 'set' };
+      this.settingMessage = { ...this.settingMessage, [name]: '' };
+      try {
+        if (!this.canSetSetting(name)) throw new Error(this.settingReason(name));
+        if (!await this.saveNextSetting(name)) return;
+        const { data } = await this.installedSettingsRequest({ [EMMC_SETTINGS[name].key]: String(this.settingDraft[name]) });
+        if (data.status !== 'OK') throw new Error(data.error || data.reason || 'The installed image refused the setting.');
+        this.settingMessage = { ...this.settingMessage, [name]: 'Applied to the installed image on eMMC.' };
+      } catch (err) { this.settingError = { ...this.settingError, [name]: String(this.errorOf(err)) }; }
+      finally { this.settingBusy = { ...this.settingBusy, [name]: '' }; }
     },
     async setHotspotName() {
       if (!this.hotspotName.trim()) {
-        this.problem = { ...this.problem, hotspot: "Enter a hotspot name, or choose Default to use Recore." };
+        this.problem = { ...this.problem, hotspot: "Enter a hotspot name, for example Recore." };
         return;
       }
       this.problem = { ...this.problem, hotspot: "" };
@@ -484,7 +704,6 @@ export default {
       this.problem = { ...this.problem, hotspot: "" };
       this.custom = { ...this.custom, hotspot: true };
       await this.setOption({ hotspotPSK: this.hotspotPsk });
-      this.hotspotPsk = "";
       const err = await this.settle();
       if (err) this.problem = { ...this.problem, hotspot: err };
     },
@@ -496,11 +715,97 @@ export default {
       this.setOption({ software: Object.keys(now).sort().join(",") });
     },
     // ---- Config archives ----
+    async openArchives() {
+      this.managerOpen = true;
+      await this.listArchives();
+      if (!this.saveName) {
+        try { await this.readInstalledSettings(); } catch (_) { /* Use the saved hostname if the image cannot be read. */ }
+        this.saveName = this.suggestArchiveName();
+      }
+    },
+    async refreshWifiChoice() {
+      await this.getOptions();
+      if (this.wifiSource === 'reflash') this.syncWifiDraft();
+    },
+    syncWifiDraft() {
+      this.settingDraft.wifiMode = this.options.wifiMode || 'auto';
+      this.settingDraft.client = this.options.SSID || '';
+      this.hotspotName = this.options.hotspotSSID || 'Recore';
+      this.clientPsk = '';
+      this.hotspotPsk = this.options.hotspotPSKSet ? '' : '12345678';
+    },
+    async chooseWifiSource() {
+      if (this.wifiSource === 'manual') {
+        this.syncWifiDraft();
+        await this.saveManualWifi();
+        return;
+      }
+      await this.storeWifiSetup(this.wifiSource);
+    },
+    async saveManualWifi() {
+      if (this.wifiSetupBusy) { this.wifiSaveQueued = true; return; }
+      await this.storeWifiSetup('manual', {
+        WIFI_MODE: this.settingDraft.wifiMode,
+        WIFI_SSID: this.settingDraft.client,
+        WIFI_PSK: this.clientPsk,
+        HOTSPOT_SSID: this.hotspotName,
+        HOTSPOT_PSK: this.hotspotPsk,
+      });
+    },
+    async storeWifiSetup(source, settings) {
+      if (this.wifiSetupBusy) return;
+      this.wifiSetupBusy = true;
+      this.wifiSetupMessage = ''; this.wifiSetupError = '';
+      try {
+        await this.emmcRequest('/api/wifi_setup', { source, action: 'stage', settings });
+        await this.getOptions();
+        if (source !== 'manual') this.syncWifiDraft();
+        this.wifiSetupMessage = 'Selected for the next flash. Reflash’s connection is unchanged.';
+      } catch (err) {
+        this.wifiSetupError = err.response?.data || 'Could not save the Wi-Fi setup. Complete the fields and try again.';
+      } finally {
+        this.wifiSetupBusy = false;
+        if (this.wifiSaveQueued) { this.wifiSaveQueued = false; await this.saveManualWifi(); }
+      }
+    },
+    async checkWifi() {
+      if (this.wifiChecking) return;
+      this.wifiChecking = true;
+      this.wifiCheckError = "";
+      try {
+        const result = await axios.get('/api/get_status', { timeout: 3000 });
+        this.wifiPresent = !!result.data.network?.wifi?.present;
+      } catch (_) {
+        this.wifiCheckError = "Could not check for a Wi-Fi adapter. Check again when the board is reachable.";
+      } finally { this.wifiChecking = false; }
+    },
+    suggestArchiveName() {
+      const hostname = this.installedSettings.current?.HOSTNAME || this.options.hostname || 'recore';
+      const name = hostname.replace(/[^A-Za-z0-9._-]/g, '-');
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const base = `${name}-config-${stamp}`;
+      let result = base;
+      let index = 2;
+      while (this.archives.some(a => a.name === result + '.tar.gz')) result = `${base}-${index++}`;
+      return result;
+    },
+    archiveDateTime(seconds) {
+      const value = Number(seconds);
+      return Number.isFinite(value) && value > 0 ? new Date(value * 1000).toISOString() : undefined;
+    },
+    archiveDate(seconds) {
+      const value = Number(seconds);
+      return Number.isFinite(value) && value > 0
+        ? new Date(value * 1000).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : '—';
+    },
     async listArchives() {
       try {
         this.archives = (await axios.get(`/api/file_backups`)).data || [];
       } catch (err) {
-        this.archives = [];
+        this.problem = { ...this.problem, archives: "Could not list config archives: " + this.errorOf(err) };
       }
     },
     notify(message, type = "success", time = 6000) {
@@ -514,8 +819,9 @@ export default {
       t.reason = "";
       const url = which === "save" ? `/api/file_backups/files` : `/api/file_backups/files?name=${encodeURIComponent(this.options.restoreBackup)}`;
       try {
-        const res = (await axios.get(url)).data;
-        t.files = res.supported ? res.files : [];
+        const res = (await this.emmcRequest(url)).data;
+        t.sourceFiles = res.supported ? res.files : [];
+        t.files = t.sourceFiles.filter(path => !/(^|\/)config\/firmware\/README$/.test(path));
         t.reason = res.supported ? "" : res.reason || "The system cannot list its files.";
         t.selected = [...t.files];
         // The archive chosen before, with only some of its files.
@@ -544,29 +850,27 @@ export default {
     includeOf(which) {
       const t = this.tree[which];
       if (!t.loaded || t.reason) return [];
-      return includeFor(t.files, t.selected);
+      return includeFor(t.sourceFiles || t.files, t.selected);
     },
     async save() {
-      this.problem = { ...this.problem, save: "" };
-      const include = this.includeOf("save");
-      if (include === null) {
-        this.problem = { ...this.problem, save: "No files are chosen." };
-        return;
-      }
+      if (this.busy.save) return;
       this.busy.save = true;
+      this.problem = { ...this.problem, save: '' };
+      this.message = { ...this.message, save: '' };
       try {
-        const res = await axios.post(`/api/file_backups`, { name: this.saveName, include });
-        if (res.data.status === "OK") {
-          this.notify(`Saved ${res.data.name} on the USB drive`);
-          this.saveName = "";
-        } else {
-          this.problem = { ...this.problem, save: res.data.error || "The backup failed" };
-        }
+        // Keep the complete source list for includeFor so a selected folder
+        // cannot accidentally bring its omitted firmware README back in.
+        if (!this.tree.save.loaded) await this.loadFiles('save');
+        const include = this.includeOf('save');
+        if (include === null) throw new Error('No files are chosen.');
+        const { data } = await this.emmcRequest('/api/file_backups', { name: this.saveName, include }, 600000);
+        if (data.status !== 'OK') throw new Error(data.error || 'The backup failed');
+        this.message = { ...this.message, save: `Created ${data.name} on the USB drive.` };
+        await this.listArchives();
+        this.saveName = this.suggestArchiveName();
       } catch (err) {
-        this.problem = { ...this.problem, save: this.errorOf(err) };
-      }
-      this.busy.save = false;
-      this.listArchives();
+        this.problem = { ...this.problem, save: String(this.errorOf(err)) };
+      } finally { this.busy.save = false; }
     },
     async onUpload(e) {
       const file = e.target.files && e.target.files[0];
@@ -597,7 +901,7 @@ export default {
       this.listArchives();
     },
     async chooseConfig(name) {
-      this.custom = { ...this.custom, config: true };
+      this.custom = { ...this.custom, config: !!name };
       this.tree.install.loaded = false;
       await this.setOption({ restoreBackup: name, restoreInclude: "" });
       if (this.tree.install.open) await this.loadFiles("install");
@@ -655,6 +959,8 @@ export default {
       clearInterval(this.pollTimer);
       if (open) {
         this.getOptions();
+        this.checkWifi();
+        this.checkHostnameSupport();
         this.listArchives();
         this.pollTimer = setInterval(() => {
           if (this.options.settingsSyncBusy) this.getOptions();
@@ -1007,4 +1313,23 @@ export default {
     padding-inline: 16px;
   }
 }
+</style>
+
+<style scoped>
+.setup-wrap .field.emmc-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  column-gap: 24px;
+  align-items: center;
+}
+.hostname-label { grid-column: 1; grid-row: 1; }
+.emmc-heading { grid-column: 2; grid-row: 1; text-align: center; font-size: 0.85rem; opacity: 0.7; }
+.emmc-field > .input, .emmc-field > .radios, .emmc-field > .setting-input { grid-column: 1; grid-row: 2; }
+.emmc-buttons { grid-column: 2; grid-row: 2; display: flex; flex-direction: row; gap: 8px; align-items: center; }
+.emmc-feedback { grid-column: 1 / -1; }
+
+.archive-manager.setup-wrap, .archive-manager-foot.setup-wrap { margin-top: 0; }
+.archive-manager { max-height: 65vh; overflow-y: auto; padding: 8px 16px; text-align: left; }
+.archive-manager .field { margin-bottom: 20px; }
+.archive-date { font-variant-numeric: tabular-nums; opacity: 0.7; }
 </style>
