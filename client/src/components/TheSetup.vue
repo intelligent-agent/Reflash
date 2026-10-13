@@ -37,9 +37,15 @@
             <div class="top">
               <label class="lab" for="hostname">Hostname</label>
             </div>
-            <input id="hostname" class="input" :value="options.hostname || 'recore'" maxlength="63" @change="setHostname($event.target.value)" />
+            <input id="hostname" class="input" v-model="hostnameDraft" maxlength="63" @change="setHostname(hostnameDraft)" />
+            <div class="row">
+              <button type="button" class="btn small" :disabled="hostnameBusy || !hostnameCanRead" @click="getInstalledHostname()">{{ hostnameBusy === 'get' ? 'Getting...' : 'Get' }}</button>
+              <button type="button" class="btn small" :disabled="hostnameBusy || !hostnameCanSet" @click="applyHostname()">{{ hostnameBusy === 'set' ? 'Setting...' : 'Set' }}</button>
+              <span class="good" v-if="hostnameMessage">{{ hostnameMessage }}</span>
+            </div>
+            <span class="help" v-if="hostnameReason">{{ hostnameReason }}</span>
             <span class="error" v-if="problem.hostname">{{ problem.hostname }}</span>
-            <span class="help">The installed system uses this name after booting. Open <code>{{ options.hostname || 'recore' }}.local</code>.</span>
+            <span class="help">Get reads the currently installed image. Set applies to that image for its next boot. Edits are retained for the next flash. Open <code>{{ options.hostname || 'recore' }}.local</code>.</span>
           </div>
           <div v-if="wifiPresent" class="wifi-settings">
           <div class="field">
@@ -289,6 +295,12 @@ export default {
   data: () => ({
     expanded: false,
     managerOpen: false,
+    hostnameDraft: "recore",
+    hostnameBusy: "",
+    hostnameCanRead: false,
+    hostnameCanSet: false,
+    hostnameReason: "Checking the installed image’s hostname support...",
+    hostnameMessage: "",
     wifiPresent: null,
     wifiChecking: false,
     wifiCheckError: "",
@@ -364,7 +376,7 @@ export default {
     status() {
       if (this.options.settingsSyncError) return { text: "Not saved to the installed system: " + this.options.settingsSyncError, error: true };
       if (this.options.settingsSyncBusy) return { text: "Saving to the installed system ...", error: false };
-      return { text: "Saved to the installed system", error: false };
+      return { text: "Settings ready", error: false };
     },
   },
   methods: {
@@ -394,6 +406,7 @@ export default {
         rotation: (o.screenRotation || 0) !== 0,
         config: !!o.restoreBackup,
       };
+      this.hostnameDraft = o.hostname || "recore";
       this.hotspotName = o.hotspotSSID || "Recore";
       this.seeded = true;
     },
@@ -461,18 +474,59 @@ export default {
       }
     },
     async setHostname(value) {
-      const hostname = value.trim().toLowerCase();
-      if (hostname && (hostname.length > 63 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(hostname))) {
+      const hostname = value.trim().toLowerCase() || "recore";
+      if (hostname.length > 63 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(hostname)) {
         this.problem = { ...this.problem, hostname: "Use 1 to 63 letters, digits or hyphens, starting and ending with a letter or digit, without .local." };
-        return;
+        return false;
       }
       this.problem = { ...this.problem, hostname: "" };
+      this.hostnameDraft = hostname;
       try {
-        await this.setOption({ hostname });
-        this.custom = { ...this.custom, hostname: !!hostname };
+        await axios.post('/api/set_options?apply=false', { hostname });
+        await this.getOptions();
+        this.hostnameMessage = `Selected ${hostname} for the next image.`;
+        return true;
       } catch (err) {
-        this.problem = { ...this.problem, hostname: this.errorOf(err) };
+        this.problem = { ...this.problem, hostname: String(this.errorOf(err)) };
+        return false;
       }
+    },
+    async readHostnameSupport() {
+      const { data } = await axios.get('/api/installed_settings', { timeout: 15000 });
+      this.hostnameCanRead = typeof data.current?.HOSTNAME === 'string';
+      this.hostnameCanSet = !!data.supported && (data.keys || []).includes('HOSTNAME');
+      this.hostnameReason = data.reason || (!this.hostnameCanRead && !this.hostnameCanSet ? 'This installed image does not expose hostname settings.' : '');
+      return data.current?.HOSTNAME;
+    },
+    async checkHostnameSupport() {
+      try { await this.readHostnameSupport(); }
+      catch (err) {
+        this.hostnameCanRead = false;
+        this.hostnameCanSet = false;
+        this.hostnameReason = `Could not read the installed image: ${this.errorOf(err)}`;
+      }
+    },
+    async getInstalledHostname() {
+      this.hostnameBusy = 'get';
+      this.hostnameMessage = '';
+      this.problem = { ...this.problem, hostname: '' };
+      try {
+        const hostname = await this.readHostnameSupport();
+        if (hostname === undefined) throw new Error(this.hostnameReason || 'The installed image cannot return a hostname.');
+        if (await this.setHostname(hostname)) this.hostnameMessage = `Read ${this.hostnameDraft} from the installed image; selected for the next flash.`;
+      } catch (err) { this.problem = { ...this.problem, hostname: String(this.errorOf(err)) }; }
+      finally { this.hostnameBusy = ''; }
+    },
+    async applyHostname() {
+      this.hostnameBusy = 'set';
+      this.hostnameMessage = '';
+      try {
+        if (!await this.setHostname(this.hostnameDraft)) return;
+        const { data } = await axios.post('/api/installed_settings', { HOSTNAME: this.hostnameDraft });
+        if (data.status !== 'OK') throw new Error(data.error || data.reason || 'The installed image refused the hostname.');
+        this.hostnameMessage = `Set ${this.hostnameDraft} on the installed image; takes effect at its next boot.`;
+      } catch (err) { this.problem = { ...this.problem, hostname: String(this.errorOf(err)) }; }
+      finally { this.hostnameBusy = ''; }
     },
     async setHotspotName() {
       if (!this.hotspotName.trim()) {
@@ -678,6 +732,7 @@ export default {
       if (open) {
         this.getOptions();
         this.checkWifi();
+        this.checkHostnameSupport();
         this.listArchives();
         this.pollTimer = setInterval(() => {
           if (this.options.settingsSyncBusy) this.getOptions();

@@ -886,7 +886,7 @@ func getOptions(w http.ResponseWriter, r *http.Request) {
 
 func setOptions(w http.ResponseWriter, r *http.Request) {
 	reqBody, _ := io.ReadAll(r.Body)
-	if err := lockSetOptions(reqBody); err != nil {
+	if err := lockSetOptionsMode(reqBody, r.URL.Query().Get("apply") != "false"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -2454,7 +2454,16 @@ func installedSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(manifest) == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(InstalledSettings{Reason: "the installed system is too old to have its settings changed from Reflash: reinstall it"})
+		result := InstalledSettings{Reason: "This installed image is too old to support applying settings through Reflash. Your selection can still be used for the next image.", Current: map[string]string{}}
+		if r.Method == http.MethodGet {
+			if hostname, _, err := runCommand2Timeout(10*time.Second, "get-installed-hostname"); err == nil {
+				hostname = strings.ToLower(strings.TrimSpace(hostname))
+				if hostname != "" && validateHostname(hostname) == nil {
+					result.Current[keyHostname] = hostname
+				}
+			}
+		}
+		json.NewEncoder(w).Encode(result)
 		return
 	}
 	allowed := manifestSettings(manifest)
@@ -3323,6 +3332,11 @@ func validateHostname(name string) error {
 }
 
 func lockSetOptions(opts []byte) error {
+	return lockSetOptionsMode(opts, true)
+}
+
+// apply=false retains choices for the next flash without changing the installed image.
+func lockSetOptionsMode(opts []byte, apply bool) error {
 	optionsLock.Lock()
 	defer optionsLock.Unlock()
 
@@ -3340,7 +3354,9 @@ func lockSetOptions(opts []byte) error {
 	}
 	options = &after
 	// What changed is brought to the installed system as well (#185).
-	queuePush(changedSettings(before, *options))
+	if apply {
+		queuePush(changedSettings(before, *options))
+	}
 
 	isDirty = true
 	logInfo("Options updated in memory and marked dirty")

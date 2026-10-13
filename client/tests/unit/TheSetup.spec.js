@@ -35,6 +35,7 @@ const sent = () => dispatch.mock.calls.filter(([a]) => a === 'setOption').map(([
 beforeEach(() => {
   axios.get.mockReset(); axios.post.mockReset(); axios.put.mockReset()
   axios.get.mockImplementation(async (url) => {
+    if (url === '/api/installed_settings') return { data: { supported: true, keys: ['HOSTNAME'], current: { HOSTNAME: 'installed-printer' } } }
     if (url === '/api/get_status') return { data: { network: { wifi: { present: true } } } }
     if (url === '/api/file_backups') return { data: [{ name: 'voron.tar.gz', size: 2048, ok: true }, { name: 'a7.tar.gz', size: 900, ok: true }] }
     if (url.startsWith('/api/file_backups/files')) return { data: { supported: true, files: ['home/printer/printer_data/config/printer.cfg', 'home/printer/printer_data/config/moonraker.conf', 'home/printer/printer_data/database/x.db'] } }
@@ -378,7 +379,7 @@ describe('hostname', () => {
     await w.find('.setup-toggle').trigger('click');
     expect(w.find('#hostname').element.value).toBe('voron');
     await w.find('#hostname').setValue('A5-Printer');
-    expect(sent()).toContainEqual({ hostname: 'a5-printer' });
+    expect(axios.post).toHaveBeenCalledWith('/api/set_options?apply=false', { hostname: 'a5-printer' });
     w.vm.keep('hostname', true);
     expect(sent()).toContainEqual({ hostname: '' });
   });
@@ -388,7 +389,7 @@ describe('hostname', () => {
       await w.vm.setHostname(name);
       expect(w.vm.problem.hostname).toContain('1 to 63');
     }
-    expect(sent()).toEqual([]);
+    expect(axios.post).not.toHaveBeenCalled();
   });
 });
 
@@ -454,5 +455,40 @@ describe('simplified setup prototype (#216)', () => {
   const w = mountSetup({ restoreBackup: 'voron.tar.gz', restoreInclude: 'printer.cfg' })
   await w.vm.chooseConfig('')
   expect(sent()).toContainEqual({ restoreBackup: '', restoreInclude: '' })
+ })
+})
+
+describe('hostname Get/Set on the installed image', () => {
+ it('Get reads the image hostname and retains it without applying anything to that image', async () => {
+  const w = mountSetup({ hostname: 'next-image' })
+  axios.post.mockResolvedValue({ data: {} })
+  await w.vm.getInstalledHostname()
+  expect(w.vm.hostnameDraft).toBe('installed-printer')
+  expect(axios.get).toHaveBeenCalledWith('/api/installed_settings', expect.anything())
+  expect(axios.post).toHaveBeenCalledWith('/api/set_options?apply=false', { hostname: 'installed-printer' })
+  expect(axios.post.mock.calls.some(([url]) => url === '/api/installed_settings')).toBe(false)
+ })
+ it('Set applies exactly the selected hostname through the installer API', async () => {
+  const w = mountSetup()
+  w.vm.hostnameDraft = 'a8-printer'
+  axios.post.mockResolvedValue({ data: { status: 'OK' } })
+  await w.vm.applyHostname()
+  expect(axios.post).toHaveBeenCalledWith('/api/installed_settings', { HOSTNAME: 'a8-printer' })
+  expect(w.vm.hostnameMessage).toContain('next boot')
+ })
+ it('allows Get but disables Set for a legacy image', async () => {
+  axios.get.mockImplementation(async () => ({ data: { supported: false, current: { HOSTNAME: 'legacy-a8' }, reason: 'This installed image cannot apply settings.' } }))
+  const w = mountSetup()
+  await w.vm.checkHostnameSupport()
+  expect(w.vm.hostnameCanRead).toBe(true)
+  expect(w.vm.hostnameCanSet).toBe(false)
+  expect(w.vm.hostnameReason).toContain('cannot apply')
+ })
+ it('reports an installer refusal instead of success', async () => {
+  const w = mountSetup()
+  axios.post.mockImplementation(async url => ({ data: url === '/api/installed_settings' ? { status: 'ERROR', error: 'hostname refused' } : {} }))
+  await w.vm.applyHostname()
+  expect(w.vm.problem.hostname).toBe('Error: hostname refused')
+  expect(w.vm.hostnameMessage).not.toContain('Set recore on')
  })
 })
