@@ -52,20 +52,20 @@
             <div class="radios" role="radiogroup" aria-label="Wi-Fi mode">
               <label v-for="m in wifiModes" :key="m.value" class="radio"><input type="radio" name="wifiMode" :value="m.value" :checked="(options.wifiMode || '') === m.value" @change="chooseMode(m.value)" />{{ m.label }}</label>
             </div>
-            <span class="help" v-if="effectiveMode === 'auto'"><b>Default:</b> join the network below if one is set. If it is not found within 2 minutes, start the hotspot until the next boot.</span>
+            <span class="help" v-if="effectiveMode === 'auto'"><b>Automatic:</b> connect to the client network. If it is not found within 2 minutes, start the fallback hotspot until the next boot. Configure both sets of credentials below; the hotspot can use the displayed defaults.</span>
             <span class="help" v-else-if="effectiveMode === 'client'"><b>Client only:</b> only join the network below; never start the hotspot.</span>
             <span class="help" v-else><b>Access point only:</b> always run the hotspot; the board does not join a network.</span>
           </div>
 
           <div v-show="effectiveMode !== 'ap'" class="field">
-            <div class="top"><span class="lab">Network</span></div>
+            <div class="top"><span class="lab">Client network — router SSID and password</span></div>
             <TheWifiSetup :open="expanded" inline />
             <span class="help"><b>Default:</b> no network set. The passphrase stays on the printer and never goes into a config archive.</span>
           </div>
 
           <div v-show="effectiveMode !== 'client'" class="field" :class="{ 'is-default': isDef('hotspot') }">
             <div class="top">
-              <span class="lab">Hotspot</span>
+              <span class="lab">{{ effectiveMode === 'auto' ? "Fallback hotspot — printer AP name and password" : "Hotspot — printer AP name and password" }}</span>
               <label class="keep"><input type="checkbox" :checked="isDef('hotspot')" @change="keep('hotspot', $event.target.checked)" /> Default</label>
             </div>
             <label class="sub" for="hotspot-name">Name</label>
@@ -468,7 +468,11 @@ export default {
       }
     },
     async setHotspotName() {
-      if (!this.hotspotName) return;
+      if (!this.hotspotName.trim()) {
+        this.problem = { ...this.problem, hotspot: "Enter a hotspot name, or choose Default to use Recore." };
+        return;
+      }
+      this.problem = { ...this.problem, hotspot: "" };
       this.custom = { ...this.custom, hotspot: true };
       await this.setOption({ hotspotSSID: this.hotspotName });
     },

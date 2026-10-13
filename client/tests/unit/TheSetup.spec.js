@@ -405,3 +405,22 @@ describe('hostname', () => {
     expect(sent()).toEqual([]);
   });
 });
+
+describe('Wi-Fi credential guidance (#217)', () => {
+ it('identifies client and fallback credentials, including defaults', async () => {
+  const w = mountSetup()
+  await w.find('.setup-toggle').trigger('click')
+  expect(w.text()).toContain('Configure both sets of credentials')
+  expect(w.text()).toContain('Client network — router SSID and password')
+  expect(w.text()).toContain('Fallback hotspot — printer AP name and password')
+  expect(w.find('#hotspot-name').attributes('placeholder')).toBe('Recore')
+  expect(w.find('#hotspot-psk').attributes('placeholder')).toBe('12345678')
+ })
+ it('rejects an empty custom hotspot name without applying it', async () => {
+  const w = mountSetup()
+  w.vm.hotspotName = '   '
+  await w.vm.setHotspotName()
+  expect(sent()).toEqual([])
+  expect(w.vm.problem.hotspot).toContain('choose Default')
+ })
+})

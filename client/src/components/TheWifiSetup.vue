@@ -61,9 +61,7 @@
         <p>{{ statusMessage }}</p>
         <!-- Only while the board is genuinely unreachable. Telling someone to
              reconnect when the page is still talking to the board is noise. -->
-        <p v-if="reconnecting && !boardReachable" class="reconnect-hint">
-          Reconnect this computer to the same network.
-        </p>
+        <ReconnectNotice transition-only :active="reconnecting && !boardReachable" :target="reconnectTarget" />
       </div>
     </div>
   </w-dialog>
@@ -113,9 +111,7 @@
         <p>{{ statusMessage }}</p>
         <!-- Only while the board is genuinely unreachable. Telling someone to
              reconnect when the page is still talking to the board is noise. -->
-        <p v-if="reconnecting && !boardReachable" class="reconnect-hint">
-          Reconnect this computer to the same network.
-        </p>
+        <ReconnectNotice transition-only :active="reconnecting && !boardReachable" :target="reconnectTarget" />
       </div>
     </div>
   </div>
@@ -124,6 +120,7 @@
 <script>
 import axios from "axios";
 import { mapGetters } from "vuex";
+import ReconnectNotice from "./ReconnectNotice.vue";
 import { wifiSummary } from "../network";
 
 // Every request here can be in flight while the radio changes mode, and a
@@ -139,6 +136,7 @@ const REQUEST_TIMEOUT = 3000;
 
 export default {
   name: "TheWifiSetup",
+  components: { ReconnectNotice },
   props: {
     open: Boolean,
     showOverlay: Boolean,
@@ -285,8 +283,13 @@ export default {
       }
     },
     async startWifiConnect() {
-      if (!this.selected) {
+      if (!this.selected || !this.selected.SSID?.trim()) {
         this.$waveui.notify("Please select an access point", "error", 0);
+        return;
+      }
+      if (this.inputPassword.trim().length < 8) {
+        this.statusMessage = "Enter the client Wi-Fi password (at least 8 characters) before connecting.";
+        this.$waveui.notify(this.statusMessage, "error", 4000);
         return;
       }
       this.statusMessage = `Connecting to ${this.selected.SSID}...`;

@@ -79,3 +79,16 @@ export function networkLines(network) {
   }
   return lines;
 }
+
+// URL normalizes IPv4 spellings and brackets IPv6 literals.
+export function isIPAddress(hostname) {
+  return /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(':');
+}
+
+export function reconnectURL(current, hostname) {
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.local$/i.test(hostname || '')) return '';
+  const url = new URL(current);
+  url.hostname = hostname;
+  url.username = ''; url.password = '';
+  return url.href;
+}
