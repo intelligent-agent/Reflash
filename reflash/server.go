@@ -874,8 +874,15 @@ func pollConnectWifi(w http.ResponseWriter, r *http.Request) {
 // only the way back that closes.
 func writeOptions(w http.ResponseWriter) {
 	optionsLock.Lock()
-	raw, err := json.Marshal(options)
+	if options == nil {
+		optionsLock.Unlock()
+		http.Error(w, "Reflash settings are not ready yet", http.StatusServiceUnavailable)
+		return
+	}
+	// Snapshot once: startup and saves can replace the options pointer.
+	current := *options
 	optionsLock.Unlock()
+	raw, err := json.Marshal(current)
 	if err != nil {
 		logError("Could not encode options: " + err.Error())
 		http.Error(w, "Could not encode options", http.StatusInternalServerError)
@@ -893,12 +900,10 @@ func writeOptions(w http.ResponseWriter) {
 	delete(fields, "loginPassword")
 	delete(fields, "rootPassword")
 	delete(fields, "hotspotPSK")
-	optionsLock.Lock()
-	passwordSet := options.LoginPassword != ""
-	rootSet := options.RootPassword != ""
-	hotspotSet := options.HotspotPSK != ""
-	wifiSet := options.WifiPSK != ""
-	optionsLock.Unlock()
+	passwordSet := current.LoginPassword != ""
+	rootSet := current.RootPassword != ""
+	hotspotSet := current.HotspotPSK != ""
+	wifiSet := current.WifiPSK != ""
 	fields["loginPasswordSet"], _ = json.Marshal(passwordSet)
 	fields["rootPasswordSet"], _ = json.Marshal(rootSet)
 	fields["hotspotPSKSet"], _ = json.Marshal(hotspotSet)

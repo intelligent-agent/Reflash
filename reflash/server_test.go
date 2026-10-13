@@ -1957,3 +1957,23 @@ func TestAnIdleBoardIsNotResampled(t *testing.T) {
 		t.Errorf("bytes_now = %d, want it untouched at 7", state.BytesNow)
 	}
 }
+
+func TestOptionsRequestBeforeStartupDoesNotHoldTheLock(t *testing.T) {
+	setupTest(t)
+	options = nil
+	w := httptest.NewRecorder()
+	writeOptions(w)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatal("early request should report settings not ready")
+	}
+	if !optionsLock.TryLock() {
+		t.Fatal("early request left the settings mutex locked")
+	}
+	options = &Options{Hostname: "ready"}
+	optionsLock.Unlock()
+	w = httptest.NewRecorder()
+	writeOptions(w)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"hostname":"ready"`) {
+		t.Fatal("options did not recover after startup")
+	}
+}
