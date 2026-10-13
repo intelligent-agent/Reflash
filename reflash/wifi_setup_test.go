@@ -130,3 +130,21 @@ func TestBringupKeepsAlreadyConnectedLiveWifi(t *testing.T) {
 		t.Fatal("service restart disturbed the live connection")
 	}
 }
+
+func TestReflashCredentialCopyPreservesNextImageMode(t *testing.T) {
+	setupTest(t)
+	state.State = IDLE
+	options.WifiMode = "client"
+	options.LiveWifiMode = "auto"
+	options.LiveWifiSSID = "Live"
+	options.LiveWifiPSK = "livepassword"
+	w := wifiSetupRequest(`{"source":"reflash","action":"stage"}`)
+	if w.Code != 200 || options.WifiMode != "client" {
+		t.Fatal("copying credentials replaced the selected next-image mode")
+	}
+	options.LiveWifiMode = "ap"
+	copyLiveWifiCredentials(options)
+	if options.WifiMode != "client" {
+		t.Fatal("live handover replaced the next-image mode")
+	}
+}

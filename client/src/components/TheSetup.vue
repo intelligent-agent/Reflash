@@ -48,24 +48,28 @@
           </div>
           <div v-if="wifiPresent" class="wifi-settings">
             <div class="field">
-              <label class="lab" for="wifi-source">Wi-Fi for the new image</label>
+              <span class="lab">Wi-Fi mode for the new image</span>
+              <div class="radios" role="radiogroup" aria-label="Wi-Fi mode for the new image">
+                <label v-for="m in wifiModes" :key="m.value" class="radio"><input type="radio" name="wifiMode" :value="m.value || 'auto'" :checked="effectiveMode === (m.value || 'auto')" :disabled="settingBusy.wifiMode || wifiSetupBusy" @change="settingDraft.wifiMode = m.value || 'auto'; saveNextSetting('wifiMode')" />{{ m.label }}</label>
+              </div>
+              <span class="help" v-if="effectiveMode === 'auto'">Configure both the client network and fallback hotspot. The new image tries the client network first.</span>
+              <span class="help" v-else-if="effectiveMode === 'client'">The new image joins the client network without starting a hotspot.</span>
+              <span class="help" v-else>The new image runs a hotspot without joining a client network.</span>
+              <span class="good" v-if="settingMessage.wifiMode">{{ settingMessage.wifiMode }}</span>
+              <span class="error" v-if="settingError.wifiMode">{{ settingError.wifiMode }}</span>
+            </div>
+            <div class="field">
+              <label class="lab" for="wifi-source">Wi-Fi credentials for the new image</label>
               <select id="wifi-source" class="input" v-model="wifiSource" @change="chooseWifiSource()" :disabled="wifiSetupBusy">
                 <option value="reflash">Use from Reflash</option>
                 <option value="emmc">Get from eMMC</option>
                 <option value="manual">Manual</option>
               </select>
               <span class="help">This setup is installed on the new image. It does not change or test Reflash’s connection.</span>
-              <span v-if="wifiSource !== 'manual'" class="help">{{ options.wifiMode || 'auto' }} · Client: {{ options.SSID || 'not configured' }} · Hotspot: {{ options.hotspotSSID || 'Recore' }}</span>
+              <span v-if="wifiSource !== 'manual'" class="help">Client: {{ options.SSID || 'not configured' }} · Hotspot: {{ options.hotspotSSID || 'Recore' }}</span>
               <button v-if="wifiSource === 'emmc'" class="btn small" :disabled="wifiSetupBusy" @click="chooseWifiSource()">Get again from eMMC</button>
             </div>
             <div v-if="wifiSource === 'manual'" class="field">
-              <label class="lab" for="manual-wifi-mode">Wi-Fi mode</label>
-              <select id="manual-wifi-mode" class="input" v-model="settingDraft.wifiMode" @change="saveManualWifi()">
-                <option value="auto">Automatic — client network with fallback hotspot</option>
-                <option value="client">Client only</option>
-                <option value="ap">Hotspot only</option>
-              </select>
-              <span class="help" v-if="effectiveMode === 'auto'">Configure both the client network and fallback hotspot. The new image tries the client network first.</span>
               <div v-show="effectiveMode !== 'ap'">
                 <label class="sub" for="client-ssid">Client SSID</label>
                 <input id="client-ssid" class="input" v-model="settingDraft.client" @change="saveManualWifi()" />
@@ -372,8 +376,8 @@ export default {
     // said, and is the Default.
     wifiModes: [
       { label: "Automatic", value: "" },
-      { label: "Client only", value: "client" },
-      { label: "Access point only", value: "ap" },
+      { label: "Client", value: "client" },
+      { label: "Hotspot", value: "ap" },
     ],
     rotations: [
       { label: "Normal", value: 0 },

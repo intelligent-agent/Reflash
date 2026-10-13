@@ -800,7 +800,7 @@ func startConnectWifi(w http.ResponseWriter, r *http.Request) {
 		options.LiveWifiPSK = psk
 		options.LiveWifiMode = "auto"
 		if options.WifiSource == "reflash" {
-			copyWifiOptions(options, liveWifiSettings(*options))
+			copyLiveWifiCredentials(options)
 		}
 		isDirty = true
 		optionsLock.Unlock()
@@ -828,7 +828,7 @@ func startHotspotWifi(w http.ResponseWriter, r *http.Request) {
 			optionsLock.Lock()
 			options.LiveWifiMode = "ap"
 			if options.WifiSource == "reflash" {
-				copyWifiOptions(options, liveWifiSettings(*options))
+				copyLiveWifiCredentials(options)
 			}
 			isDirty = true
 			optionsLock.Unlock()
@@ -3951,6 +3951,13 @@ func copyWifiOptions(o *Options, v map[string]string) {
 	}
 	o.HotspotSSID, o.HotspotPSK = v[keyHotspotSSID], v[keyHotspotPSK]
 }
+
+// A live handover changes credentials, not the next image's chosen mode.
+func copyLiveWifiCredentials(o *Options) {
+	mode := o.WifiMode
+	copyWifiOptions(o, liveWifiSettings(*o))
+	o.WifiMode = mode
+}
 func validateWifiSetup(v map[string]string) error {
 	for _, k := range []string{keyWifiName, keyWifiPSK, keyWifiMode, keyHotspotSSID, keyHotspotPSK} {
 		if strings.ContainsAny(v[k], "\r\n\x00") {
@@ -4010,6 +4017,12 @@ func wifiSetup(w http.ResponseWriter, r *http.Request) {
 	switch request.Source {
 	case "reflash":
 		values = liveWifiSettings(before)
+		if request.Action == "stage" {
+			values[keyWifiMode] = before.WifiMode
+			if values[keyWifiMode] == "" {
+				values[keyWifiMode] = "auto"
+			}
+		}
 	case "emmc":
 		manifest, _, err := runCommand2("target-manifest")
 		if err != nil {
