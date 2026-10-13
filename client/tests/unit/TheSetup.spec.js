@@ -163,19 +163,11 @@ describe('Set up printer (#198)', () => {
     const w = mountSetup()
     await w.find('.setup-toggle').trigger('click')
     await flushPromises()
-    const chosen = () => w.findAll('input[name=wifiMode]').filter((r) => r.element.checked).map((r) => r.element.value)
-    expect(chosen()).toEqual([''])
-    expect(w.findAll('input[name=wifiMode]').map((r) => r.element.parentElement.textContent.trim()))
-      .toEqual(['Automatic', 'Client only', 'Access point only'])
-
-    await w.find('input[name=wifiMode][value=ap]').setValue(true)
-    expect(axios.post).toHaveBeenCalledWith('/api/set_options?apply=false', { wifiMode: 'ap' })
+    expect(w.find('#manual-wifi-mode').element.value).toBe('auto')
+    await w.find('#manual-wifi-mode').setValue('ap')
+    await flushPromises()
+    expect(axios.post).toHaveBeenCalledWith('/api/wifi_setup', expect.objectContaining({ source: 'manual', action: 'stage', settings: expect.objectContaining({ WIFI_MODE: 'ap' }) }), expect.anything())
     expect(w.vm.effectiveMode).toBe('ap')
-
-    // Choosing Automatic is going back to Default.
-    await w.find('input[name=wifiMode][value=""]').setValue(true)
-    expect(axios.post).toHaveBeenCalledWith('/api/set_options?apply=false', { wifiMode: '' })
-    expect(w.vm.isDef('wifiMode')).toBe(true)
   })
 
   it('shows the mode the printer already has', () => {
@@ -318,17 +310,17 @@ describe('setup feedback and Wi-Fi modes', () => {
     await w.find('.setup-toggle').trigger('click')
     await flushPromises()
     w.vm.hotspotPsk = 'pending password'
-    const network = () => w.findComponent({ name: 'TheWifiSetup' })
+    const network = () => w.find('#client-ssid')
     const hotspot = () => w.find('#hotspot-name')
     expect(network().isVisible()).toBe(true)
     expect(hotspot().isVisible()).toBe(true)
-    await w.find('input[name=wifiMode][value=client]').setValue(true)
+    await w.find('#manual-wifi-mode').setValue('client'); await flushPromises()
     expect(network().isVisible()).toBe(true)
     expect(hotspot().isVisible()).toBe(false)
-    await w.find('input[name=wifiMode][value=ap]').setValue(true)
+    await w.find('#manual-wifi-mode').setValue('ap'); await flushPromises()
     expect(network().isVisible()).toBe(false)
     expect(hotspot().isVisible()).toBe(true)
-    await w.find('input[name=wifiMode][value=""]').setValue(true)
+    await w.find('#manual-wifi-mode').setValue('auto'); await flushPromises()
     expect(network().isVisible()).toBe(true)
     expect(hotspot().isVisible()).toBe(true)
     expect(w.vm.hotspotPsk).toBe('pending password')
@@ -394,11 +386,11 @@ describe('Wi-Fi credential guidance (#217)', () => {
   const w = mountSetup()
   await w.find('.setup-toggle').trigger('click')
   await flushPromises()
-  expect(w.text()).toContain('Configure both sets of credentials')
-  expect(w.text()).toContain('Client network — router SSID and password')
-  expect(w.text()).toContain('Fallback hotspot — printer AP name and password')
-  expect(w.find('#hotspot-name').attributes('placeholder')).toBe('Recore')
-  expect(w.find('#hotspot-psk').attributes('placeholder')).toBe('12345678')
+  expect(w.text()).toContain('Configure both the client network and fallback hotspot')
+  expect(w.text()).toContain('Client SSID')
+  expect(w.text()).toContain('Hotspot name')
+  expect(w.find('#hotspot-name').element.value).toBe('Recore')
+  expect(w.find('#hotspot-psk').element.value).toBe('12345678')
  })
  it('rejects an empty custom hotspot name without applying it', async () => {
   const w = mountSetup()
@@ -538,14 +530,13 @@ describe('eMMC location, display, and network controls', () => {
   expect(axios.post).toHaveBeenCalledWith('/api/installed_settings', { [key]: String(value) }, expect.anything())
   expect(w.vm.settingMessage[name]).toContain('Applied to the installed image')
  })
- it('renders Wi-Fi name actions only when an adapter is detected', async () => {
+ it('shows the Wi-Fi source selector and manager only with an adapter', async () => {
   const w = mountSetup(); stubInstalled()
   await w.find('.setup-toggle').trigger('click'); await flushPromises()
-  expect(w.find('[aria-label="AP name on eMMC"]').exists()).toBe(true)
-  expect(w.find('[aria-label="Client SSID on eMMC"]').exists()).toBe(true)
-  w.vm.wifiPresent = false; await w.vm.$nextTick()
+  expect(w.find('#wifi-source').exists()).toBe(true)
   expect(w.find('[aria-label="AP name on eMMC"]').exists()).toBe(false)
-  expect(w.find('[aria-label="Client SSID on eMMC"]').exists()).toBe(false)
+  w.vm.wifiPresent = false; await w.vm.$nextTick()
+  expect(w.find('#wifi-source').exists()).toBe(false)
  })
  it('explains unsupported operations and does not submit them', async () => {
   const w = mountSetup()
@@ -698,5 +689,30 @@ describe('editable AP factory password', () => {
   w.vm.settle = async () => ''
   await w.vm.setHotspotPassword()
   expect(w.vm.hotspotPsk).toBe('edited-ap-password')
+ })
+})
+
+
+describe('separate next-image and live Wi-Fi setup', () => {
+ it('copies an eMMC setup without a live connection request', async () => {
+  const w = mountSetup(); await w.find('.setup-toggle').trigger('click'); await flushPromises()
+  axios.post.mockClear()
+  await w.find('#wifi-source').setValue('emmc'); await flushPromises()
+  expect(axios.post).toHaveBeenCalledWith('/api/wifi_setup', {source:'emmc', action:'stage', settings:undefined}, expect.anything())
+  expect(axios.post.mock.calls.some(([url]) => url.includes('start_connect') || url === '/api/installed_settings')).toBe(false)
+ })
+ it('keeps live management closed until requested', async () => {
+  const w = mountSetup(); await w.find('.setup-toggle').trigger('click'); await flushPromises()
+  expect(w.vm.wifiManagerOpen).toBe(false)
+  await w.findAll('button').find(b => b.text() === 'Manage Wi-Fi').trigger('click')
+  expect(w.vm.wifiManagerOpen).toBe(true)
+  expect(axios.post).not.toHaveBeenCalled()
+ })
+ it('stages manual credentials without testing the network', async () => {
+  const w = mountSetup(); await w.find('.setup-toggle').trigger('click'); await flushPromises()
+  w.vm.settingDraft.client = 'Offline network'; w.vm.clientPsk = 'manualpassword'
+  await w.vm.saveManualWifi()
+  expect(axios.post).toHaveBeenCalledWith('/api/wifi_setup', expect.objectContaining({source:'manual',action:'stage',settings:expect.objectContaining({WIFI_SSID:'Offline network',WIFI_PSK:'manualpassword'})}),expect.anything())
+  expect(axios.post.mock.calls.some(([url]) => url.includes('start_connect'))).toBe(false)
  })
 })

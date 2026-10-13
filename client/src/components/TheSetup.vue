@@ -47,57 +47,49 @@
             <span class="help emmc-feedback">Get reads the currently installed image. Set applies to that image for its next boot. Edits are retained for the next flash. Open <code>{{ options.hostname || 'recore' }}.local</code>.</span>
           </div>
           <div v-if="wifiPresent" class="wifi-settings">
-          <div class="field emmc-field">
-            <span class="lab">Wi-Fi mode</span>
-            <div class="radios" role="radiogroup" aria-label="Wi-Fi mode">
-              <label v-for="m in wifiModes" :key="m.value" class="radio"><input type="radio" name="wifiMode" :value="m.value" :checked="settingDraft.wifiMode === (m.value || 'auto')" @change="settingDraft.wifiMode = m.value || 'auto'; saveNextSetting('wifiMode')" />{{ m.label }}</label>
+            <div class="field">
+              <label class="lab" for="wifi-source">Wi-Fi for the new image</label>
+              <select id="wifi-source" class="input" v-model="wifiSource" @change="chooseWifiSource()" :disabled="wifiSetupBusy">
+                <option value="reflash">Use from Reflash</option>
+                <option value="emmc">Get from eMMC</option>
+                <option value="manual">Manual</option>
+              </select>
+              <span class="help">This setup is installed on the new image. It does not change or test Reflash’s connection.</span>
+              <span v-if="wifiSource !== 'manual'" class="help">{{ options.wifiMode || 'auto' }} · Client: {{ options.SSID || 'not configured' }} · Hotspot: {{ options.hotspotSSID || 'Recore' }}</span>
+              <button v-if="wifiSource === 'emmc'" class="btn small" :disabled="wifiSetupBusy" @click="chooseWifiSource()">Get again from eMMC</button>
             </div>
-            <EmmcActions label="Wi-Fi mode" :can-get="canGetSetting('wifiMode')" :can-set="canSetSetting('wifiMode')" :busy="settingBusy.wifiMode" @get="getInstalledSetting('wifiMode')" @set="applyInstalledSetting('wifiMode')" />
-            <span class="good emmc-feedback" v-if="settingMessage.wifiMode">{{ settingMessage.wifiMode }}</span>
-            <span class="error emmc-feedback" v-if="settingError.wifiMode">{{ settingError.wifiMode }}</span>
-            <span class="help emmc-feedback" v-if="settingReason('wifiMode')">{{ settingReason('wifiMode') }}</span>
-            <span class="help emmc-feedback" v-if="effectiveMode === 'auto'"><b>Automatic:</b> connect to the client network. If it is not found within 2 minutes, start the fallback hotspot until the next boot. Configure both sets of credentials below; the hotspot can use the displayed defaults.</span>
-            <span class="help emmc-feedback" v-else-if="effectiveMode === 'client'"><b>Client only:</b> only join the network below; never start the hotspot.</span>
-            <span class="help emmc-feedback" v-else><b>Access point only:</b> always run the hotspot; the board does not join a network.</span>
-          </div>
-
-          <div v-show="effectiveMode !== 'ap'" class="field">
-            <div class="top"><span class="lab">Client network — router SSID and password</span></div>
-            <div class="field emmc-field">
-              <label class="lab" for="client-ssid">Client SSID</label>
-              <input id="client-ssid" class="input" v-model="settingDraft.client" @change="saveNextSetting('client')" />
-            <EmmcActions label="Client SSID" :can-get="canGetSetting('client')" :can-set="canSetSetting('client')" :busy="settingBusy.client" @get="getInstalledSetting('client')" @set="applyInstalledSetting('client')" />
-            <span class="good emmc-feedback" v-if="settingMessage.client">{{ settingMessage.client }}</span>
-            <span class="error emmc-feedback" v-if="settingError.client">{{ settingError.client }}</span>
-            <span class="help emmc-feedback" v-if="settingReason('client')">{{ settingReason('client') }}</span>
-              <span class="help emmc-feedback">Set changes only the installed image's network name and retains its password. It does not switch Reflash's live connection.</span>
+            <div v-if="wifiSource === 'manual'" class="field">
+              <label class="lab" for="manual-wifi-mode">Wi-Fi mode</label>
+              <select id="manual-wifi-mode" class="input" v-model="settingDraft.wifiMode" @change="saveManualWifi()">
+                <option value="auto">Automatic — client network with fallback hotspot</option>
+                <option value="client">Client only</option>
+                <option value="ap">Hotspot only</option>
+              </select>
+              <span class="help" v-if="effectiveMode === 'auto'">Configure both the client network and fallback hotspot. The new image tries the client network first.</span>
+              <div v-show="effectiveMode !== 'ap'">
+                <label class="sub" for="client-ssid">Client SSID</label>
+                <input id="client-ssid" class="input" v-model="settingDraft.client" @change="saveManualWifi()" />
+                <label class="sub" for="client-psk">Client password</label>
+                <div class="row">
+                  <input id="client-psk" class="input" v-model="clientPsk" :type="show.client ? 'text' : 'password'" :placeholder="options.wifiPSKSet ? 'Configured — leave blank to keep for this SSID' : 'Wi-Fi password'" autocomplete="off" @change="saveManualWifi()" />
+                  <button class="btn small plain" @click="show.client = !show.client">{{ show.client ? 'Hide' : 'Show' }}</button>
+                </div>
+              </div>
+              <div v-show="effectiveMode !== 'client'">
+                <label class="sub" for="hotspot-name">Hotspot name</label>
+                <input id="hotspot-name" class="input" v-model="hotspotName" @change="saveManualWifi()" />
+                <label class="sub" for="hotspot-psk">Hotspot password</label>
+                <div class="row">
+                  <input id="hotspot-psk" class="input" v-model="hotspotPsk" :type="show.hotspot ? 'text' : 'password'" placeholder="Configured — leave blank to keep" autocomplete="off" @change="saveManualWifi()" />
+                  <button class="btn small plain" @click="show.hotspot = !show.hotspot">{{ show.hotspot ? 'Hide' : 'Show' }}</button>
+                </div>
+              </div>
+              <button class="btn small" :disabled="wifiSetupBusy" @click="saveManualWifi()">Save for next flash</button>
             </div>
-            <span class="sub">Connect this Reflash session to Wi-Fi</span>
-            <TheWifiSetup :open="expanded" inline />
-            <span class="help"><b>When unchanged:</b> no network set. The passphrase stays on the printer and never goes into a config archive.</span>
-          </div>
-
-          <div v-show="effectiveMode !== 'client'" class="field">
-            <div class="top">
-              <span class="lab">{{ effectiveMode === 'auto' ? "Fallback hotspot — printer AP name and password" : "Hotspot — printer AP name and password" }}</span>
-            </div>
-            <div class="field emmc-field">
-              <label class="lab" for="hotspot-name">AP name</label>
-              <input id="hotspot-name" class="input" v-model="hotspotName" placeholder="Recore" @change="settingDraft.hotspot = hotspotName; saveNextSetting('hotspot')" />
-            <EmmcActions label="AP name" :can-get="canGetSetting('hotspot')" :can-set="canSetSetting('hotspot')" :busy="settingBusy.hotspot" @get="getInstalledSetting('hotspot')" @set="applyInstalledSetting('hotspot')" />
-            <span class="good emmc-feedback" v-if="settingMessage.hotspot">{{ settingMessage.hotspot }}</span>
-            <span class="error emmc-feedback" v-if="settingError.hotspot">{{ settingError.hotspot }}</span>
-            <span class="help emmc-feedback" v-if="settingReason('hotspot')">{{ settingReason('hotspot') }}</span>
-            </div>
-            <label class="sub" for="hotspot-psk">Password</label>
-            <div class="row">
-              <input id="hotspot-psk" class="input" :type="show.hotspot ? 'text' : 'password'" v-model="hotspotPsk" :placeholder="options.hotspotPSKSet ? 'Password configured — leave blank to keep' : '12345678'" autocomplete="off" @keydown.enter="setHotspotPassword()" />
-              <button type="button" class="btn small plain" @click="show.hotspot = !show.hotspot">{{ show.hotspot ? "Hide" : "Show" }}</button>
-              <button type="button" class="btn small" :disabled="!hotspotPsk" @click="setHotspotPassword()">Set</button>
-            </div>
-            <span class="error" v-if="problem.hotspot">{{ problem.hotspot }}</span>
-            <span class="help"><b>When unchanged:</b> name <code>Recore</code>, password <code>12345678</code>, address 192.168.50.1.</span>
-          </div>
+            <span class="good" v-if="wifiSetupMessage" role="status">{{ wifiSetupMessage }}</span>
+            <span class="error" v-if="wifiSetupError" role="alert">{{ wifiSetupError }}</span>
+            <button class="btn small" @click="wifiManagerOpen = true">Manage Wi-Fi</button>
+            <TheWifiSetup :open="wifiManagerOpen" :apply-request="emmcRequest" @close="wifiManagerOpen = false" @setup-changed="refreshWifiChoice()" />
           </div>
           <div v-if="wifiPresent !== true" class="field wifi-check">
             <span class="help">{{ wifiPresent === false ? 'No Wi-Fi adapter detected. You can connect an adapter and check again.' : 'Checking for a Wi-Fi adapter...' }}</span>
@@ -249,6 +241,7 @@
                 <span class="acts" v-if="deleting !== a.name">
                   <span>{{ size(a.size) }}</span>
                   <time class="archive-date" :datetime="archiveDateTime(a.date)" title="Date saved on this USB drive">{{ archiveDate(a.date) }}</time>
+                  <button type="button" class="act" :disabled="!a.ok || busy.install" @click="chooseConfig(a.name)">{{ options.restoreBackup === a.name ? 'Selected' : 'Select' }}</button>
                   <button type="button" class="act" @click="download(a.name)">Download</button>
                   <button type="button" class="act danger" @click="deleting = a.name">Delete</button>
                 </span>
@@ -265,6 +258,7 @@
 
         <div v-if="options.restoreBackup" class="field">
           <h4>Selected archive: {{ shortName(options.restoreBackup) }}</h4>
+          <span class="help">Apply the selected files to the currently installed image on eMMC. This does not flash a new image.</span>
             <div v-if="options.restoreBackup">
               <button type="button" class="disc" :aria-expanded="String(tree.install.open)" aria-controls="tree-install" @click="toggleTree('install')">
                 <span class="chev" aria-hidden="true"></span>Choose files <span class="tally">{{ tally('install') }}</span>
@@ -275,7 +269,7 @@
               </div>
             </div>
             <div class="row center">
-              <button type="button" class="btn small" :disabled="!options.restoreBackup || busy.install" @click="installNow()">{{ busy.install ? "Installing..." : "Install config now" }}</button>
+              <button type="button" class="btn small" :disabled="!options.restoreBackup || busy.install" @click="installNow()">{{ busy.install ? "Installing..." : "Use this config on eMMC" }}</button>
               <span class="good" v-if="message.install">{{ message.install }}</span>
             </div>
             <span class="error" v-if="problem.install">{{ problem.install }}</span>
@@ -345,6 +339,13 @@ export default {
     settingBusy: {},
     settingMessage: {},
     settingError: {},
+    wifiSource: 'manual',
+    wifiManagerOpen: false,
+    wifiSetupBusy: false,
+    wifiSaveQueued: false,
+    wifiSetupMessage: '',
+    wifiSetupError: '',
+    clientPsk: '',
     wifiPresent: null,
     wifiChecking: false,
     wifiCheckError: "",
@@ -352,7 +353,7 @@ export default {
     // Options left alone but shown as set: ticking Default again is a choice.
     custom: {},
     seeded: false,
-    show: { ssh: false, root: false, hotspot: false },
+    show: { ssh: false, root: false, hotspot: false, client: false },
     sshPw: "",
     rootPw: "",
     hotspotName: "",
@@ -456,6 +457,7 @@ export default {
       if (!o.hotspotPSKSet) this.hotspotPsk = "12345678";
       this.hostnameDraft = o.hostname || "recore";
       this.hotspotName = o.hotspotSSID || "Recore";
+      this.wifiSource = o.wifiSource || 'manual';
       this.settingDraft = { wifiMode: o.wifiMode || 'auto', ssh: !!o.enableSsh, country: o.wifiCountry || '', timezone: o.timezone || 'UTC', rotation: o.screenRotation || 0, hotspot: this.hotspotName, client: o.SSID || '' };
       this.seeded = true;
     },
@@ -715,6 +717,51 @@ export default {
       if (!this.saveName) {
         try { await this.readInstalledSettings(); } catch (_) { /* Use the saved hostname if the image cannot be read. */ }
         this.saveName = this.suggestArchiveName();
+      }
+    },
+    async refreshWifiChoice() {
+      await this.getOptions();
+      if (this.wifiSource === 'reflash') this.syncWifiDraft();
+    },
+    syncWifiDraft() {
+      this.settingDraft.wifiMode = this.options.wifiMode || 'auto';
+      this.settingDraft.client = this.options.SSID || '';
+      this.hotspotName = this.options.hotspotSSID || 'Recore';
+      this.clientPsk = '';
+      this.hotspotPsk = this.options.hotspotPSKSet ? '' : '12345678';
+    },
+    async chooseWifiSource() {
+      if (this.wifiSource === 'manual') {
+        this.syncWifiDraft();
+        await this.saveManualWifi();
+        return;
+      }
+      await this.storeWifiSetup(this.wifiSource);
+    },
+    async saveManualWifi() {
+      if (this.wifiSetupBusy) { this.wifiSaveQueued = true; return; }
+      await this.storeWifiSetup('manual', {
+        WIFI_MODE: this.settingDraft.wifiMode,
+        WIFI_SSID: this.settingDraft.client,
+        WIFI_PSK: this.clientPsk,
+        HOTSPOT_SSID: this.hotspotName,
+        HOTSPOT_PSK: this.hotspotPsk,
+      });
+    },
+    async storeWifiSetup(source, settings) {
+      if (this.wifiSetupBusy) return;
+      this.wifiSetupBusy = true;
+      this.wifiSetupMessage = ''; this.wifiSetupError = '';
+      try {
+        await this.emmcRequest('/api/wifi_setup', { source, action: 'stage', settings });
+        await this.getOptions();
+        if (source !== 'manual') this.syncWifiDraft();
+        this.wifiSetupMessage = 'Selected for the next flash. Reflash’s connection is unchanged.';
+      } catch (err) {
+        this.wifiSetupError = err.response?.data || 'Could not save the Wi-Fi setup. Complete the fields and try again.';
+      } finally {
+        this.wifiSetupBusy = false;
+        if (this.wifiSaveQueued) { this.wifiSaveQueued = false; await this.saveManualWifi(); }
       }
     },
     async checkWifi() {

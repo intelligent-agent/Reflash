@@ -1,13 +1,10 @@
 <template>
   <div class="wifi-root">
-  <w-dialog v-if="!inline" v-model="dialog.show" :width="dialog.width">
+  <w-dialog v-if="!inline" v-model="dialog.show" :width="dialog.width" @update:model-value="!$event && $emit('close')">
     <template #title>
-      <span class="dialog_title">Wi-Fi configuration</span>
+      <span class="dialog_title">Manage Wi-Fi</span>
     </template>
-    <p>
-      Here you can choose an external access point and password for your local Wi-Fi router, so
-      it can be used with Rebuild. You can also choose to keep the Wi-Fi as an access point. 
-    </p>
+    <p>Manage Reflash’s live Wi-Fi connection here. Scanning or switching between hotspot and client can disconnect this browser. The new image’s Wi-Fi setup is chosen separately.</p>
     <div class="pa5">
       <img style="width: 20%" :src="computeSVG('Wi-Fi')" /><br />
       <w-progress v-if="progressVisible" class="ma1" circle></w-progress>
@@ -58,6 +55,11 @@
         <w-button @click="getWifiStatus()">Check again</w-button>
       </div>
 
+      <div v-if="isWifiPresent" class="mt4">
+        <p>Copy this Reflash setup to the currently installed image for its next boot.</p>
+        <w-button :disabled="busy || applyingSetup" @click="useSetupOnEmmc()">{{ applyingSetup ? 'Applying...' : 'Use this setup on eMMC' }}</w-button>
+        <p v-if="applyMessage" role="status">{{ applyMessage }}</p>
+      </div>
       <div v-if="statusMessage" class="pa2 mt4 text-center">
         <p>{{ statusMessage }}</p>
         <!-- Only while the board is genuinely unreachable. Telling someone to
@@ -65,6 +67,7 @@
         <ReconnectNotice transition-only :active="reconnecting && !boardReachable" :target="reconnectTarget" />
       </div>
     </div>
+    <w-button class="ma4" :disabled="applyingSetup" @click="dialog.show = false; $emit('close')">Done</w-button>
   </w-dialog>
   <!-- The same form without the dialog around it, for the setup panel (#198). -->
   <div v-else class="wifi-inline">
@@ -140,6 +143,7 @@ export default {
   name: "TheWifiSetup",
   components: { ReconnectNotice },
   props: {
+    applyRequest: Function,
     open: Boolean,
     showOverlay: Boolean,
     // Drawn in the page, not in a dialog.
@@ -148,8 +152,10 @@ export default {
   data: () => ({
     dialog: {
       show: false,
-      width: "30%",
+      width: "60%",
     },
+    applyingSetup: false,
+    applyMessage: "",
     isWifiPresent: false,
     wifiStatusKnown: false,
     wifi: {},
@@ -184,6 +190,17 @@ export default {
     },
   },
   methods: {
+    async useSetupOnEmmc() {
+      this.applyingSetup = true; this.applyMessage = '';
+      try {
+        const body = {source: 'reflash', action: 'apply'};
+        if (this.applyRequest) await this.applyRequest('/api/wifi_setup', body);
+        else await axios.post('/api/wifi_setup', body, {timeout: 300000});
+        this.applyMessage = 'Reflash’s Wi-Fi setup was applied to eMMC for its next boot.';
+      } catch (err) {
+        this.applyMessage = err.response?.data || 'Could not apply this Wi-Fi setup to eMMC.';
+      } finally { this.applyingSetup = false; }
+    },
     computeSVG(name) {
       var color;
       if (this.$waveui.theme == "dark") {
@@ -396,6 +413,7 @@ export default {
           this.wifiStatusKnown = true;
           this.stopReconnectWatch();
           this.statusMessage = `Connected to ${target}.`;
+          this.$emit("setup-changed");
           return;
         }
         // Reachable, and it fell back to its own hotspot instead of joining:
@@ -474,6 +492,7 @@ export default {
           this.dialog.show = true;
           this.openDialog();
         } else {
+          this.dialog.show = false;
           // The watch is bounded by the dialog being open; without this it
           // would keep polling an invisible dialog forever (#115).
           this.stopReconnectWatch();
