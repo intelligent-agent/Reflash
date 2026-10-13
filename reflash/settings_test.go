@@ -444,3 +444,18 @@ func TestNextFlashOptionDoesNotQueueInstalledChanges(t *testing.T) {
 		t.Fatalf("staging queued writes: %v", pushPending)
 	}
 }
+
+func TestEarlyInstallerHostnameReadDoesNotAddSetCapability(t *testing.T) {
+	dir := setupTest(t)
+	state = &State{State: IDLE}
+	fakeBin(t, dir, "target-manifest", `printf 'interface=1\nsettings=SSH_ENABLED\nactions=settings\n'`)
+	fakeBin(t, dir, "target-install", "echo SSH_ENABLED=true")
+	fakeBin(t, dir, "get-installed-hostname", "echo early-a8")
+	w := httptest.NewRecorder()
+	installedSettings(w, httptest.NewRequest("GET", "/api/installed_settings", nil))
+	var result InstalledSettings
+	json.NewDecoder(w.Body).Decode(&result)
+	if result.Current[keyHostname] != "early-a8" || strings.Join(result.Keys, ",") != "SSH_ENABLED" {
+		t.Fatalf("got %+v", result)
+	}
+}

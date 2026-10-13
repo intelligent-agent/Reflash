@@ -495,7 +495,7 @@ export default {
       const { data } = await axios.get('/api/installed_settings', { timeout: 15000 });
       this.hostnameCanRead = typeof data.current?.HOSTNAME === 'string';
       this.hostnameCanSet = !!data.supported && (data.keys || []).includes('HOSTNAME');
-      this.hostnameReason = data.reason || (!this.hostnameCanRead && !this.hostnameCanSet ? 'This installed image does not expose hostname settings.' : '');
+      this.hostnameReason = data.reason || (!this.hostnameCanSet ? 'This installed image cannot apply hostname changes. Your selection is still used for the next flash.' : '');
       return data.current?.HOSTNAME;
     },
     async checkHostnameSupport() {

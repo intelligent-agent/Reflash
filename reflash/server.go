@@ -2492,6 +2492,16 @@ func installedSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Early Rebuild installers can expose settings without offering HOSTNAME.
+	// Reading their static hostname remains safe; it does not make Set supported.
+	if _, present := out.Current[keyHostname]; !present && !allowed[keyHostname] {
+		if hostname, _, err := runCommand2Timeout(10*time.Second, "get-installed-hostname"); err == nil {
+			hostname = strings.ToLower(strings.TrimSpace(hostname))
+			if hostname != "" && validateHostname(hostname) == nil {
+				out.Current[keyHostname] = hostname
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
