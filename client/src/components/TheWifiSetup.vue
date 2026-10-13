@@ -37,7 +37,8 @@
         <button type="button" class="btn small" @click="getWifiStatus()">Check again</button>
       </div>
       <p v-if="statusMessage" class="wifi-message" role="status">{{ statusMessage }}</p>
-      <ReconnectNotice transition-only :active="reconnecting && !boardReachable" :target="reconnectTarget" />
+      <button v-if="reconnectTimedOut" type="button" class="btn small" @click="beginReconnect(reconnectTarget, reconnectWantMode)">Retry connection check</button>
+      <ReconnectNotice transition-only :active="(reconnecting || reconnectTimedOut) && !boardReachable" :target="reconnectTarget" />
       <section v-if="isWifiPresent" class="wifi-manager-section">
         <h4>Installed image (eMMC)</h4>
         <p class="wifi-note">Apply this Wi-Fi setup to the installed image for its next boot.</p>
@@ -154,6 +155,9 @@ export default {
     progressVisible: false,
     // A mode switch is in flight and we are waiting to reach the board again.
     reconnecting: false,
+    reconnectTimedOut: false,
+    reconnectDeadline: 0,
+    reconnectWantMode: "",
     // Whether the board answered our last probe. Starts true so the hint does
     // not flash before the first probe has had a chance to run.
     boardReachable: true,
@@ -325,7 +329,13 @@ export default {
         }, { timeout: REQUEST_TIMEOUT });
         this.beginReconnect(this.selected.SSID, "station");
       } catch (err) {
-        const msg = err.response?.data || "Could not start connection";
+        if (!err.response) {
+          // The AP can disappear before its HTTP acknowledgement arrives.
+          // Do not replay Connect: ask for the outcome of the first request.
+          this.beginReconnect(this.selected.SSID, "station", true);
+          return;
+        }
+        const msg = err.response.data || "Could not start connection";
         this.$waveui.notify(msg, "error", 4000);
         this.statusMessage = msg;
       }
@@ -335,9 +345,12 @@ export default {
     // deadline and offering a "continue at recore.local" button that only
     // guesses, watch for the board to come back and say what is true at each
     // step: switching -> (unreachable) reconnect this computer -> connected.
-    beginReconnect(target, wantMode) {
+    beginReconnect(target, wantMode, responseLost = false) {
       this.stopReconnectWatch();
       this.reconnecting = true;
+      this.reconnectTimedOut = false;
+      this.reconnectDeadline = Date.now() + 180000;
+      this.reconnectWantMode = wantMode;
       this.reconnectTarget = target;
       // The state the board is in right now. Nothing it reports counts as an
       // outcome until it has left this - straight after the request it is
@@ -346,7 +359,7 @@ export default {
       this.sawTransition = false;
       this.progressVisible = false; // the reconnect state drives `busy` now
       this.boardReachable = true;
-      this.statusMessage = `Recore is switching to ${target}.`;
+      this.statusMessage = responseLost ? `The connection request lost its response. Checking whether Recore joined ${target}...` : `Recore is switching to ${target}.`;
       this.watchForReconnect(wantMode);
     },
     stopReconnectWatch() {
@@ -357,13 +370,19 @@ export default {
       this.reconnecting = false;
     },
     async watchForReconnect(wantMode) {
-      // Bounded by the dialog, not by a timer: closing it stops the watch, so
-      // this cannot become another loop that runs forever (#115).
+      // Closing the dialog stops the watch; an overall deadline also bounds
+      // the wait when the request or its acknowledgement was lost.
       if (!this.open) {
         this.stopReconnectWatch();
         return;
       }
       const target = this.reconnectTarget;
+      if (this.reconnectDeadline && Date.now() >= this.reconnectDeadline) {
+        this.stopReconnectWatch();
+        this.reconnectTimedOut = true;
+        this.statusMessage = `Could not confirm the connection to ${target}. Rejoin that network on this device, then retry the connection check. If the board is still on its hotspot, reopen Reflash there to see the result.`;
+        return;
+      }
       let wifi = null;
       try {
         // An explicit timeout, because a request to an origin that has gone

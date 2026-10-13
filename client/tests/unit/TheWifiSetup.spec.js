@@ -556,3 +556,43 @@ describe('AP-to-client warning at Connect', () => {
   w.unmount()
  })
 })
+
+describe('connection response lost during Wi-Fi handover', () => {
+ beforeEach(() => vi.useFakeTimers())
+ it('checks the original attempt after a request timeout without replaying Connect or reporting failure', async () => {
+  stubStatus({mode:'ap',ssid:'Recore',ip:'192.168.50.1'})
+  const w = mountDialog(true); await settle(w)
+  w.vm.locationURL='http://recore5.local/';w.vm.selected={SSID:'HomeNet'};w.vm.inputPassword='wifi-password'
+  axios.post.mockRejectedValue(new Error('request timed out'))
+  await w.vm.startWifiConnect();await flushProbe()
+  expect(w.vm.reconnecting).toBe(true)
+  expect(w.vm.statusMessage).not.toContain('Could not start connection')
+  expect(axios.post).toHaveBeenCalledTimes(1)
+  stubStatus({mode:'station',ssid:'HomeNet',ip:'10.0.0.5'},[],{isConnecting:false,error:null})
+  await vi.advanceTimersByTimeAsync(2500)
+  expect(w.vm.statusMessage).toBe('Connected to HomeNet.')
+  expect(axios.post).toHaveBeenCalledTimes(1)
+  await w.setProps({open:false});w.unmount()
+ })
+ it('still displays an explicit server rejection', async () => {
+  const w=mountDialog();w.vm.selected={SSID:'HomeNet'};w.vm.inputPassword='wifi-password'
+  axios.post.mockRejectedValue({response:{data:'No Wi-Fi adapter present',status:400}})
+  await w.vm.startWifiConnect()
+  expect(w.vm.statusMessage).toBe('No Wi-Fi adapter present')
+  expect(w.vm.reconnecting).toBe(false)
+  w.unmount()
+ })
+})
+
+it('bounds an uncertain connection check and retries checking without submitting Connect again', async () => {
+ vi.useFakeTimers();stubStatus({mode:'ap',ssid:'Recore',ip:'192.168.50.1'})
+ const w=mountDialog(true);await settle(w)
+ w.vm.selected={SSID:'HomeNet'};w.vm.inputPassword='wifi-password';axios.post.mockRejectedValue(new Error('timeout'))
+ await w.vm.startWifiConnect();await flushProbe();await vi.advanceTimersByTimeAsync(181000)
+ expect(w.vm.reconnecting).toBe(false);expect(w.vm.reconnectTimedOut).toBe(true)
+ expect(w.vm.statusMessage).toContain('Could not confirm the connection')
+ w.vm.beginReconnect(w.vm.reconnectTarget,w.vm.reconnectWantMode);await flushProbe()
+ expect(w.vm.reconnectTimedOut).toBe(false);expect(w.vm.reconnecting).toBe(true)
+ expect(axios.post).toHaveBeenCalledTimes(1)
+ await w.setProps({open:false});w.unmount()
+})
