@@ -33,19 +33,18 @@
       <div class="setup-scroll" ref="scroll" @scroll="spy">
         <section id="setup-network" data-title="Network">
           <h4>Network</h4>
-          <div class="field">
-            <div class="top">
-              <label class="lab" for="hostname">Hostname</label>
-            </div>
+          <div class="field emmc-field">
+            <label class="lab hostname-label" for="hostname">Hostname</label>
+            <span id="hostname-emmc-heading" class="emmc-heading">eMMC</span>
             <input id="hostname" class="input" v-model="hostnameDraft" maxlength="63" @change="setHostname(hostnameDraft)" />
-            <div class="row">
+            <div class="emmc-buttons" role="group" aria-labelledby="hostname-emmc-heading">
               <button type="button" class="btn small" :disabled="hostnameBusy || !hostnameCanRead" @click="getInstalledHostname()">{{ hostnameBusy === 'get' ? 'Getting...' : 'Get' }}</button>
               <button type="button" class="btn small" :disabled="hostnameBusy || !hostnameCanSet" @click="applyHostname()">{{ hostnameBusy === 'set' ? 'Setting...' : 'Set' }}</button>
-              <span class="good" v-if="hostnameMessage">{{ hostnameMessage }}</span>
             </div>
-            <span class="help" v-if="hostnameReason">{{ hostnameReason }}</span>
-            <span class="error" v-if="problem.hostname">{{ problem.hostname }}</span>
-            <span class="help">Get reads the currently installed image. Set applies to that image for its next boot. Edits are retained for the next flash. Open <code>{{ options.hostname || 'recore' }}.local</code>.</span>
+            <span class="good emmc-feedback" v-if="hostnameMessage">{{ hostnameMessage }}</span>
+            <span class="help emmc-feedback" v-if="hostnameReason">{{ hostnameReason }}</span>
+            <span class="error emmc-feedback" v-if="problem.hostname">{{ problem.hostname }}</span>
+            <span class="help emmc-feedback">Get reads the currently installed image. Set applies to that image for its next boot. Edits are retained for the next flash. Open <code>{{ options.hostname || 'recore' }}.local</code>.</span>
           </div>
           <div v-if="wifiPresent" class="wifi-settings">
           <div class="field">
@@ -125,7 +124,7 @@
               <button type="button" class="btn small" :disabled="!sshPw" @click="setPassword('sshPassword')">Set</button>
             </div>
             <span class="error" v-if="problem.sshPassword">{{ problem.sshPassword }}</span>
-            <span class="help">Leave blank to keep the installed image’s existing password.</span>
+            <span class="help">The documented factory password is temppwd. Set applies the entered password; existing passwords are not read back.</span>
           </div>
           <div class="field">
             <div class="top">
@@ -137,7 +136,7 @@
               <button type="button" class="btn small" :disabled="!rootPw" @click="setPassword('rootPassword')">Set</button>
             </div>
             <span class="error" v-if="problem.rootPassword">{{ problem.rootPassword }}</span>
-            <span class="help">For the serial console; root cannot log in over SSH with a password. Leave blank to keep the existing password.</span>
+            <span class="help">For the serial console; root cannot log in over SSH with a password. The documented factory password is temppwd. Set applies the entered password; existing passwords are not read back.</span>
           </div>
           <div class="field">
             <div class="top">
@@ -406,6 +405,9 @@ export default {
         rotation: (o.screenRotation || 0) !== 0,
         config: !!o.restoreBackup,
       };
+      // A documented factory suggestion, not a password read from the image.
+      if (!o.loginPasswordSet) this.sshPw = "temppwd";
+      if (!o.rootPasswordSet) this.rootPw = "temppwd";
       this.hostnameDraft = o.hostname || "recore";
       this.hotspotName = o.hotspotSSID || "Recore";
       this.seeded = true;
@@ -1088,6 +1090,18 @@ export default {
 </style>
 
 <style scoped>
+.setup-wrap .field.emmc-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  column-gap: 24px;
+  align-items: center;
+}
+.hostname-label { grid-column: 1; grid-row: 1; }
+.emmc-heading { grid-column: 2; grid-row: 1; text-align: center; font-size: 0.85rem; opacity: 0.7; }
+.emmc-field #hostname { grid-column: 1; grid-row: 2; }
+.emmc-buttons { grid-column: 2; grid-row: 2; display: flex; flex-direction: row; gap: 8px; align-items: center; }
+.emmc-feedback { grid-column: 1 / -1; }
+
 .archive-manager.setup-wrap, .archive-manager-foot.setup-wrap { margin-top: 0; }
 .archive-manager { max-height: 65vh; overflow-y: auto; padding: 8px 16px; text-align: left; }
 .archive-manager .field { margin-bottom: 20px; }

@@ -492,3 +492,19 @@ describe('hostname Get/Set on the installed image', () => {
   expect(w.vm.hostnameMessage).not.toContain('Set recore on')
  })
 })
+
+describe('factory password suggestions', () => {
+ it('prefills documented factory passwords without applying them', async () => {
+  const w = mountSetup()
+  await w.find('.setup-toggle').trigger('click')
+  expect(w.find('#ssh-password').element.value).toBe('temppwd')
+  expect(w.find('#root-password').element.value).toBe('temppwd')
+  expect(sent()).toEqual([])
+  expect(axios.post).not.toHaveBeenCalled()
+ })
+ it('leaves fields empty when replacement passwords are recorded', () => {
+  const w = mountSetup({ loginPasswordSet: true, rootPasswordSet: true })
+  expect(w.vm.sshPw).toBe('')
+  expect(w.vm.rootPw).toBe('')
+ })
+})
