@@ -19,6 +19,12 @@
             <button type="button" class="btn small" @click="startWifiScan" :disabled="busy">{{ progressVisible ? 'Scanning...' : 'Scan for networks' }}</button>
             <button type="button" class="btn small wifi-connect-button" @click="startWifiConnect" :disabled="busy || !selected">{{ reconnecting ? 'Connecting...' : 'Connect' }}</button>
           </div>
+          <div v-if="ipHandoverWarning" class="wifi-handover-warning" role="alert">
+            <p>Connecting to a client network will stop the hotspot at this IP address. Open this page by its mDNS name first so it can reconnect after the switch.</p>
+            <p v-if="handoverURL"><a :href="handoverURL">Continue at {{ handoverHostname }}</a> — Manage Wi-Fi stays open with this network selected. Re-enter the password there.</p>
+            <p v-else>{{ handoverLookup ? 'Looking up the board’s mDNS name...' : 'The mDNS name is unavailable. After connecting, rejoin the destination Wi-Fi and find the board’s new IP in your router.' }}</p>
+            <button type="button" class="btn small" :disabled="handoverLookup" @click="startWifiConnect(true)">Connect using IP anyway</button>
+          </div>
           <p class="wifi-note">Scanning or changing networks may disconnect this browser.</p>
         </section>
         <section class="wifi-manager-section wifi-split">
@@ -99,7 +105,7 @@
 import axios from "axios";
 import { mapGetters } from "vuex";
 import ReconnectNotice from "./ReconnectNotice.vue";
-import { wifiSummary } from "../network";
+import { wifiSummary, isIPAddress, wifiManagerURL } from "../network";
 
 // Every request here can be in flight while the radio changes mode, and a
 // request to an origin that has just gone away does not necessarily fail -
@@ -116,6 +122,7 @@ export default {
   name: "TheWifiSetup",
   components: { ReconnectNotice },
   props: {
+    initialSsid: { type: String, default: "" },
     applyRequest: Function,
     open: Boolean,
     showOverlay: Boolean,
@@ -127,6 +134,10 @@ export default {
       show: false,
       width: "min(620px, calc(100vw - 32px))",
     },
+    locationURL: window.location.href,
+    ipHandoverWarning: false,
+    handoverLookup: false,
+    handoverHostname: '',
     showPassword: false,
     applyingSetup: false,
     applyMessage: "",
@@ -154,6 +165,13 @@ export default {
   }),
   computed: {
     ...mapGetters(["options"]),
+    handoverURL() {
+      return wifiManagerURL(this.locationURL, this.handoverHostname, this.selected?.SSID || '');
+    },
+    needsIPHandoverWarning() {
+      const host = new URL(this.locationURL).hostname;
+      return this.wifi.mode === 'ap' && isIPAddress(host) && (!this.wifi.ip || host === this.wifi.ip);
+    },
     wifiSummary() {
       return wifiSummary(this.wifi);
     },
@@ -204,10 +222,13 @@ export default {
           axios.get('/api/get_wifi', { timeout: REQUEST_TIMEOUT }),
           axios.get('/api/wifi_poll_scan', { timeout: REQUEST_TIMEOUT }),
         ]);
-        this.inputSSID = wifi.data.SSID || "";
+        this.inputSSID = this.initialSsid || wifi.data.SSID || "";
         // 204 means a scan is in flight; leave whatever is on screen alone.
         if (aps.status !== 204 && Array.isArray(aps.data)) {
           this.setAvailableAPs(aps.data);
+        }
+        if (this.initialSsid && !this.availableAPs.some(ap => ap.SSID === this.initialSsid)) {
+          this.availableAPs.push({SSID: this.initialSsid, signal: '', label: this.initialSsid});
         }
         this.reselectSavedSSID();
       } catch (err) {
@@ -275,9 +296,19 @@ export default {
         setTimeout(this.pollScanResults, 1000);
       }
     },
-    async startWifiConnect() {
+    async startWifiConnect(allowIP = false) {
       if (!this.selected || !this.selected.SSID?.trim()) {
         this.$waveui.notify("Please select an access point", "error", 0);
+        return;
+      }
+      if (this.needsIPHandoverWarning && allowIP !== true) {
+        this.ipHandoverWarning = true;
+        this.handoverLookup = true;
+        try {
+          const response = await axios.get('/api/reconnect_address', {timeout: REQUEST_TIMEOUT});
+          this.handoverHostname = response.data.hostname || '';
+        } catch (_) { this.handoverHostname = ''; }
+        finally { this.handoverLookup = false; }
         return;
       }
       if (this.inputPassword.trim().length < 8) {
@@ -285,6 +316,7 @@ export default {
         this.$waveui.notify(this.statusMessage, "error", 4000);
         return;
       }
+      this.ipHandoverWarning = false;
       this.statusMessage = `Connecting to ${this.selected.SSID}...`;
       try {
         await axios.post('/api/wifi_start_connect', {
@@ -463,6 +495,7 @@ export default {
       handler(is_open) {
         if (is_open) {
           this.statusMessage = "";
+          this.ipHandoverWarning = false;
           this.dialog.show = true;
           this.openDialog();
         } else {
@@ -498,6 +531,9 @@ export default {
 .wifi-manager .wifi-split .wifi-note { margin-bottom: 0; }
 .wifi-manager .wifi-message { margin: 14px 0 0; font-size: 0.9rem; overflow-wrap: anywhere; }
 .wifi-manager .wifi-next-image { margin-top: 16px; }
+.wifi-handover-warning { margin-top: 14px; padding: 12px; border: 1px solid #d9a441; font-size: 0.9rem; line-height: 1.5; }
+.wifi-handover-warning p { margin-bottom: 10px; }
+.wifi-handover-warning a { color: #04a3e5; text-decoration: underline; }
 .wifi-manager-footer { display: flex; justify-content: flex-end; margin-top: 16px; }
 @media (max-width: 480px) {
   .wifi-manager { padding: 16px; }

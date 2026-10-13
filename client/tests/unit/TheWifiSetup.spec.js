@@ -512,3 +512,47 @@ describe('explicit installed-image Wi-Fi copy', () => {
   w.unmount()
  })
 })
+
+describe('AP-to-client warning at Connect', () => {
+ const prepare = (url, mode = 'ap', ip = '192.168.50.1') => {
+  const w = mountDialog()
+  w.vm.locationURL = url; w.vm.wifi = {mode,ip}; w.vm.selected = {SSID:'Home network'}; w.vm.inputPassword = 'privatepassword'
+  axios.get.mockResolvedValue({data:{hostname:'recore.local'}})
+  return w
+ }
+ it('warns before switching the AP radio and carries only nonsecret dialog state in the link', async () => {
+  const w = prepare('http://192.168.50.1/')
+  expect(w.vm.ipHandoverWarning).toBe(false)
+  await w.vm.startWifiConnect()
+  expect(axios.post).not.toHaveBeenCalled()
+  expect(w.vm.ipHandoverWarning).toBe(true)
+  const url = new URL(w.vm.handoverURL)
+  expect(url.hostname).toBe('recore.local'); expect(url.searchParams.get('manageWifi')).toBe('1')
+  expect(url.searchParams.get('wifiSSID')).toBe('Home network')
+  expect(url.href).not.toContain('privatepassword')
+  w.unmount()
+ })
+ it.each([
+  ['http://recore.local/','ap','192.168.50.1'],
+  ['http://192.168.32.151/','station','192.168.32.151'],
+  ['http://192.168.32.107/','ap','192.168.50.1'],
+ ])('connects without an IP warning at %s in %s mode', async (url,mode,ip) => {
+  const w = prepare(url,mode,ip); await w.vm.startWifiConnect()
+  expect(w.vm.ipHandoverWarning).toBe(false)
+  expect(axios.post).toHaveBeenCalledWith('/api/wifi_start_connect',expect.anything(),expect.anything())
+  w.unmount()
+ })
+ it('offers explicit IP continuation if mDNS is unavailable', async () => {
+  const w = prepare('http://192.168.50.1/'); axios.get.mockRejectedValue(new Error('no mDNS'))
+  await w.vm.startWifiConnect(); expect(w.vm.handoverURL).toBe(''); expect(axios.post).not.toHaveBeenCalled()
+  await w.vm.startWifiConnect(true); expect(axios.post).toHaveBeenCalledTimes(1)
+  w.unmount()
+ })
+ it('restores the selected network after changing browser origin', async () => {
+  const w = mountDialog(); await w.setProps({initialSsid:'Home network'})
+  stubStatus({},[{SSID:'Another network',signal:'**'}])
+  await w.vm.restoreState()
+  expect(w.vm.selected.SSID).toBe('Home network'); expect(w.vm.inputPassword).toBe('')
+  w.unmount()
+ })
+})

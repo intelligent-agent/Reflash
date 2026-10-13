@@ -93,7 +93,7 @@
             <span class="good" v-if="wifiSetupMessage" role="status">{{ wifiSetupMessage }}</span>
             <span class="error" v-if="wifiSetupError" role="alert">{{ wifiSetupError }}</span>
             <button class="btn small" @click="wifiManagerOpen = true">Manage Wi-Fi</button>
-            <TheWifiSetup :open="wifiManagerOpen" :apply-request="emmcRequest" @close="wifiManagerOpen = false" @setup-changed="refreshWifiChoice()" />
+            <TheWifiSetup :open="wifiManagerOpen" :initial-ssid="wifiResumeSSID" :apply-request="emmcRequest" @close="wifiManagerOpen = false; wifiResumeSSID = ''" @setup-changed="refreshWifiChoice()" />
           </div>
           <div v-if="wifiPresent !== true" class="field wifi-check">
             <span class="help">{{ wifiPresent === false ? 'No Wi-Fi adapter detected. You can connect an adapter and check again.' : 'Checking for a Wi-Fi adapter...' }}</span>
@@ -286,6 +286,7 @@
 
 <script>
 import axios from "axios";
+import { wifiManagerState } from "../network";
 import { mapGetters, mapActions } from "vuex";
 import EmmcActions from "./EmmcActions.vue";
 import TheWifiSetup from "./TheWifiSetup.vue";
@@ -345,6 +346,7 @@ export default {
     settingError: {},
     wifiSource: 'manual',
     wifiManagerOpen: false,
+    wifiResumeSSID: "",
     wifiSetupBusy: false,
     wifiSaveQueued: false,
     wifiSetupMessage: '',
@@ -970,6 +972,15 @@ export default {
   },
   created() {
     this.seed();
+    const resume = wifiManagerState(window.location.href);
+    if (resume.open) {
+      this.wifiResumeSSID = resume.ssid;
+      this.expanded = true;
+      this.wifiManagerOpen = true;
+      const url = new URL(window.location.href);
+      url.searchParams.delete('manageWifi'); url.searchParams.delete('wifiSSID');
+      window.history.replaceState(window.history.state, '', url.href);
+    }
   },
   beforeUnmount() {
     clearInterval(this.pollTimer);
