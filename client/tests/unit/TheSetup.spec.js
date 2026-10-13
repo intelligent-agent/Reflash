@@ -67,7 +67,6 @@ describe('Set up printer (#198)', () => {
 
   it('starts an option as custom when the printer already has it that way', () => {
     const w = mountSetup({ wifiCountry: 'NO', screenRotation: 90, enableSsh: true, loginPasswordSet: true })
-    expect(w.vm.isDef('country')).toBe(false)
     expect(w.vm.isDef('rotation')).toBe(false)
     expect(w.vm.isDef('ssh')).toBe(false)
     expect(w.vm.isDef('sshPassword')).toBe(false)
@@ -79,8 +78,7 @@ describe('Set up printer (#198)', () => {
     const w = mountSetup()
     await w.find('.setup-toggle').trigger('click')
     await w.find('#country').setValue('NO')
-    expect(sent()).toEqual([{ wifiCountry: 'NO' }])
-    expect(w.vm.isDef('country')).toBe(false)
+    expect(axios.post).toHaveBeenCalledWith('/api/set_options?apply=false', { wifiCountry: 'NO' })
 
   })
 
@@ -506,5 +504,66 @@ describe('factory password suggestions', () => {
   const w = mountSetup({ loginPasswordSet: true, rootPasswordSet: true })
   expect(w.vm.sshPw).toBe('')
   expect(w.vm.rootPw).toBe('')
+ })
+})
+
+describe('eMMC location, display, and network controls', () => {
+ const current = { HOSTNAME: 'recore', WIFI_COUNTRY: 'NO', TIMEZONE: 'Europe/Oslo', SCREEN_ROTATION: '90', HOTSPOT_SSID: 'Printer AP', WIFI_SSID: 'Home network' }
+ function stubInstalled() {
+  axios.get.mockImplementation(async url => {
+   if (url === '/api/installed_settings') return { data: { supported: true, keys: Object.keys(current), current } }
+   if (url === '/api/get_status') return { data: { network: { wifi: { present: true } } } }
+   if (url === '/api/file_backups') return { data: [] }
+   return { data: options }
+  })
+  axios.post.mockResolvedValue({ data: { status: 'OK' } })
+ }
+ it.each([
+  ['country', 'wifiCountry', 'NO'], ['timezone', 'timezone', 'Europe/Oslo'],
+  ['rotation', 'screenRotation', 90], ['hotspot', 'hotspotSSID', 'Printer AP'], ['client', 'SSID', 'Home network'],
+ ])('Get %s reads eMMC and stages it without applying settings', async (name, option, value) => {
+  const w = mountSetup(); stubInstalled()
+  await w.vm.getInstalledSetting(name)
+  expect(w.vm.settingDraft[name]).toBe(value)
+  expect(axios.post).toHaveBeenCalledWith('/api/set_options?apply=false', { [option]: value })
+  expect(axios.post.mock.calls.some(([url]) => url === '/api/installed_settings')).toBe(false)
+ })
+ it.each([
+  ['country', 'WIFI_COUNTRY', 'NO'], ['timezone', 'TIMEZONE', 'Europe/Oslo'],
+  ['rotation', 'SCREEN_ROTATION', 90], ['hotspot', 'HOTSPOT_SSID', 'Printer AP'], ['client', 'WIFI_SSID', 'Home network'],
+ ])('Set %s applies only its own key', async (name, key, value) => {
+  const w = mountSetup(); stubInstalled()
+  await w.vm.readInstalledSettings()
+  w.vm.settingDraft[name] = value
+  if (name === 'hotspot') w.vm.hotspotName = value
+  await w.vm.applyInstalledSetting(name)
+  expect(axios.post).toHaveBeenCalledWith('/api/installed_settings', { [key]: String(value) })
+  expect(w.vm.settingMessage[name]).toContain('Applied to the installed image')
+ })
+ it('renders Wi-Fi name actions only when an adapter is detected', async () => {
+  const w = mountSetup(); stubInstalled()
+  await w.find('.setup-toggle').trigger('click'); await flushPromises()
+  expect(w.find('[aria-label="AP name on eMMC"]').exists()).toBe(true)
+  expect(w.find('[aria-label="Client SSID on eMMC"]').exists()).toBe(true)
+  w.vm.wifiPresent = false; await w.vm.$nextTick()
+  expect(w.find('[aria-label="AP name on eMMC"]').exists()).toBe(false)
+  expect(w.find('[aria-label="Client SSID on eMMC"]').exists()).toBe(false)
+ })
+ it('explains unsupported operations and does not submit them', async () => {
+  const w = mountSetup()
+  w.vm.installedSettings = { supported: true, keys: ['SCREEN_ROTATION'], current: { SCREEN_ROTATION: '90' } }
+  expect(w.vm.canGetSetting('country')).toBe(false)
+  expect(w.vm.canSetSetting('country')).toBe(false)
+  await w.vm.applyInstalledSetting('country')
+  expect(axios.post).not.toHaveBeenCalled()
+  expect(w.vm.settingError.country).toContain('cannot be applied')
+ })
+ it('does not report an installer error as success', async () => {
+  const w = mountSetup(); stubInstalled()
+  await w.vm.readInstalledSettings()
+  axios.post.mockImplementation(async url => ({ data: url === '/api/installed_settings' ? { status: 'ERROR', error: 'setting refused' } : {} }))
+  await w.vm.applyInstalledSetting('rotation')
+  expect(w.vm.settingError.rotation).toContain('setting refused')
+  expect(w.vm.settingMessage.rotation).not.toContain('Applied')
  })
 })

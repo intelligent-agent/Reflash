@@ -61,6 +61,16 @@
 
           <div v-show="effectiveMode !== 'ap'" class="field">
             <div class="top"><span class="lab">Client network — router SSID and password</span></div>
+            <div class="field emmc-field">
+              <label class="lab" for="client-ssid">Client SSID</label>
+              <input id="client-ssid" class="input" v-model="settingDraft.client" @change="saveNextSetting('client')" />
+            <EmmcActions label="Client SSID" :can-get="canGetSetting('client')" :can-set="canSetSetting('client')" :busy="settingBusy.client" @get="getInstalledSetting('client')" @set="applyInstalledSetting('client')" />
+            <span class="good emmc-feedback" v-if="settingMessage.client">{{ settingMessage.client }}</span>
+            <span class="error emmc-feedback" v-if="settingError.client">{{ settingError.client }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('client')">{{ settingReason('client') }}</span>
+              <span class="help emmc-feedback">Set changes only the installed image's network name and retains its password. It does not switch Reflash's live connection.</span>
+            </div>
+            <span class="sub">Connect this Reflash session to Wi-Fi</span>
             <TheWifiSetup :open="expanded" inline />
             <span class="help"><b>When unchanged:</b> no network set. The passphrase stays on the printer and never goes into a config archive.</span>
           </div>
@@ -69,8 +79,14 @@
             <div class="top">
               <span class="lab">{{ effectiveMode === 'auto' ? "Fallback hotspot — printer AP name and password" : "Hotspot — printer AP name and password" }}</span>
             </div>
-            <label class="sub" for="hotspot-name">Name</label>
-            <input id="hotspot-name" class="input" v-model="hotspotName" placeholder="Recore" @change="setHotspotName()" />
+            <div class="field emmc-field">
+              <label class="lab" for="hotspot-name">AP name</label>
+              <input id="hotspot-name" class="input" v-model="hotspotName" placeholder="Recore" @change="settingDraft.hotspot = hotspotName; saveNextSetting('hotspot')" />
+            <EmmcActions label="AP name" :can-get="canGetSetting('hotspot')" :can-set="canSetSetting('hotspot')" :busy="settingBusy.hotspot" @get="getInstalledSetting('hotspot')" @set="applyInstalledSetting('hotspot')" />
+            <span class="good emmc-feedback" v-if="settingMessage.hotspot">{{ settingMessage.hotspot }}</span>
+            <span class="error emmc-feedback" v-if="settingError.hotspot">{{ settingError.hotspot }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('hotspot')">{{ settingReason('hotspot') }}</span>
+            </div>
             <label class="sub" for="hotspot-psk">Password</label>
             <div class="row">
               <input id="hotspot-psk" class="input" :type="show.hotspot ? 'text' : 'password'" v-model="hotspotPsk" :placeholder="options.hotspotPSKSet ? 'Password configured — leave blank to keep' : '12345678'" autocomplete="off" @keydown.enter="setHotspotPassword()" />
@@ -90,25 +106,28 @@
 
         <section id="setup-location" data-title="Location">
           <h4>Location</h4>
-          <div class="field">
-            <div class="top">
-              <label class="lab" for="country">Country</label>
-            </div>
-            <select id="country" class="input" :value="options.wifiCountry || ''" @change="edit('country', { wifiCountry: $event.target.value })">
+          <div class="field emmc-field">
+            <label class="lab" for="country">Country</label>
+            <select id="country" class="input" v-model="settingDraft.country" @change="saveNextSetting('country')">
               <option value="">Not specified</option>
               <option v-for="c in countries" :key="c[0]" :value="c[0]">{{ c[1] }} ({{ c[0] }})</option>
             </select>
-            <span class="help">Sets the Wi-Fi regulatory domain: which channels and power the radio may use. <b>When unchanged:</b> none set.</span>
+            <EmmcActions label="Country" :can-get="canGetSetting('country')" :can-set="canSetSetting('country')" :busy="settingBusy.country" @get="getInstalledSetting('country')" @set="applyInstalledSetting('country')" />
+            <span class="good emmc-feedback" v-if="settingMessage.country">{{ settingMessage.country }}</span>
+            <span class="error emmc-feedback" v-if="settingError.country">{{ settingError.country }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('country')">{{ settingReason('country') }}</span>
+            <span class="help emmc-feedback">Sets the Wi-Fi regulatory domain. Edits are retained for the next flash; Set applies to the installed image.</span>
           </div>
-          <div class="field">
-            <div class="top">
-              <label class="lab" for="timezone">Timezone</label>
-            </div>
-            <select id="timezone" class="input" :value="options.timezone || 'UTC'" @change="edit('timezone', { timezone: $event.target.value })">
-
+          <div class="field emmc-field">
+            <label class="lab" for="timezone">Timezone</label>
+            <select id="timezone" class="input" v-model="settingDraft.timezone" @change="saveNextSetting('timezone')">
+              <option v-if="!zones.includes(settingDraft.timezone)" :value="settingDraft.timezone">{{ settingDraft.timezone }}</option>
               <option v-for="z in zones" :key="z" :value="z">{{ z }}</option>
             </select>
-            <span class="help">Uses the selected timezone.</span>
+            <EmmcActions label="Timezone" :can-get="canGetSetting('timezone')" :can-set="canSetSetting('timezone')" :busy="settingBusy.timezone" @get="getInstalledSetting('timezone')" @set="applyInstalledSetting('timezone')" />
+            <span class="good emmc-feedback" v-if="settingMessage.timezone">{{ settingMessage.timezone }}</span>
+            <span class="error emmc-feedback" v-if="settingError.timezone">{{ settingError.timezone }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('timezone')">{{ settingReason('timezone') }}</span>
           </div>
         </section>
 
@@ -149,14 +168,16 @@
 
         <section id="setup-display" data-title="Display">
           <h4>Display</h4>
-          <div class="field">
-            <div class="top">
-              <span class="lab">Screen rotation</span>
-            </div>
+          <div class="field emmc-field">
+            <span class="lab">Screen rotation</span>
             <div class="radios" role="radiogroup" aria-label="Screen rotation">
-              <label v-for="r in rotations" :key="r.value" class="radio"><input type="radio" name="rotation" :value="r.value" :checked="options.screenRotation === r.value" @change="edit('rotation', { screenRotation: r.value })" />{{ r.label }}</label>
+              <label v-for="r in rotations" :key="r.value" class="radio"><input type="radio" name="rotation" :value="r.value" :checked="settingDraft.rotation === r.value" @change="settingDraft.rotation = r.value; saveNextSetting('rotation')" />{{ r.label }}</label>
             </div>
-            <span class="help"><b>When unchanged:</b> normal.</span>
+            <EmmcActions label="Display rotation" :can-get="canGetSetting('rotation')" :can-set="canSetSetting('rotation')" :busy="settingBusy.rotation" @get="getInstalledSetting('rotation')" @set="applyInstalledSetting('rotation')" />
+            <span class="good emmc-feedback" v-if="settingMessage.rotation">{{ settingMessage.rotation }}</span>
+            <span class="error emmc-feedback" v-if="settingError.rotation">{{ settingError.rotation }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('rotation')">{{ settingReason('rotation') }}</span>
+            <span class="help emmc-feedback">Get reads the installed image's display rotation; Set applies the selected rotation to that image.</span>
           </div>
         </section>
 
@@ -260,6 +281,7 @@
 <script>
 import axios from "axios";
 import { mapGetters, mapActions } from "vuex";
+import EmmcActions from "./EmmcActions.vue";
 import TheWifiSetup from "./TheWifiSetup.vue";
 import FileTree from "./FileTree.vue";
 import { includeFor } from "../fileTree";
@@ -281,11 +303,19 @@ const DEFAULTS = {
   config: { restoreBackup: "", restoreInclude: "" },
 };
 
+const EMMC_SETTINGS = {
+  country: { key: 'WIFI_COUNTRY', option: 'wifiCountry', label: 'Country' },
+  timezone: { key: 'TIMEZONE', option: 'timezone', label: 'Timezone' },
+  rotation: { key: 'SCREEN_ROTATION', option: 'screenRotation', label: 'Display rotation' },
+  hotspot: { key: 'HOTSPOT_SSID', option: 'hotspotSSID', label: 'AP name' },
+  client: { key: 'WIFI_SSID', option: 'SSID', label: 'Client SSID' },
+};
+
 const shortName = (name) => String(name || "").replace(/\.tar\.gz$/, "");
 
 export default {
   name: "TheSetup",
-  components: { TheWifiSetup, FileTree },
+  components: { TheWifiSetup, FileTree, EmmcActions },
   props: {
     // Whether the board can reach the internet: software that is cloned from
     // GitHub cannot be switched on without (#205). Switching it off can.
@@ -300,6 +330,11 @@ export default {
     hostnameCanSet: false,
     hostnameReason: "Checking the installed image’s hostname support...",
     hostnameMessage: "",
+    installedSettings: { supported: false, keys: [], current: {} },
+    settingDraft: { country: '', timezone: 'UTC', rotation: 0, hotspot: 'Recore', client: '' },
+    settingBusy: {},
+    settingMessage: {},
+    settingError: {},
     wifiPresent: null,
     wifiChecking: false,
     wifiCheckError: "",
@@ -410,6 +445,7 @@ export default {
       if (!o.rootPasswordSet) this.rootPw = "temppwd";
       this.hostnameDraft = o.hostname || "recore";
       this.hotspotName = o.hotspotSSID || "Recore";
+      this.settingDraft = { country: o.wifiCountry || '', timezone: o.timezone || 'UTC', rotation: o.screenRotation || 0, hotspot: this.hotspotName, client: o.SSID || '' };
       this.seeded = true;
     },
     isDef(name) {
@@ -493,12 +529,16 @@ export default {
         return false;
       }
     },
-    async readHostnameSupport() {
+    async readInstalledSettings() {
       const { data } = await axios.get('/api/installed_settings', { timeout: 15000 });
+      this.installedSettings = data;
       this.hostnameCanRead = typeof data.current?.HOSTNAME === 'string';
       this.hostnameCanSet = !!data.supported && (data.keys || []).includes('HOSTNAME');
       this.hostnameReason = data.reason || (!this.hostnameCanSet ? 'This installed image cannot apply hostname changes. Your selection is still used for the next flash.' : '');
-      return data.current?.HOSTNAME;
+      return data;
+    },
+    async readHostnameSupport() {
+      return (await this.readInstalledSettings()).current?.HOSTNAME;
     },
     async checkHostnameSupport() {
       try { await this.readHostnameSupport(); }
@@ -529,6 +569,69 @@ export default {
         this.hostnameMessage = `Set ${this.hostnameDraft} on the installed image; takes effect at its next boot.`;
       } catch (err) { this.problem = { ...this.problem, hostname: String(this.errorOf(err)) }; }
       finally { this.hostnameBusy = ''; }
+    },
+    canGetSetting(name) {
+      return Object.prototype.hasOwnProperty.call(this.installedSettings.current || {}, EMMC_SETTINGS[name].key);
+    },
+    canSetSetting(name) {
+      return !!this.installedSettings.supported && (this.installedSettings.keys || []).includes(EMMC_SETTINGS[name].key);
+    },
+    settingReason(name) {
+      if (this.canGetSetting(name) && this.canSetSetting(name)) return '';
+      if (this.installedSettings.reason) return this.installedSettings.reason;
+      if (!this.canSetSetting(name)) return `${EMMC_SETTINGS[name].label} cannot be applied by this installed image. Edits can still be used for the next flash.`;
+      return `This installed image cannot return ${EMMC_SETTINGS[name].label.toLowerCase()}.`;
+    },
+    async saveNextSetting(name) {
+      const spec = EMMC_SETTINGS[name];
+      let value = name === 'hotspot' ? this.hotspotName : this.settingDraft[name];
+      this.settingError = { ...this.settingError, [name]: '' };
+      if (name === 'country' && value && !/^[A-Z]{2}$/.test(value)) {
+        this.settingError = { ...this.settingError, [name]: 'Choose a valid country.' }; return false;
+      }
+      if (name === 'rotation' && ![0, 90, 180, 270].includes(Number(value))) {
+        this.settingError = { ...this.settingError, [name]: 'Choose a supported display rotation.' }; return false;
+      }
+      if (name === 'rotation') value = Number(value);
+      if (['client', 'hotspot'].includes(name) && (/[\r\n]/.test(value) || new TextEncoder().encode(value).length > 32 || (name === 'hotspot' && !value.trim()))) {
+        this.settingError = { ...this.settingError, [name]: 'Use a Wi-Fi name of at most 32 bytes without line breaks.' }; return false;
+      }
+      try {
+        await axios.post('/api/set_options?apply=false', { [spec.option]: value });
+        this.settingDraft[name] = value;
+        await this.getOptions();
+        this.settingMessage = { ...this.settingMessage, [name]: 'Selected for the next flash.' };
+        return true;
+      } catch (err) {
+        this.settingError = { ...this.settingError, [name]: String(this.errorOf(err)) }; return false;
+      }
+    },
+    async getInstalledSetting(name) {
+      this.settingBusy = { ...this.settingBusy, [name]: 'get' };
+      this.settingMessage = { ...this.settingMessage, [name]: '' };
+      try {
+        const data = await this.readInstalledSettings();
+        if (!Object.prototype.hasOwnProperty.call(data.current || {}, EMMC_SETTINGS[name].key)) throw new Error(this.settingReason(name));
+        let value = data.current[EMMC_SETTINGS[name].key];
+        if (name === 'rotation') value = Number(value);
+        if (name === 'timezone') value = value || 'UTC';
+        if (name === 'hotspot') { value = value || 'Recore'; this.hotspotName = value; }
+        this.settingDraft[name] = value;
+        if (await this.saveNextSetting(name)) this.settingMessage = { ...this.settingMessage, [name]: 'Read from the installed image; selected for the next flash.' };
+      } catch (err) { this.settingError = { ...this.settingError, [name]: String(this.errorOf(err)) }; }
+      finally { this.settingBusy = { ...this.settingBusy, [name]: '' }; }
+    },
+    async applyInstalledSetting(name) {
+      this.settingBusy = { ...this.settingBusy, [name]: 'set' };
+      this.settingMessage = { ...this.settingMessage, [name]: '' };
+      try {
+        if (!this.canSetSetting(name)) throw new Error(this.settingReason(name));
+        if (!await this.saveNextSetting(name)) return;
+        const { data } = await axios.post('/api/installed_settings', { [EMMC_SETTINGS[name].key]: String(this.settingDraft[name]) });
+        if (data.status !== 'OK') throw new Error(data.error || data.reason || 'The installed image refused the setting.');
+        this.settingMessage = { ...this.settingMessage, [name]: 'Applied to the installed image on eMMC.' };
+      } catch (err) { this.settingError = { ...this.settingError, [name]: String(this.errorOf(err)) }; }
+      finally { this.settingBusy = { ...this.settingBusy, [name]: '' }; }
     },
     async setHotspotName() {
       if (!this.hotspotName.trim()) {
@@ -1098,7 +1201,7 @@ export default {
 }
 .hostname-label { grid-column: 1; grid-row: 1; }
 .emmc-heading { grid-column: 2; grid-row: 1; text-align: center; font-size: 0.85rem; opacity: 0.7; }
-.emmc-field #hostname { grid-column: 1; grid-row: 2; }
+.emmc-field > .input, .emmc-field > .radios { grid-column: 1; grid-row: 2; }
 .emmc-buttons { grid-column: 2; grid-row: 2; display: flex; flex-direction: row; gap: 8px; align-items: center; }
 .emmc-feedback { grid-column: 1 / -1; }
 
