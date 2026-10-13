@@ -105,7 +105,7 @@ describe('Set up printer (#198)', () => {
     expect(sent()).toEqual([{ rootPassword: 'rootpw1' }])
     expect(w.vm.problem.rootPassword).toBe('the password is a palindrome')
     expect(w.vm.isDef('rootPassword')).toBe(true)
-    expect(w.vm.rootPw).toBe('')
+    expect(w.vm.rootPw).toBe('rootpw1')
   }, 10000)
 
   it('does not offer to install software without internet, and says why; off is always possible', async () => {
@@ -169,19 +169,17 @@ describe('Set up printer (#198)', () => {
       .toEqual(['Automatic', 'Client only', 'Access point only'])
 
     await w.find('input[name=wifiMode][value=ap]').setValue(true)
-    expect(sent().pop()).toEqual({ wifiMode: 'ap' })
-    expect(w.vm.isDef('wifiMode')).toBe(false)
+    expect(axios.post).toHaveBeenCalledWith('/api/set_options?apply=false', { wifiMode: 'ap' })
     expect(w.vm.effectiveMode).toBe('ap')
 
     // Choosing Automatic is going back to Default.
     await w.find('input[name=wifiMode][value=""]').setValue(true)
-    expect(sent().pop()).toEqual({ wifiMode: '' })
+    expect(axios.post).toHaveBeenCalledWith('/api/set_options?apply=false', { wifiMode: '' })
     expect(w.vm.isDef('wifiMode')).toBe(true)
   })
 
   it('shows the mode the printer already has', () => {
     const w = mountSetup({ wifiMode: 'client' })
-    expect(w.vm.isDef('wifiMode')).toBe(false)
     expect(w.vm.effectiveMode).toBe('client')
   })
 
@@ -224,7 +222,7 @@ describe('Config archives in the panel', () => {
     axios.post.mockResolvedValue({ data: { status: 'OK', name: 'mine.tar.gz' } })
     await w.find('#save-name').setValue('mine')
     await w.vm.save()
-    expect(axios.post).toHaveBeenCalledWith('/api/file_backups', { name: 'mine', include: [] })
+    expect(axios.post).toHaveBeenCalledWith('/api/file_backups', { name: 'mine', include: [] }, expect.anything())
   })
 
   it('saves only the files chosen in the tree', async () => {
@@ -234,7 +232,7 @@ describe('Config archives in the panel', () => {
     w.vm.tree.save.selected = ['home/printer/printer_data/config/printer.cfg']
     axios.post.mockResolvedValue({ data: { status: 'OK', name: 'k.tar.gz' } })
     await w.vm.save()
-    expect(axios.post).toHaveBeenCalledWith('/api/file_backups', { name: '', include: ['home/printer/printer_data/config/printer.cfg'] })
+    expect(axios.post).toHaveBeenCalledWith('/api/file_backups', expect.objectContaining({ include: ['home/printer/printer_data/config/printer.cfg'] }), expect.anything())
   })
 
   it('does not save with no files chosen', async () => {
@@ -259,7 +257,7 @@ describe('Config archives in the panel', () => {
     expect(w.text()).toContain('cannot list')
     axios.post.mockResolvedValue({ data: { status: 'OK', name: 'x.tar.gz' } })
     await w.vm.save()
-    expect(axios.post).toHaveBeenCalledWith('/api/file_backups', { name: '', include: [] })
+    expect(axios.post).toHaveBeenCalledWith('/api/file_backups', expect.objectContaining({ include: [] }), expect.anything())
   })
 
   it('chooses the config to install and what of it, for the next install', async () => {
@@ -471,7 +469,7 @@ describe('hostname Get/Set on the installed image', () => {
   w.vm.hostnameDraft = 'a8-printer'
   axios.post.mockResolvedValue({ data: { status: 'OK' } })
   await w.vm.applyHostname()
-  expect(axios.post).toHaveBeenCalledWith('/api/installed_settings', { HOSTNAME: 'a8-printer' })
+  expect(axios.post).toHaveBeenCalledWith('/api/installed_settings', { HOSTNAME: 'a8-printer' }, expect.anything())
   expect(w.vm.hostnameMessage).toContain('next boot')
  })
  it('allows Get but disables Set for a legacy image', async () => {
@@ -508,7 +506,7 @@ describe('factory password suggestions', () => {
 })
 
 describe('eMMC location, display, and network controls', () => {
- const current = { HOSTNAME: 'recore', WIFI_COUNTRY: 'NO', TIMEZONE: 'Europe/Oslo', SCREEN_ROTATION: '90', HOTSPOT_SSID: 'Printer AP', WIFI_SSID: 'Home network' }
+ const current = { SSH_ENABLED: 'true', HOSTNAME: 'recore', WIFI_COUNTRY: 'NO', TIMEZONE: 'Europe/Oslo', SCREEN_ROTATION: '90', HOTSPOT_SSID: 'Printer AP', WIFI_SSID: 'Home network' }
  function stubInstalled() {
   axios.get.mockImplementation(async url => {
    if (url === '/api/installed_settings') return { data: { supported: true, keys: Object.keys(current), current } }
@@ -519,7 +517,7 @@ describe('eMMC location, display, and network controls', () => {
   axios.post.mockResolvedValue({ data: { status: 'OK' } })
  }
  it.each([
-  ['country', 'wifiCountry', 'NO'], ['timezone', 'timezone', 'Europe/Oslo'],
+  ['ssh', 'enableSsh', true], ['country', 'wifiCountry', 'NO'], ['timezone', 'timezone', 'Europe/Oslo'],
   ['rotation', 'screenRotation', 90], ['hotspot', 'hotspotSSID', 'Printer AP'], ['client', 'SSID', 'Home network'],
  ])('Get %s reads eMMC and stages it without applying settings', async (name, option, value) => {
   const w = mountSetup(); stubInstalled()
@@ -529,7 +527,7 @@ describe('eMMC location, display, and network controls', () => {
   expect(axios.post.mock.calls.some(([url]) => url === '/api/installed_settings')).toBe(false)
  })
  it.each([
-  ['country', 'WIFI_COUNTRY', 'NO'], ['timezone', 'TIMEZONE', 'Europe/Oslo'],
+  ['ssh', 'SSH_ENABLED', true], ['country', 'WIFI_COUNTRY', 'NO'], ['timezone', 'TIMEZONE', 'Europe/Oslo'],
   ['rotation', 'SCREEN_ROTATION', 90], ['hotspot', 'HOTSPOT_SSID', 'Printer AP'], ['client', 'WIFI_SSID', 'Home network'],
  ])('Set %s applies only its own key', async (name, key, value) => {
   const w = mountSetup(); stubInstalled()
@@ -537,7 +535,7 @@ describe('eMMC location, display, and network controls', () => {
   w.vm.settingDraft[name] = value
   if (name === 'hotspot') w.vm.hotspotName = value
   await w.vm.applyInstalledSetting(name)
-  expect(axios.post).toHaveBeenCalledWith('/api/installed_settings', { [key]: String(value) })
+  expect(axios.post).toHaveBeenCalledWith('/api/installed_settings', { [key]: String(value) }, expect.anything())
   expect(w.vm.settingMessage[name]).toContain('Applied to the installed image')
  })
  it('renders Wi-Fi name actions only when an adapter is detected', async () => {
@@ -565,5 +563,140 @@ describe('eMMC location, display, and network controls', () => {
   await w.vm.applyInstalledSetting('rotation')
   expect(w.vm.settingError.rotation).toContain('setting refused')
   expect(w.vm.settingMessage.rotation).not.toContain('Applied')
+ })
+})
+
+describe('options-save conflicts', () => {
+ it('waits for a brief USB save then retries Set without leaving a stale error', async () => {
+  vi.useFakeTimers()
+  try {
+   const w = mountSetup()
+   w.vm.installedSettings = { supported: true, keys: ['TIMEZONE'], current: { TIMEZONE: 'Europe/Oslo' } }
+   w.vm.settingDraft.timezone = 'Europe/Moscow'
+   let posts = 0, polls = 0
+   axios.post.mockImplementation(async url => {
+    if (url === '/api/installed_settings' && ++posts === 1) throw { response: { status: 409, data: 'busy: SAVING\n' } }
+    return { data: { status: 'OK' } }
+   })
+   axios.get.mockImplementation(async url => ({ data: url === '/api/get_progress' ? { state: ++polls === 1 ? 'SAVING' : 'IDLE' } : options }))
+   const work = w.vm.applyInstalledSetting('timezone')
+   await vi.advanceTimersByTimeAsync(1000)
+   await work
+   expect(posts).toBe(2)
+   expect(w.vm.settingBusy.timezone).toBe('')
+   expect(w.vm.settingError.timezone).toBe('')
+   expect(w.vm.settingMessage.timezone).toContain('Applied')
+  } finally { vi.useRealTimers() }
+ })
+ it('does not replay a request if an image flash started during the wait', async () => {
+  vi.useFakeTimers()
+  try {
+   const w = mountSetup()
+   axios.post.mockRejectedValue({ response: { status: 409, data: 'busy: SAVING' } })
+   axios.get.mockResolvedValue({ data: { state: 'INSTALLING' } })
+   const work = expect(w.vm.installedSettingsRequest({ TIMEZONE: 'Europe/Moscow' })).rejects.toThrow('INSTALLING')
+   await vi.advanceTimersByTimeAsync(300)
+   await work
+   expect(axios.post).toHaveBeenCalledTimes(1)
+  } finally { vi.useRealTimers() }
+ })
+ it('bounds the wait for a save that never finishes', async () => {
+  vi.useFakeTimers()
+  try {
+   const w = mountSetup()
+   axios.get.mockImplementation(async url => {
+    if (url === '/api/get_progress') return { data: { state: 'SAVING' } }
+    throw { response: { status: 409, data: 'busy: SAVING' } }
+   })
+   const work = expect(w.vm.installedSettingsRequest()).rejects.toThrow('still being saved')
+   await vi.advanceTimersByTimeAsync(21000)
+   await work
+  } finally { vi.useRealTimers() }
+ })
+})
+
+describe('retained password inputs', () => {
+ it.each(['sshPassword', 'rootPassword'])('keeps %s after applying it', async kind => {
+  const w = mountSetup()
+  const field = kind === 'rootPassword' ? 'rootPw' : 'sshPw'
+  w.vm[field] = 'edited-password'
+  w.vm.settle = async () => ''
+  await w.vm.setPassword(kind)
+  expect(w.vm[field]).toBe('edited-password')
+ })
+})
+
+describe('archive manager refinements', () => {
+ it('prefills an editable name and preserves a name already entered', async () => {
+  const w = mountSetup()
+  await w.vm.openArchives()
+  expect(w.vm.saveName).toMatch(/^installed-printer-config-\d{8}-\d{6}$/)
+  w.vm.saveName = 'my-custom-backup'
+  await w.vm.openArchives()
+  expect(w.vm.saveName).toBe('my-custom-backup')
+ })
+ it('omits firmware README even when all visible files are selected and Choose files was not opened', async () => {
+  const readme = 'home/printer/printer_data/config/firmware/README'
+  const firmware = 'home/printer/printer_data/config/firmware/klipper.config'
+  const files = [readme, firmware, 'home/printer/printer_data/config/printer.cfg']
+  const w = mountSetup()
+  axios.get.mockImplementation(async url => ({ data: url === '/api/file_backups/files' ? { supported: true, files } : [] }))
+  axios.post.mockResolvedValue({ data: { status: 'OK', name: 'backup.tar.gz' } })
+  await w.vm.save()
+  expect(w.vm.tree.save.files).not.toContain(readme)
+  expect(w.vm.tree.save.files).toContain(firmware)
+  const payload = axios.post.mock.calls.find(([url]) => url === '/api/file_backups')[1]
+  expect(payload.include.length).toBeGreaterThan(0)
+  expect(payload.include.some(path => readme === path || readme.startsWith(path + '/'))).toBe(false)
+  expect(payload.include).toContain(firmware)
+  expect(w.vm.message.save).toContain('Created backup.tar.gz')
+  expect(w.vm.$waveui.notify).not.toHaveBeenCalled()
+ })
+ it('shows a valid local date and a neutral fallback for missing timestamps', () => {
+  const w = mountSetup()
+  expect(w.vm.archiveDateTime(1791900000)).toMatch(/^2026-10-13T/)
+  expect(w.vm.archiveDate(1791900000)).not.toBe('—')
+  expect(w.vm.archiveDate(undefined)).toBe('—')
+ })
+})
+
+describe('Wi-Fi mode on eMMC', () => {
+ it('Get preserves Automatic as an effective value and stages it without applying it', async () => {
+  const w = mountSetup()
+  axios.get.mockResolvedValue({ data: { supported: true, keys: ['WIFI_MODE'], current: { WIFI_MODE: 'auto' } } })
+  axios.post.mockResolvedValue({ data: {} })
+  await w.vm.getInstalledSetting('wifiMode')
+  expect(w.vm.settingDraft.wifiMode).toBe('auto')
+  expect(axios.post).toHaveBeenCalledWith('/api/set_options?apply=false', { wifiMode: '' })
+  expect(axios.post.mock.calls.some(([url]) => url === '/api/installed_settings')).toBe(false)
+ })
+ it('Set applies only the image Wi-Fi mode and does not switch the running radio', async () => {
+  const w = mountSetup()
+  w.vm.installedSettings = { supported: true, keys: ['WIFI_MODE'], current: {} }
+  w.vm.settingDraft.wifiMode = 'client'
+  axios.post.mockResolvedValue({ data: { status: 'OK' } })
+  await w.vm.applyInstalledSetting('wifiMode')
+  expect(axios.post).toHaveBeenCalledWith('/api/installed_settings', { WIFI_MODE: 'client' }, expect.anything())
+  expect(axios.post.mock.calls.some(([url]) => url.startsWith('/api/wifi_'))).toBe(false)
+ })
+})
+
+describe('editable AP factory password', () => {
+ it('prefills 12345678, masks it, and allows Show without applying it', async () => {
+  const w = mountSetup()
+  await w.find('.setup-toggle').trigger('click'); await flushPromises()
+  expect(w.find('#hotspot-psk').element.value).toBe('12345678')
+  expect(w.find('#hotspot-psk').attributes('type')).toBe('password')
+  const show = w.find('#hotspot-psk').element.parentElement.querySelector('button')
+  show.click(); await w.vm.$nextTick()
+  expect(w.find('#hotspot-psk').attributes('type')).toBe('text')
+  expect(axios.post).not.toHaveBeenCalled()
+ })
+ it('keeps the editable password after Set', async () => {
+  const w = mountSetup()
+  w.vm.hotspotPsk = 'edited-ap-password'
+  w.vm.settle = async () => ''
+  await w.vm.setHotspotPassword()
+  expect(w.vm.hotspotPsk).toBe('edited-ap-password')
  })
 })

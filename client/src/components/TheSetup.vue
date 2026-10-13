@@ -47,16 +47,18 @@
             <span class="help emmc-feedback">Get reads the currently installed image. Set applies to that image for its next boot. Edits are retained for the next flash. Open <code>{{ options.hostname || 'recore' }}.local</code>.</span>
           </div>
           <div v-if="wifiPresent" class="wifi-settings">
-          <div class="field">
-            <div class="top">
-              <span class="lab">Wi-Fi mode</span>
-            </div>
+          <div class="field emmc-field">
+            <span class="lab">Wi-Fi mode</span>
             <div class="radios" role="radiogroup" aria-label="Wi-Fi mode">
-              <label v-for="m in wifiModes" :key="m.value" class="radio"><input type="radio" name="wifiMode" :value="m.value" :checked="(options.wifiMode || '') === m.value" @change="chooseMode(m.value)" />{{ m.label }}</label>
+              <label v-for="m in wifiModes" :key="m.value" class="radio"><input type="radio" name="wifiMode" :value="m.value" :checked="settingDraft.wifiMode === (m.value || 'auto')" @change="settingDraft.wifiMode = m.value || 'auto'; saveNextSetting('wifiMode')" />{{ m.label }}</label>
             </div>
-            <span class="help" v-if="effectiveMode === 'auto'"><b>Automatic:</b> connect to the client network. If it is not found within 2 minutes, start the fallback hotspot until the next boot. Configure both sets of credentials below; the hotspot can use the displayed defaults.</span>
-            <span class="help" v-else-if="effectiveMode === 'client'"><b>Client only:</b> only join the network below; never start the hotspot.</span>
-            <span class="help" v-else><b>Access point only:</b> always run the hotspot; the board does not join a network.</span>
+            <EmmcActions label="Wi-Fi mode" :can-get="canGetSetting('wifiMode')" :can-set="canSetSetting('wifiMode')" :busy="settingBusy.wifiMode" @get="getInstalledSetting('wifiMode')" @set="applyInstalledSetting('wifiMode')" />
+            <span class="good emmc-feedback" v-if="settingMessage.wifiMode">{{ settingMessage.wifiMode }}</span>
+            <span class="error emmc-feedback" v-if="settingError.wifiMode">{{ settingError.wifiMode }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('wifiMode')">{{ settingReason('wifiMode') }}</span>
+            <span class="help emmc-feedback" v-if="effectiveMode === 'auto'"><b>Automatic:</b> connect to the client network. If it is not found within 2 minutes, start the fallback hotspot until the next boot. Configure both sets of credentials below; the hotspot can use the displayed defaults.</span>
+            <span class="help emmc-feedback" v-else-if="effectiveMode === 'client'"><b>Client only:</b> only join the network below; never start the hotspot.</span>
+            <span class="help emmc-feedback" v-else><b>Access point only:</b> always run the hotspot; the board does not join a network.</span>
           </div>
 
           <div v-show="effectiveMode !== 'ap'" class="field">
@@ -157,12 +159,16 @@
             <span class="error" v-if="problem.rootPassword">{{ problem.rootPassword }}</span>
             <span class="help">For the serial console; root cannot log in over SSH with a password. The documented factory password is temppwd. Set applies the entered password; existing passwords are not read back.</span>
           </div>
-          <div class="field">
-            <div class="top">
-              <span class="lab">SSH access</span>
+          <div class="field emmc-field">
+            <span class="lab">SSH access</span>
+            <div class="setting-input">
+              <w-switch :model-value="settingDraft.ssh" @update:model-value="settingDraft.ssh = $event; saveNextSetting('ssh')" label="Enable SSH access"></w-switch>
             </div>
-            <w-switch :model-value="!!options.enableSsh" @update:model-value="edit('ssh', { enableSsh: $event })" label="Enable SSH access"></w-switch>
-            <span class="help">Turns itself off after a while if the password is still the default. <b>When unchanged:</b> off.</span>
+            <EmmcActions label="SSH access" :can-get="canGetSetting('ssh')" :can-set="canSetSetting('ssh')" :busy="settingBusy.ssh" @get="getInstalledSetting('ssh')" @set="applyInstalledSetting('ssh')" />
+            <span class="good emmc-feedback" v-if="settingMessage.ssh">{{ settingMessage.ssh }}</span>
+            <span class="error emmc-feedback" v-if="settingError.ssh">{{ settingError.ssh }}</span>
+            <span class="help emmc-feedback" v-if="settingReason('ssh')">{{ settingReason('ssh') }}</span>
+            <span class="help emmc-feedback">Get reads SSH access on the installed image; Set applies the selected state to that image.</span>
           </div>
         </section>
 
@@ -213,7 +219,7 @@
           <div class="field">
             <div class="top"><label class="lab" for="save-name">Create archive from current image</label></div>
             <div class="row">
-              <input id="save-name" class="input" v-model="saveName" placeholder="Name, for example voron-20261010" @keydown.enter="save()" />
+              <input id="save-name" class="input" v-model="saveName" placeholder="Archive name" @keydown.enter="save()" />
               <button type="button" class="btn small" :disabled="busy.save" @click="save()">{{ busy.save ? "Creating..." : "Create" }}</button>
             </div>
             <button type="button" class="disc" :aria-expanded="String(tree.save.open)" aria-controls="tree-save" @click="toggleTree('save')">
@@ -224,6 +230,7 @@
               <FileTree v-else v-model="tree.save.selected" :files="tree.save.files" />
             </div>
             <span class="help">Every folder in <code>config/</code> is listed, including ones you made yourself. The shipped examples are never saved. The Wi-Fi settings, SSH and the passwords are not part of an archive.</span>
+            <span class="good" role="status" v-if="message.save">{{ message.save }}</span>
             <span class="error" v-if="problem.save">{{ problem.save }}</span>
           </div>
 
@@ -241,6 +248,7 @@
                 <span class="name" :title="a.name">{{ shortName(a.name) }}<span v-if="!a.ok" class="error"> (damaged)</span></span>
                 <span class="acts" v-if="deleting !== a.name">
                   <span>{{ size(a.size) }}</span>
+                  <time class="archive-date" :datetime="archiveDateTime(a.date)" title="Date saved on this USB drive">{{ archiveDate(a.date) }}</time>
                   <button type="button" class="act" @click="download(a.name)">Download</button>
                   <button type="button" class="act danger" @click="deleting = a.name">Delete</button>
                 </span>
@@ -304,6 +312,8 @@ const DEFAULTS = {
 };
 
 const EMMC_SETTINGS = {
+  wifiMode: { key: 'WIFI_MODE', option: 'wifiMode', label: 'Wi-Fi mode' },
+  ssh: { key: 'SSH_ENABLED', option: 'enableSsh', label: 'SSH access' },
   country: { key: 'WIFI_COUNTRY', option: 'wifiCountry', label: 'Country' },
   timezone: { key: 'TIMEZONE', option: 'timezone', label: 'Timezone' },
   rotation: { key: 'SCREEN_ROTATION', option: 'screenRotation', label: 'Display rotation' },
@@ -331,7 +341,7 @@ export default {
     hostnameReason: "Checking the installed image’s hostname support...",
     hostnameMessage: "",
     installedSettings: { supported: false, keys: [], current: {} },
-    settingDraft: { country: '', timezone: 'UTC', rotation: 0, hotspot: 'Recore', client: '' },
+    settingDraft: { wifiMode: 'auto', ssh: false, country: '', timezone: 'UTC', rotation: 0, hotspot: 'Recore', client: '' },
     settingBusy: {},
     settingMessage: {},
     settingError: {},
@@ -391,7 +401,7 @@ export default {
       return [{ label: "Default — image configuration", value: "" }, ...this.archives.filter(archive => archive.ok).map((archive) => ({ label: shortName(archive.name), value: archive.name }))];
     },
     effectiveMode() {
-      return this.options.wifiMode || "auto";
+      return this.settingDraft.wifiMode;
     },
     software() {
       return this.options.softwareAvailable || [];
@@ -443,9 +453,10 @@ export default {
       // A documented factory suggestion, not a password read from the image.
       if (!o.loginPasswordSet) this.sshPw = "temppwd";
       if (!o.rootPasswordSet) this.rootPw = "temppwd";
+      if (!o.hotspotPSKSet) this.hotspotPsk = "12345678";
       this.hostnameDraft = o.hostname || "recore";
       this.hotspotName = o.hotspotSSID || "Recore";
-      this.settingDraft = { country: o.wifiCountry || '', timezone: o.timezone || 'UTC', rotation: o.screenRotation || 0, hotspot: this.hotspotName, client: o.SSID || '' };
+      this.settingDraft = { wifiMode: o.wifiMode || 'auto', ssh: !!o.enableSsh, country: o.wifiCountry || '', timezone: o.timezone || 'UTC', rotation: o.screenRotation || 0, hotspot: this.hotspotName, client: o.SSID || '' };
       this.seeded = true;
     },
     isDef(name) {
@@ -503,8 +514,6 @@ export default {
       this.problem = { ...this.problem, [kind]: "" };
       this.custom = { ...this.custom, [kind]: true };
       await this.setOption(root ? { rootPassword: pw } : { loginPassword: pw });
-      if (root) this.rootPw = "";
-      else this.sshPw = "";
       const err = await this.settle();
       if (err) {
         this.problem = { ...this.problem, [kind]: err };
@@ -529,8 +538,36 @@ export default {
         return false;
       }
     },
+    async installedSettingsRequest(changes) {
+      return this.emmcRequest('/api/installed_settings', changes);
+    },
+    async emmcRequest(url, changes, timeout = changes === undefined ? 15000 : 300000) {
+      let saveDeadline = 0;
+      for (;;) {
+        try {
+          return changes === undefined
+            ? await axios.get(url, { timeout })
+            : await axios.post(url, changes, { timeout });
+        } catch (err) {
+          // A SAVING conflict is returned before the installer runs. Only this
+          // brief options-save conflict is safe to retry; never replay a timed
+          // out POST or retry across an image flash.
+          if (err.response?.status !== 409 || String(err.response.data).trim() !== 'busy: SAVING') throw err;
+          if (!saveDeadline) saveDeadline = Date.now() + 20000;
+          for (;;) {
+            if (Date.now() >= saveDeadline) throw new Error('Options are still being saved. Try again shortly.');
+            await new Promise(resolve => setTimeout(resolve, 250));
+            const { data } = await axios.get('/api/get_progress', { timeout: Math.min(3000, Math.max(1, saveDeadline - Date.now())) });
+            if (data.state !== 'SAVING') {
+              if (!['IDLE', 'FINISHED', 'ERROR', 'CANCELLED'].includes(data.state)) throw new Error(`Reflash is busy: ${data.state || 'unknown state'}. Try again when it is idle.`);
+              break;
+            }
+          }
+        }
+      }
+    },
     async readInstalledSettings() {
-      const { data } = await axios.get('/api/installed_settings', { timeout: 15000 });
+      const { data } = await this.installedSettingsRequest();
       this.installedSettings = data;
       this.hostnameCanRead = typeof data.current?.HOSTNAME === 'string';
       this.hostnameCanSet = !!data.supported && (data.keys || []).includes('HOSTNAME');
@@ -564,7 +601,7 @@ export default {
       this.hostnameMessage = '';
       try {
         if (!await this.setHostname(this.hostnameDraft)) return;
-        const { data } = await axios.post('/api/installed_settings', { HOSTNAME: this.hostnameDraft });
+        const { data } = await this.installedSettingsRequest({ HOSTNAME: this.hostnameDraft });
         if (data.status !== 'OK') throw new Error(data.error || data.reason || 'The installed image refused the hostname.');
         this.hostnameMessage = `Set ${this.hostnameDraft} on the installed image; takes effect at its next boot.`;
       } catch (err) { this.problem = { ...this.problem, hostname: String(this.errorOf(err)) }; }
@@ -593,11 +630,17 @@ export default {
         this.settingError = { ...this.settingError, [name]: 'Choose a supported display rotation.' }; return false;
       }
       if (name === 'rotation') value = Number(value);
+      if (name === 'wifiMode' && !['auto', 'client', 'ap'].includes(value)) {
+        this.settingError = { ...this.settingError, [name]: 'Choose Automatic, Client only, or Access point only.' }; return false;
+      }
+      if (name === 'ssh' && typeof value !== 'boolean') {
+        this.settingError = { ...this.settingError, [name]: 'Choose whether SSH is enabled.' }; return false;
+      }
       if (['client', 'hotspot'].includes(name) && (/[\r\n]/.test(value) || new TextEncoder().encode(value).length > 32 || (name === 'hotspot' && !value.trim()))) {
         this.settingError = { ...this.settingError, [name]: 'Use a Wi-Fi name of at most 32 bytes without line breaks.' }; return false;
       }
       try {
-        await axios.post('/api/set_options?apply=false', { [spec.option]: value });
+        await axios.post('/api/set_options?apply=false', { [spec.option]: name === 'wifiMode' && value === 'auto' ? '' : value });
         this.settingDraft[name] = value;
         await this.getOptions();
         this.settingMessage = { ...this.settingMessage, [name]: 'Selected for the next flash.' };
@@ -614,7 +657,12 @@ export default {
         if (!Object.prototype.hasOwnProperty.call(data.current || {}, EMMC_SETTINGS[name].key)) throw new Error(this.settingReason(name));
         let value = data.current[EMMC_SETTINGS[name].key];
         if (name === 'rotation') value = Number(value);
+        if (name === 'ssh') {
+          if (!['true', 'false'].includes(value)) throw new Error('The installed image returned an invalid SSH access state.');
+          value = value === 'true';
+        }
         if (name === 'timezone') value = value || 'UTC';
+        if (name === 'wifiMode') value = value || 'auto';
         if (name === 'hotspot') { value = value || 'Recore'; this.hotspotName = value; }
         this.settingDraft[name] = value;
         if (await this.saveNextSetting(name)) this.settingMessage = { ...this.settingMessage, [name]: 'Read from the installed image; selected for the next flash.' };
@@ -627,7 +675,7 @@ export default {
       try {
         if (!this.canSetSetting(name)) throw new Error(this.settingReason(name));
         if (!await this.saveNextSetting(name)) return;
-        const { data } = await axios.post('/api/installed_settings', { [EMMC_SETTINGS[name].key]: String(this.settingDraft[name]) });
+        const { data } = await this.installedSettingsRequest({ [EMMC_SETTINGS[name].key]: String(this.settingDraft[name]) });
         if (data.status !== 'OK') throw new Error(data.error || data.reason || 'The installed image refused the setting.');
         this.settingMessage = { ...this.settingMessage, [name]: 'Applied to the installed image on eMMC.' };
       } catch (err) { this.settingError = { ...this.settingError, [name]: String(this.errorOf(err)) }; }
@@ -650,7 +698,6 @@ export default {
       this.problem = { ...this.problem, hotspot: "" };
       this.custom = { ...this.custom, hotspot: true };
       await this.setOption({ hotspotPSK: this.hotspotPsk });
-      this.hotspotPsk = "";
       const err = await this.settle();
       if (err) this.problem = { ...this.problem, hotspot: err };
     },
@@ -665,6 +712,10 @@ export default {
     async openArchives() {
       this.managerOpen = true;
       await this.listArchives();
+      if (!this.saveName) {
+        try { await this.readInstalledSettings(); } catch (_) { /* Use the saved hostname if the image cannot be read. */ }
+        this.saveName = this.suggestArchiveName();
+      }
     },
     async checkWifi() {
       if (this.wifiChecking) return;
@@ -676,6 +727,28 @@ export default {
       } catch (_) {
         this.wifiCheckError = "Could not check for a Wi-Fi adapter. Check again when the board is reachable.";
       } finally { this.wifiChecking = false; }
+    },
+    suggestArchiveName() {
+      const hostname = this.installedSettings.current?.HOSTNAME || this.options.hostname || 'recore';
+      const name = hostname.replace(/[^A-Za-z0-9._-]/g, '-');
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const base = `${name}-config-${stamp}`;
+      let result = base;
+      let index = 2;
+      while (this.archives.some(a => a.name === result + '.tar.gz')) result = `${base}-${index++}`;
+      return result;
+    },
+    archiveDateTime(seconds) {
+      const value = Number(seconds);
+      return Number.isFinite(value) && value > 0 ? new Date(value * 1000).toISOString() : undefined;
+    },
+    archiveDate(seconds) {
+      const value = Number(seconds);
+      return Number.isFinite(value) && value > 0
+        ? new Date(value * 1000).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : '—';
     },
     async listArchives() {
       try {
@@ -695,8 +768,9 @@ export default {
       t.reason = "";
       const url = which === "save" ? `/api/file_backups/files` : `/api/file_backups/files?name=${encodeURIComponent(this.options.restoreBackup)}`;
       try {
-        const res = (await axios.get(url)).data;
-        t.files = res.supported ? res.files : [];
+        const res = (await this.emmcRequest(url)).data;
+        t.sourceFiles = res.supported ? res.files : [];
+        t.files = t.sourceFiles.filter(path => !/(^|\/)config\/firmware\/README$/.test(path));
         t.reason = res.supported ? "" : res.reason || "The system cannot list its files.";
         t.selected = [...t.files];
         // The archive chosen before, with only some of its files.
@@ -725,29 +799,27 @@ export default {
     includeOf(which) {
       const t = this.tree[which];
       if (!t.loaded || t.reason) return [];
-      return includeFor(t.files, t.selected);
+      return includeFor(t.sourceFiles || t.files, t.selected);
     },
     async save() {
-      this.problem = { ...this.problem, save: "" };
-      const include = this.includeOf("save");
-      if (include === null) {
-        this.problem = { ...this.problem, save: "No files are chosen." };
-        return;
-      }
+      if (this.busy.save) return;
       this.busy.save = true;
+      this.problem = { ...this.problem, save: '' };
+      this.message = { ...this.message, save: '' };
       try {
-        const res = await axios.post(`/api/file_backups`, { name: this.saveName, include });
-        if (res.data.status === "OK") {
-          this.notify(`Saved ${res.data.name} on the USB drive`);
-          this.saveName = "";
-        } else {
-          this.problem = { ...this.problem, save: res.data.error || "The backup failed" };
-        }
+        // Keep the complete source list for includeFor so a selected folder
+        // cannot accidentally bring its omitted firmware README back in.
+        if (!this.tree.save.loaded) await this.loadFiles('save');
+        const include = this.includeOf('save');
+        if (include === null) throw new Error('No files are chosen.');
+        const { data } = await this.emmcRequest('/api/file_backups', { name: this.saveName, include }, 600000);
+        if (data.status !== 'OK') throw new Error(data.error || 'The backup failed');
+        this.message = { ...this.message, save: `Created ${data.name} on the USB drive.` };
+        await this.listArchives();
+        this.saveName = this.suggestArchiveName();
       } catch (err) {
-        this.problem = { ...this.problem, save: this.errorOf(err) };
-      }
-      this.busy.save = false;
-      this.listArchives();
+        this.problem = { ...this.problem, save: String(this.errorOf(err)) };
+      } finally { this.busy.save = false; }
     },
     async onUpload(e) {
       const file = e.target.files && e.target.files[0];
@@ -1201,11 +1273,12 @@ export default {
 }
 .hostname-label { grid-column: 1; grid-row: 1; }
 .emmc-heading { grid-column: 2; grid-row: 1; text-align: center; font-size: 0.85rem; opacity: 0.7; }
-.emmc-field > .input, .emmc-field > .radios { grid-column: 1; grid-row: 2; }
+.emmc-field > .input, .emmc-field > .radios, .emmc-field > .setting-input { grid-column: 1; grid-row: 2; }
 .emmc-buttons { grid-column: 2; grid-row: 2; display: flex; flex-direction: row; gap: 8px; align-items: center; }
 .emmc-feedback { grid-column: 1 / -1; }
 
 .archive-manager.setup-wrap, .archive-manager-foot.setup-wrap { margin-top: 0; }
 .archive-manager { max-height: 65vh; overflow-y: auto; padding: 8px 16px; text-align: left; }
 .archive-manager .field { margin-bottom: 20px; }
+.archive-date { font-variant-numeric: tabular-nums; opacity: 0.7; }
 </style>
