@@ -93,7 +93,7 @@
             <span class="good" v-if="wifiSetupMessage" role="status">{{ wifiSetupMessage }}</span>
             <span class="error" v-if="wifiSetupError" role="alert">{{ wifiSetupError }}</span>
             <button class="btn small" @click="wifiManagerOpen = true">Manage Wi-Fi</button>
-            <TheWifiSetup :open="wifiManagerOpen" :initial-ssid="wifiResumeSSID" :apply-request="emmcRequest" @close="wifiManagerOpen = false; wifiResumeSSID = ''" @setup-changed="refreshWifiChoice()" />
+            <TheWifiSetup :open="wifiManagerOpen" :initial-ssid="wifiResumeSSID" :apply-request="emmcRequest" @close="wifiManagerOpen = false; wifiResumeSSID = ''" @setup-changed="refreshWifiChoice(); $emit('wifi-changed')" />
           </div>
           <div v-if="wifiPresent !== true" class="field wifi-check">
             <span class="help">{{ wifiPresent === false ? 'No Wi-Fi adapter detected. You can connect an adapter and check again.' : 'Checking for a Wi-Fi adapter...' }}</span>
@@ -724,6 +724,11 @@ export default {
         try { await this.readInstalledSettings(); } catch (_) { /* Use the saved hostname if the image cannot be read. */ }
         this.saveName = this.suggestArchiveName();
       }
+    },
+    // The Options slider's Wi-Fi entry (#224): open the panel and the dialog.
+    openWifi() {
+      this.expanded = true;
+      this.wifiManagerOpen = true;
     },
     async refreshWifiChoice() {
       await this.getOptions();

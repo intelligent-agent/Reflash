@@ -20,6 +20,7 @@
     <TheOptions
       :open="openOptions"
       @manage-archives="openOptions = false; $refs.setup.openArchives()"
+      @manage-wifi="openOptions = false; $refs.setup.openWifi()"
       @set-option="setOption"
       @reboot-board="rebootBoard"
       @shutdown-board="shutdownBoard"
@@ -63,6 +64,7 @@
           <w-select
             v-model="selectedMethod"
             :items="filteredMethods"
+            :disabled="isOperationRunning()"
             no-unselect
             return-object
           >
@@ -75,6 +77,7 @@
             v-if="selectedMethod.id == 2"
             v-model="transferDirection"
             :items="directions"
+            :disabled="isOperationRunning()"
             no-unselect
           >
           </w-select>
@@ -88,6 +91,7 @@
             :model-value="options.magicmode ? 'magic' : 'usb'"
             @update:model-value="storeSetOption({ magicmode: $event == 'magic' })"
             :items="storageChoices"
+            :disabled="isOperationRunning()"
             no-unselect
           >
           </w-select>
@@ -304,7 +308,7 @@
           @changed="onUsbFilesChanged"
         />
       </w-flex>
-      <TheSetup ref="setup" :internet="hasInternet" @close="checkInternet(); getStatus()" />
+      <TheSetup ref="setup" :internet="hasInternet" @close="checkInternet(); getStatus()" @wifi-changed="refreshNetworkSoon()" />
     </w-card>
   </w-app>
 </template>
@@ -583,6 +587,12 @@ export default {
     //
     // Disabled rather than hidden: a button that vanishes reads as a bug, where
     // a greyed-out one next to a red X explains itself.
+    // The install bar's drop-downs change what the running operation is doing
+    // (the source, the direction, and with Magic the stored option itself), so
+    // they wait for IDLE like the install button does (#225).
+    isOperationRunning() {
+      return this.state != "IDLE";
+    },
     isInstallButtonDisabled() {
       // During its own operation this button means Cancel, which must stay
       // reachable regardless of what the image turned out to be.
@@ -1212,6 +1222,13 @@ export default {
     },
     // The parts that actually change. Cheap: no mounts, so this is what the
     // flash-state transitions call.
+    // A connect or hotspot switch takes seconds to get an address, so one read
+    // straight after would still show the old network. Read again a few times
+    // (#223).
+    refreshNetworkSoon() {
+      this.getStatus();
+      [2000, 6000, 12000].forEach((ms) => setTimeout(this.getStatus, ms));
+    },
     async getStatus() {
       try {
         const response = await axios.get(`/api/get_status`);
@@ -1277,6 +1294,16 @@ export default {
     },
   },
   watch: {
+    // Nothing else re-reads the network while the page stays open, so the info
+    // panel kept showing the hotspot after Reflash joined a network (#223).
+    openInfo(open) {
+      clearInterval(this.infoTimer);
+      this.infoTimer = null;
+      if (open) {
+        this.getStatus();
+        this.infoTimer = setInterval(this.getStatus, 5000);
+      }
+    },
     // This used to hang off `:item-click="onSelectedFileChanged()"` on the
     // w-select, which called the method during render rather than passing it as
     // a handler - so the integrity check re-fired on every re-render of the
