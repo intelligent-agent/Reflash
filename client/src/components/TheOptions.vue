@@ -21,8 +21,12 @@
         >
         </w-switch>
         <div class="caption ma2">
-          Wi-Fi, location, passwords, SSH and screen rotation are under Set up printer on the main page.
+          Location, passwords, SSH and screen rotation are under Set up printer on the main page. The button below is for Reflash's own Wi-Fi.
         </div>
+        <!-- Reflash's own connection, which the Set up printer panel's Wi-Fi
+             button is not about: that one picks the credentials for the new
+             image (#224). -->
+        <w-button outline class="ma2" @click="$emit('manage-wifi')">Wi-Fi for Reflash</w-button>
         <w-button outline class="ma2" @click="$emit('manage-archives')">Manage config archives</w-button>
         <w-divider class="my6 mx-3"></w-divider>
         <!-- What is not for everyone: the picker's pre-releases, which are
