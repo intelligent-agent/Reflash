@@ -51,6 +51,19 @@ func TestCopyReflashWifiKeepsSecretsOnBoard(t *testing.T) {
 		t.Fatal("live secret in public options")
 	}
 }
+func TestCopyReflashWifiWhenReflashHasNoNetworkSaysSo(t *testing.T) {
+	setupTest(t)
+	state.State = IDLE
+	options.LiveWifiSSID = ""
+	options.WifiMode = "client"
+	w := wifiSetupRequest(`{"source":"reflash","action":"stage"}`)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "Reflash is not connected to a Wi-Fi network") {
+		t.Fatalf("got %d %q", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "client SSID is required") {
+		t.Fatal("the vague message is back")
+	}
+}
 func TestCopyInstalledWifiIncludesSecretWithoutApplying(t *testing.T) {
 	dir := setupTest(t)
 	state.State = IDLE

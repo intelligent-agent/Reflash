@@ -4073,6 +4073,13 @@ func wifiSetup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown Wi-Fi source", 400)
 		return
 	}
+	// Said plainly: validateWifiSetup would answer "client SSID is required",
+	// which sounds like a missing field when the cause is that Reflash itself
+	// has no Wi-Fi to copy (#222).
+	if request.Source == "reflash" && values[keyWifiMode] == "client" && values[keyWifiName] == "" {
+		http.Error(w, "Reflash is not connected to a Wi-Fi network, so there is nothing to copy. Connect it with Manage Wi-Fi first, or enter the network by hand.", 400)
+		return
+	}
 	if err := validateWifiSetup(values); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
